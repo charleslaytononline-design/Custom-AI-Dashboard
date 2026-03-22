@@ -41,7 +41,7 @@ export default function Admin() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push("/home")
+      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/home'); return }
       setUser(data.user)
       loadAll()
     })
@@ -149,7 +149,7 @@ export default function Admin() {
           </div>
         </div>
         <nav style={s.nav}>
-          <div style={s.navItem} onClick={() => router.push("/home")
+          <div style={s.navItem} onClick={() => router.push('/home')}>
             <span>⊞</span> Projects
           </div>
           <div style={{ ...s.navItem, ...s.navActive }}>
