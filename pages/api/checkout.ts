@@ -34,13 +34,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
         quantity: 1,
       }],
-      metadata: {
-        userId,
-        packId,
-        credits: pack.credits.toString(),
-      },
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?payment=success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?payment=cancelled`,
+      metadata: { userId, packId, credits: pack.credits.toString() },
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/home?payment=success`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/home?payment=cancelled`,
     })
 
     res.status(200).json({ url: session.url })

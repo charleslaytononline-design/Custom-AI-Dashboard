@@ -41,7 +41,7 @@ export default function Admin() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/dashboard'); return }
+      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push("/home")
       setUser(data.user)
       loadAll()
     })
@@ -83,7 +83,7 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      setSettings(map as unknown as Settings)
+      setSettings(map as Settings)
     }
   }
 
@@ -149,7 +149,7 @@ export default function Admin() {
           </div>
         </div>
         <nav style={s.nav}>
-          <div style={s.navItem} onClick={() => router.push('/dashboard')}>
+          <div style={s.navItem} onClick={() => router.push("/home")
             <span>⊞</span> Projects
           </div>
           <div style={{ ...s.navItem, ...s.navActive }}>

@@ -4,7 +4,6 @@ import { createClient } from '@supabase/supabase-js'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// Service role to bypass RLS for credit operations
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -21,12 +20,6 @@ async function getSettings() {
   }
 }
 
-function calculateCost(inputTokens: number, outputTokens: number, settings: any) {
-  const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
-  const userCharge = apiCost * settings.markupMultiplier
-  return { apiCost, userCharge }
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
@@ -34,7 +27,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
-  // Check credit balance before proceeding
   const { data: profile } = await supabase
     .from('profiles')
     .select('credit_balance, role')
@@ -43,9 +35,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
-  // Allow admin to use without credits for testing
   if (profile.role !== 'admin' && profile.credit_balance <= 0) {
-    return res.status(402).json({ 
+    return res.status(402).json({
       error: 'insufficient_credits',
       message: 'You need to purchase credits to continue building.',
       balance: profile.credit_balance
@@ -88,16 +79,10 @@ DESIGN:
 - Sidebar: fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] z-40
 - Topbar: fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] z-30 flex items-center px-6
 - Main: ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]
-- Buttons primary: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
+- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium
 - Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
-- Table wrapper: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden w-full
-- Thead: bg-[#1a1a1a] text-white/40 text-xs uppercase tracking-wider
-- Th/Td: px-4 py-3 text-left
-- Tbody tr: border-t border-white/[0.05] text-white/80 text-sm hover:bg-white/[0.02]
 - Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 - Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
-- Sidebar nav inactive: flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer text-white/50 hover:text-white hover:bg-white/[0.05] transition-all
-- Sidebar nav active: flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer bg-brand/10 text-brand
 
 ALPINE PATTERN:
 <div x-data="app()" x-init="init()">
@@ -153,10 +138,9 @@ RULES:
     const outputTokens = response.usage.output_tokens
     const totalTokens = inputTokens + outputTokens
 
-    // Calculate costs
-    const { apiCost, userCharge } = calculateCost(inputTokens, outputTokens, settings)
+    const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
+    const userCharge = apiCost * settings.markupMultiplier
 
-    // Deduct credits (skip for admin)
     if (profile.role !== 'admin') {
       const { data: deducted } = await supabase.rpc('deduct_credits', {
         p_user_id: userId,
@@ -165,16 +149,11 @@ RULES:
         p_tokens_used: totalTokens,
         p_api_cost: apiCost,
       })
-
       if (!deducted) {
-        return res.status(402).json({ 
-          error: 'insufficient_credits',
-          message: 'Not enough credits. Please purchase more to continue.',
-        })
+        return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits.' })
       }
     }
 
-    // Parse response
     let message = 'Done!'
     let code = null
 
@@ -193,21 +172,9 @@ RULES:
       }
     }
 
-    // Get updated balance
-    const { data: updatedProfile } = await supabase
-      .from('profiles')
-      .select('credit_balance')
-      .eq('id', userId)
-      .single()
+    const { data: updatedProfile } = await supabase.from('profiles').select('credit_balance').eq('id', userId).single()
 
-    res.status(200).json({ 
-      message, 
-      code,
-      tokensUsed: totalTokens,
-      apiCost,
-      userCharge,
-      newBalance: updatedProfile?.credit_balance || 0,
-    })
+    res.status(200).json({ message, code, tokensUsed: totalTokens, apiCost, userCharge, newBalance: updatedProfile?.credit_balance || 0 })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }
