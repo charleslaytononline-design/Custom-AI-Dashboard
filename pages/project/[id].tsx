@@ -28,7 +28,6 @@ export default function ProjectBuilder() {
   const [lastError, setLastError] = useState<string | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
-  const [totalTokensUsed, setTotalTokensUsed] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -67,9 +66,6 @@ export default function ProjectBuilder() {
 if (data) {
   setCreditBalance(data.credit_balance || 0)
 }
-    // Load total tokens
-    const { data: usage } = await supabase.from('transactions').select('tokens_used').eq('user_id', userId)
-    if (usage) setTotalTokensUsed(usage.reduce((s: number, r: any) => s + (r.tokens_used || 0), 0))
   }
 
   async function loadChatHistory(pageId: string) {
@@ -205,7 +201,6 @@ if (data) {
     if (data.error === 'insufficient_credits') { setShowBuyCredits(true); throw new Error(data.message || 'Insufficient credits') }
     if (data.error) throw new Error(data.error)
     if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
-    if (data.tokensUsed) setTotalTokensUsed(prev => prev + data.tokensUsed)
     return data
   }
 
@@ -310,7 +305,6 @@ if (data) {
             <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
             <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>
           </div>
-          <div style={{ fontSize:10, color:'#444' }}>{totalTokensUsed.toLocaleString()} tokens</div>
           <span style={s.email}>{user.email}</span>
         </div>
       </div>
