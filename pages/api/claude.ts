@@ -23,7 +23,7 @@ async function getSettings() {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType } = req.body
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
@@ -35,7 +35,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
-  if (profile.role !== 'admin' && profile.credit_balance <= 0) {
+  const isAdmin = profile.role === 'admin'
+
+  if (!isAdmin && profile.credit_balance <= 0) {
     return res.status(402).json({
       error: 'insufficient_credits',
       message: 'You need to purchase credits to continue building.',
@@ -54,20 +56,27 @@ Respond in plain text only.`
 
 PAGE: "${pageName || 'My Page'}"
 OTHER PAGES: ${pageList}
-EXISTING CODE:
-${pageCode || '<!-- empty -->'}
+
+CURRENT PAGE CODE (this is exactly what is rendered in the preview right now):
+\`\`\`html
+${pageCode || '<!-- empty page -->'}
+\`\`\`
+
+You can see the current page code above. When the user asks to modify something, you understand exactly what is already there and make precise targeted changes while keeping everything else intact.
+
+If the user sends a screenshot or image, use it to understand what they see visually and what they want changed.
 
 INSTRUCTIONS:
-Build exactly what the user asks. Return your response in this format:
+Build exactly what the user asks. Return your response in this exact format:
 
-<MESSAGE>Brief description of what you built</MESSAGE>
+<MESSAGE>Brief description of what you built or changed</MESSAGE>
 <CODE>
 <!DOCTYPE html>
 ... complete HTML page here ...
 </html>
 </CODE>
 
-STACK — include in every page:
+STACK — always include ALL of these in every page:
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7',dark:'#5b50d6'}}}}}</script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -79,69 +88,65 @@ DESIGN:
 - Sidebar: fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] z-40
 - Topbar: fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] z-30 flex items-center px-6
 - Main: ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]
-- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium
+- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
 - Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
+- Table: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden
 - Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 - Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 
-ALPINE PATTERN:
-<div x-data="app()" x-init="init()">
-  <aside class="fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] flex flex-col z-40">
-    <div class="p-4 border-b border-white/[0.08] flex items-center gap-2.5">
-      <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">A</div>
-      <span class="text-white font-semibold text-sm">My App</span>
-    </div>
-    <nav class="flex-1 p-2 space-y-0.5">
-      <div @click="section='dashboard'" :class="section==='dashboard'?'bg-brand/10 text-brand':'text-white/50 hover:text-white hover:bg-white/[0.05]'" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-all">
-        <i class="fa-solid fa-gauge w-4 text-center"></i><span>Dashboard</span>
-      </div>
-    </nav>
-  </aside>
-  <header class="fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] flex items-center justify-between px-6 z-30">
-    <h1 class="text-white font-medium text-sm" x-text="section.charAt(0).toUpperCase()+section.slice(1)"></h1>
-    <div class="w-8 h-8 rounded-full bg-brand/20 flex items-center justify-center text-brand text-xs font-semibold">U</div>
-  </header>
-  <main class="ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]">
-    <div x-show="section==='dashboard'">...</div>
-  </main>
-</div>
-<script>
-function app() {
-  return {
-    section: 'dashboard',
-    items: [],
-    init() {
-      this.items = JSON.parse(localStorage.getItem('appItems') || '[]')
-      this.$watch('items', v => localStorage.setItem('appItems', JSON.stringify(v)))
-    }
-  }
-}
-</script>
-
 RULES:
-- Always output complete HTML document
+- Output ONLY the XML format — nothing before MESSAGE or after CODE closing tag
+- Always output the COMPLETE HTML document
 - Use Tailwind classes only
 - Every button must work
 - Persist data to localStorage
 - Keep ALL existing features when updating`
 
   try {
+    const lastMessage = messages[messages.length - 1]
+
+    // Build last message content - support images
+    let lastContent: any = lastMessage?.content || ''
+    if (imageBase64 && imageMediaType) {
+      lastContent = [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: imageMediaType, data: imageBase64 }
+        },
+        { type: 'text', text: typeof lastMessage?.content === 'string' ? lastMessage.content : 'See the image above.' }
+      ]
+    }
+
+    const apiMessages = [
+      ...messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content })),
+      { role: lastMessage?.role || 'user', content: lastContent }
+    ]
+
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 8000,
       system,
-      messages,
+      messages: apiMessages,
     })
 
     const raw = response.content.map((b: any) => b.text || '').join('')
     const inputTokens = response.usage.input_tokens
     const outputTokens = response.usage.output_tokens
     const totalTokens = inputTokens + outputTokens
-
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
     const userCharge = apiCost * settings.markupMultiplier
 
-    if (profile.role !== 'admin') {
+    // Track usage for everyone including admin
+    if (isAdmin) {
+      await supabase.from('transactions').insert({
+        user_id: userId,
+        type: 'usage',
+        amount: -userCharge,
+        description: `AI build (admin): ${pageName}`,
+        tokens_used: totalTokens,
+        api_cost: apiCost,
+      })
+    } else {
       const { data: deducted } = await supabase.rpc('deduct_credits', {
         p_user_id: userId,
         p_amount: userCharge,
@@ -154,6 +159,7 @@ RULES:
       }
     }
 
+    // Parse response
     let message = 'Done!'
     let code = null
 
@@ -172,9 +178,17 @@ RULES:
       }
     }
 
-    const { data: updatedProfile } = await supabase.from('profiles').select('credit_balance').eq('id', userId).single()
+    const { data: updatedProfile } = await supabase
+      .from('profiles').select('credit_balance').eq('id', userId).single()
 
-    res.status(200).json({ message, code, tokensUsed: totalTokens, apiCost, userCharge, newBalance: updatedProfile?.credit_balance || 0 })
+    res.status(200).json({
+      message,
+      code,
+      tokensUsed: totalTokens,
+      apiCost,
+      userCharge,
+      newBalance: isAdmin ? 'admin' : (updatedProfile?.credit_balance || 0),
+    })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }

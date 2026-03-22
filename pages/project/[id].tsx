@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 const ADMIN_EMAIL = 'charleslayton.online@gmail.com'
 
 interface Page { id: string; name: string; code: string; updated_at: string }
-interface Message { role: 'user' | 'assistant'; content: string; isPlan?: boolean }
+interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
 type AppMode = 'build' | 'plan'
 
 export default function ProjectBuilder() {
@@ -18,7 +18,7 @@ export default function ProjectBuilder() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [creditBalance, setCreditBalance] = useState(0)
+  const [creditBalance, setCreditBalance] = useState<number | 'admin'>(0)
   const [newPageName, setNewPageName] = useState('')
   const [showNewPage, setShowNewPage] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'pages'>('chat')
@@ -27,19 +27,26 @@ export default function ProjectBuilder() {
   const [showCode, setShowCode] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
+  const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
+  const [totalTokensUsed, setTotalTokensUsed] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
       loadProfile(data.user.id)
+      if (data.user.email === ADMIN_EMAIL) setCreditBalance('admin')
     })
   }, [])
 
   useEffect(() => {
-    if (projectId && user) { loadProject(); loadPages() }
+    if (projectId && user) {
+      loadProject()
+      loadPages()
+    }
   }, [projectId, user])
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
@@ -50,9 +57,46 @@ export default function ProjectBuilder() {
 
   useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage])
 
+  // Load chat history when page changes
+  useEffect(() => {
+    if (activePage && user) loadChatHistory(activePage.id)
+  }, [activePage?.id])
+
   async function loadProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('credit_balance').eq('id', userId).single()
-    if (data) setCreditBalance(data.credit_balance || 0)
+    const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
+    if (data) {
+      if (data.role === 'admin') setCreditBalance('admin')
+      else setCreditBalance(data.credit_balance || 0)
+    }
+    // Load total tokens
+    const { data: usage } = await supabase.from('transactions').select('tokens_used').eq('user_id', userId)
+    if (usage) setTotalTokensUsed(usage.reduce((s: number, r: any) => s + (r.tokens_used || 0), 0))
+  }
+
+  async function loadChatHistory(pageId: string) {
+    const { data } = await supabase
+      .from('chat_history')
+      .select('*')
+      .eq('page_id', pageId)
+      .order('created_at', { ascending: true })
+    if (data && data.length > 0) {
+      setMessages(data.map((m: any) => ({ id: m.id, role: m.role, content: m.content, isPlan: m.is_plan })))
+    } else {
+      setMessages([])
+    }
+  }
+
+  async function saveChatMessage(role: 'user' | 'assistant', content: string, isPlan = false) {
+    if (!user || !activePage) return
+    const { data } = await supabase.from('chat_history').insert({
+      project_id: projectId,
+      user_id: user.id,
+      page_id: activePage.id,
+      role,
+      content,
+      is_plan: isPlan,
+    }).select().single()
+    return data?.id
   }
 
   async function loadProject() {
@@ -71,12 +115,21 @@ export default function ProjectBuilder() {
     const { data, error } = await supabase.from('pages').insert({
       project_id: projectId, user_id: user.id, name: name.trim(), code: getStarterCode(),
     }).select().single()
-    if (!error && data) { setPages(prev => [...prev, data]); setActivePage(data); setMessages([]); setShowNewPage(false); setNewPageName(''); setSidebarTab('chat') }
+    if (!error && data) {
+      setPages(prev => [...prev, data])
+      setActivePage(data)
+      setMessages([])
+      setShowNewPage(false)
+      setNewPageName('')
+      setSidebarTab('chat')
+    }
   }
 
   async function savePage(code: string) {
     if (!activePage) return
-    const { data } = await supabase.from('pages').update({ code, updated_at: new Date().toISOString() }).eq('id', activePage.id).select().single()
+    const { data } = await supabase.from('pages')
+      .update({ code, updated_at: new Date().toISOString() })
+      .eq('id', activePage.id).select().single()
     if (data) {
       setActivePage(data)
       setPages(prev => prev.map(p => p.id === data.id ? data : p))
@@ -93,36 +146,59 @@ export default function ProjectBuilder() {
     if (activePage?.id === pageId) { setActivePage(remaining[0]); setMessages([]) }
   }
 
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const result = ev.target?.result as string
+      const base64 = result.split(',')[1]
+      const mediaType = file.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+      setPendingImage({ base64, mediaType, preview: result })
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
   async function callAPI(msgs: any[], planOnly = false) {
+    const payload: any = {
+      messages: msgs,
+      pageCode: activePage?.code,
+      pageName: activePage?.name,
+      allPages: pages,
+      planOnly,
+      userId: user?.id,
+    }
+
+    if (pendingImage && !planOnly) {
+      payload.imageBase64 = pendingImage.base64
+      payload.imageMediaType = pendingImage.mediaType
+    }
+
     const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: msgs,
-        pageCode: activePage?.code,
-        pageName: activePage?.name,
-        allPages: pages,
-        planOnly,
-        userId: user?.id,  // KEY FIX: pass userId
-      }),
+      body: JSON.stringify(payload),
     })
     const data = await res.json()
-    if (data.error === 'insufficient_credits') {
-      setShowBuyCredits(true)
-      throw new Error(data.message || 'Insufficient credits')
-    }
+    if (data.error === 'insufficient_credits') { setShowBuyCredits(true); throw new Error(data.message || 'Insufficient credits') }
     if (data.error) throw new Error(data.error)
-    if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
+    if (data.newBalance !== undefined && data.newBalance !== 'admin') setCreditBalance(data.newBalance)
+    if (data.tokensUsed) setTotalTokensUsed(prev => prev + data.tokensUsed)
     return data
   }
 
   async function getPlan() {
     if (!input.trim() || loading) return
     const userMsg: Message = { role: 'user', content: input }
-    setMessages(prev => [...prev, userMsg]); setInput(''); setLoading(true); setLastError(null)
+    setMessages(prev => [...prev, userMsg])
+    await saveChatMessage('user', input)
+    setInput(''); setPendingImage(null); setLoading(true); setLastError(null)
     try {
       const data = await callAPI([{ role: 'user', content: input }], true)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message, isPlan: true }])
+      const aiMsg: Message = { role: 'assistant', content: data.message, isPlan: true }
+      setMessages(prev => [...prev, aiMsg])
+      await saveChatMessage('assistant', data.message, true)
       setPendingPlan(input)
     } catch (err: any) { setLastError(err.message); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]) }
     setLoading(false)
@@ -131,28 +207,51 @@ export default function ProjectBuilder() {
   async function approvePlan() {
     if (!pendingPlan) return
     const approveMsg: Message = { role: 'user', content: 'Plan approved. Build it now exactly as planned.' }
-    setMessages(prev => [...prev, approveMsg]); setPendingPlan(null); setLoading(true); setLastError(null)
+    setMessages(prev => [...prev, approveMsg])
+    await saveChatMessage('user', approveMsg.content)
+    setPendingPlan(null); setLoading(true); setLastError(null)
     try {
       const allMsgs = [...messages, approveMsg].map(m => ({ role: m.role, content: m.content }))
       const data = await callAPI(allMsgs)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+      const aiMsg: Message = { role: 'assistant', content: data.message }
+      setMessages(prev => [...prev, aiMsg])
+      await saveChatMessage('assistant', data.message)
       if (data.code) await savePage(data.code)
     } catch (err: any) { setLastError(err.message); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]) }
     setLoading(false)
   }
 
   async function sendMessage() {
-    if (!input.trim() || loading || !activePage) return
+    if ((!input.trim() && !pendingImage) || loading || !activePage) return
     if (mode === 'plan') { getPlan(); return }
-    const userMsg: Message = { role: 'user', content: input }
+
+    const msgContent = input || (pendingImage ? '(sent an image)' : '')
+    const userMsg: Message = { role: 'user', content: msgContent, imageUrl: pendingImage?.preview }
     const newMsgs = [...messages, userMsg]
-    setMessages(newMsgs); setInput(''); setLoading(true); setLastError(null)
+    setMessages(newMsgs)
+    await saveChatMessage('user', msgContent)
+    setInput(''); setLoading(true); setLastError(null)
+    const imgToSend = pendingImage
+    setPendingImage(null)
+
     try {
-      const data = await callAPI(newMsgs.map(m => ({ role: m.role, content: m.content })))
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+      const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }))
+      const data = await callAPI(apiMsgs)
+      const aiMsg: Message = { role: 'assistant', content: data.message }
+      setMessages(prev => [...prev, aiMsg])
+      await saveChatMessage('assistant', data.message)
       if (data.code) await savePage(data.code)
-    } catch (err: any) { setLastError(err.message); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]) }
+    } catch (err: any) {
+      setLastError(err.message)
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+    }
     setLoading(false)
+  }
+
+  async function clearChatHistory() {
+    if (!activePage) return
+    await supabase.from('chat_history').delete().eq('page_id', activePage.id)
+    setMessages([])
   }
 
   async function buyCredits(packId: string) {
@@ -168,9 +267,12 @@ export default function ProjectBuilder() {
   if (!user || !project) return <div style={s.loading}>Loading...</div>
 
   const isAdmin = user?.email === ADMIN_EMAIL
+  const balanceDisplay = creditBalance === 'admin' ? '∞ Admin' : `$${(creditBalance as number).toFixed(2)}`
+  const balanceColor = creditBalance === 'admin' ? '#9d92f5' : (creditBalance as number) > 0 ? '#5DCAA5' : '#f09595'
 
   return (
     <div style={s.root}>
+      {/* TOPBAR */}
       <div style={s.topbar}>
         <div style={s.topLeft}>
           <button onClick={() => router.push('/home')} style={s.backBtn}>← Projects</button>
@@ -184,15 +286,17 @@ export default function ProjectBuilder() {
             </button>
           )}
           <div style={s.balancePill}>
-            <span style={{ fontSize:10, color: creditBalance > 0 ? '#5DCAA5' : '#f09595' }}>
-              ${(isAdmin ? 999 : creditBalance).toFixed(2)} credits
-            </span>
+            <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
+            {creditBalance !== 'admin' && <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>}
           </div>
+          <div style={{ fontSize:10, color:'#444' }}>{totalTokensUsed.toLocaleString()} tokens</div>
           <span style={s.email}>{user.email}</span>
         </div>
       </div>
 
+      {/* MAIN */}
       <div style={s.main}>
+        {/* LEFT PANEL */}
         <div style={s.left}>
           <div style={s.tabs}>
             <button style={{ ...s.tab, ...(sidebarTab==='chat' ? s.tabOn : {}) }} onClick={() => setSidebarTab('chat')}>Chat</button>
@@ -202,11 +306,11 @@ export default function ProjectBuilder() {
           {sidebarTab === 'chat' && (
             <>
               <div style={s.msgs}>
-                {messages.length === 0 && (
+                {messages.length === 0 ? (
                   <div style={s.empty}>
                     <div style={{ fontSize:28, marginBottom:12 }}>✦</div>
                     <p style={{ color:'#555', fontSize:13, textAlign:'center', lineHeight:1.6, marginBottom:20 }}>
-                      Describe what to build and I'll create it instantly.
+                      Describe what to build and I'll create it instantly. You can also upload a screenshot for reference.
                     </p>
                     <div style={s.chips}>
                       {['Admin dashboard with sidebar', 'Inventory tracker', 'Sales dashboard with charts', 'User management panel'].map(t => (
@@ -214,21 +318,30 @@ export default function ProjectBuilder() {
                       ))}
                     </div>
                   </div>
-                )}
-                {messages.map((msg, i) => (
-                  <div key={i} style={{ ...s.msgRow, ...(msg.role==='user' ? s.msgRight : {}) }}>
-                    <div style={{ ...s.bubble, ...(msg.role==='user' ? s.bubbleUser : msg.isPlan ? s.bubblePlan : s.bubbleAI) }}>
-                      {msg.isPlan && <div style={s.planLabel}>📋 Plan — approve to build</div>}
-                      <div style={{ whiteSpace:'pre-wrap', fontSize:12.5, lineHeight:1.6 }}>{msg.content}</div>
-                      {msg.isPlan && pendingPlan && (
-                        <div style={{ display:'flex', gap:8, marginTop:12 }}>
-                          <button onClick={approvePlan} style={s.approveBtn}>✓ Approve & Build</button>
-                          <button onClick={() => setPendingPlan(null)} style={s.reviseBtn}>✕ Revise</button>
-                        </div>
-                      )}
+                ) : (
+                  <>
+                    <div style={s.chatActions}>
+                      <button onClick={clearChatHistory} style={s.clearBtn}>Clear history</button>
                     </div>
-                  </div>
-                ))}
+                    {messages.map((msg, i) => (
+                      <div key={i} style={{ ...s.msgRow, ...(msg.role==='user' ? s.msgRight : {}) }}>
+                        <div style={{ ...s.bubble, ...(msg.role==='user' ? s.bubbleUser : msg.isPlan ? s.bubblePlan : s.bubbleAI) }}>
+                          {msg.isPlan && <div style={s.planLabel}>📋 Plan — approve to build</div>}
+                          {msg.imageUrl && (
+                            <img src={msg.imageUrl} alt="uploaded" style={{ width:'100%', borderRadius:6, marginBottom:8, maxHeight:150, objectFit:'cover' as const }} />
+                          )}
+                          <div style={{ whiteSpace:'pre-wrap', fontSize:12.5, lineHeight:1.6 }}>{msg.content}</div>
+                          {msg.isPlan && pendingPlan && (
+                            <div style={{ display:'flex', gap:8, marginTop:12 }}>
+                              <button onClick={approvePlan} style={s.approveBtn}>✓ Approve & Build</button>
+                              <button onClick={() => setPendingPlan(null)} style={s.reviseBtn}>✕ Revise</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
                 {loading && (
                   <div style={s.msgRow}>
                     <div style={{ ...s.bubble, ...s.bubbleAI }}>
@@ -243,21 +356,31 @@ export default function ProjectBuilder() {
                 <div ref={messagesEndRef} />
               </div>
 
+              {/* Image preview */}
+              {pendingImage && (
+                <div style={s.imgPreview}>
+                  <img src={pendingImage.preview} alt="pending" style={{ height:48, width:48, objectFit:'cover' as const, borderRadius:6 }} />
+                  <span style={{ fontSize:11, color:'#888', flex:1 }}>Image attached</span>
+                  <button onClick={() => setPendingImage(null)} style={s.removeImgBtn}>✕</button>
+                </div>
+              )}
+
               <div style={s.inputArea}>
                 <div style={s.modeRow}>
                   <button onClick={() => { setMode('plan'); setPendingPlan(null) }} style={{ ...s.modeBtn, ...(mode==='plan' ? s.modeBtnOn : {}) }}>📋 Plan</button>
                   <button onClick={() => setMode('build')} style={{ ...s.modeBtn, ...(mode==='build' ? s.modeBtnOn : {}) }}>⚡ Build</button>
                   <span style={{ flex:1 }} />
-                  <span style={{ fontSize:10, color:'#444' }}>{mode==='plan' ? 'Plan first' : 'Build directly'}</span>
+                  <button onClick={() => fileInputRef.current?.click()} style={s.imgBtn} title="Attach image">🖼</button>
+                  <input ref={fileInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handleImageUpload} />
                 </div>
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder="Describe what to build or change..."
+                  placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Describe what to build or change...'}
                   rows={3} style={s.textarea} disabled={loading}
                 />
-                <button onClick={sendMessage} disabled={loading || !input.trim()} style={s.sendBtn}>
+                <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} style={s.sendBtn}>
                   {loading ? 'Working...' : mode==='plan' ? '📋 Create Plan' : '⚡ Build'}
                 </button>
               </div>
@@ -282,7 +405,7 @@ export default function ProjectBuilder() {
               <div style={{ flex:1, overflowY:'auto' }}>
                 {pages.map(page => (
                   <div key={page.id} style={{ ...s.pageItem, ...(activePage?.id===page.id ? s.pageItemOn : {}) }}>
-                    <div style={{ flex:1, cursor:'pointer' }} onClick={() => { setActivePage(page); setMessages([]); setSidebarTab('chat') }}>
+                    <div style={{ flex:1, cursor:'pointer' }} onClick={() => { setActivePage(page); setSidebarTab('chat') }}>
                       <div style={{ fontSize:13, fontWeight:500, color:'#f0f0f0' }}>{page.name}</div>
                       <div style={{ fontSize:11, color:'#444', marginTop:2 }}>{new Date(page.updated_at).toLocaleDateString()}</div>
                     </div>
@@ -294,10 +417,11 @@ export default function ProjectBuilder() {
           )}
         </div>
 
+        {/* RIGHT PANEL */}
         <div style={s.right}>
           <div style={s.previewBar}>
             <div style={s.urlBar}>{activePage?.name || 'No page'}</div>
-            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn}>↺</button>
+            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn}>↺ Refresh</button>
           </div>
           {showCode && activePage ? (
             <div style={s.codePanel}>
@@ -320,12 +444,7 @@ export default function ProjectBuilder() {
             <h2 style={s.modalTitle}>Out of credits</h2>
             <p style={{ color:'#888', fontSize:13, marginBottom:20 }}>Purchase credits to continue building.</p>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
-              {[
-                { id:'pack_5', label:'$5', desc:'~50 builds' },
-                { id:'pack_10', label:'$10', desc:'~100 builds' },
-                { id:'pack_25', label:'$25', desc:'~250 builds' },
-                { id:'pack_50', label:'$50', desc:'~500 builds' },
-              ].map(pack => (
+              {[{id:'pack_5',label:'$5',desc:'~50 builds'},{id:'pack_10',label:'$10',desc:'~100 builds'},{id:'pack_25',label:'$25',desc:'~250 builds'},{id:'pack_50',label:'$50',desc:'~500 builds'}].map(pack => (
                 <div key={pack.id} style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, padding:14, textAlign:'center' as const }}>
                   <div style={{ fontSize:20, fontWeight:700, color:'#f0f0f0', marginBottom:4 }}>{pack.label}</div>
                   <div style={{ fontSize:11, color:'#666', marginBottom:10 }}>{pack.desc}</div>
@@ -358,7 +477,7 @@ const s: Record<string, React.CSSProperties> = {
   topRight: { display:'flex', alignItems:'center', gap:12 },
   codeBtn: { padding:'5px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#666', fontSize:12, cursor:'pointer', fontFamily:'monospace' },
   codeBtnOn: { background:'rgba(124,110,247,0.1)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
-  balancePill: { padding:'4px 10px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20 },
+  balancePill: { display:'flex', alignItems:'center', padding:'4px 10px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20 },
   email: { fontSize:11, color:'#444' },
   main: { display:'flex', flex:1, overflow:'hidden' },
   left: { width:300, minWidth:300, display:'flex', flexDirection:'column', borderRight:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', overflow:'hidden' },
@@ -366,6 +485,8 @@ const s: Record<string, React.CSSProperties> = {
   tab: { flex:1, padding:10, background:'none', border:'none', color:'#444', fontSize:12, cursor:'pointer', fontWeight:500, borderBottom:'2px solid transparent' },
   tabOn: { color:'#f0f0f0', borderBottom:'2px solid #7c6ef7' },
   msgs: { flex:1, overflowY:'auto', padding:12, display:'flex', flexDirection:'column', gap:10 },
+  chatActions: { display:'flex', justifyContent:'flex-end', marginBottom:4 },
+  clearBtn: { fontSize:10, color:'#444', background:'none', border:'none', cursor:'pointer', padding:'2px 6px' },
   empty: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'32px 8px', flex:1 },
   chips: { display:'flex', flexWrap:'wrap', gap:5, justifyContent:'center' },
   chip: { padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20, color:'#666', fontSize:11, cursor:'pointer' },
@@ -380,10 +501,13 @@ const s: Record<string, React.CSSProperties> = {
   reviseBtn: { padding:'6px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#666', fontSize:12, cursor:'pointer' },
   dot: { width:6, height:6, borderRadius:'50%', background:'#444', display:'inline-block', animation:'bounce 1.2s infinite' },
   errBox: { background:'rgba(163,45,45,0.12)', border:'1px solid rgba(163,45,45,0.25)', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#f09595' },
+  imgPreview: { display:'flex', alignItems:'center', gap:8, padding:'8px 10px', background:'#1a1a1a', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 },
+  removeImgBtn: { background:'none', border:'none', color:'#666', cursor:'pointer', fontSize:12 },
   inputArea: { padding:10, borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', flexDirection:'column', gap:8, flexShrink:0 },
   modeRow: { display:'flex', alignItems:'center', gap:6 },
   modeBtn: { padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#666', fontSize:11, cursor:'pointer', fontWeight:500 },
   modeBtnOn: { background:'rgba(124,110,247,0.15)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
+  imgBtn: { padding:'3px 8px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, cursor:'pointer', fontSize:14 },
   textarea: { padding:10, background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, color:'#f0f0f0', fontSize:13, resize:'none', outline:'none', lineHeight:1.5 },
   sendBtn: { padding:9, background:'#7c6ef7', border:'none', borderRadius:8, color:'white', fontSize:13, fontWeight:500, cursor:'pointer' },
   pagesPanel: { display:'flex', flexDirection:'column', flex:1, overflow:'hidden' },
@@ -393,11 +517,11 @@ const s: Record<string, React.CSSProperties> = {
   cancelBtn: { padding:'7px 10px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#555', fontSize:12, cursor:'pointer' },
   pageItem: { display:'flex', alignItems:'center', padding:'10px 16px', borderBottom:'1px solid rgba(255,255,255,0.05)', gap:8 },
   pageItemOn: { background:'rgba(124,110,247,0.07)' },
-  delBtn: { background:'none', border:'none', color:'#333', cursor:'pointer', fontSize:11, padding:'2px 4px', borderRadius:4 },
+  delBtn: { background:'none', border:'none', color:'#333', cursor:'pointer', fontSize:11 },
   right: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   previewBar: { display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
   urlBar: { flex:1, padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, fontSize:12, color:'#444' },
-  refreshBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#444', cursor:'pointer', fontSize:14 },
+  refreshBtn: { padding:'4px 12px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#666', cursor:'pointer', fontSize:12 },
   iframe: { flex:1, border:'none', background:'#0a0a0a', width:'100%', height:'100%' },
   codePanel: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   codeHeader: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
