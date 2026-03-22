@@ -9,6 +9,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Increase body size limit for image uploads
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+}
+
 async function getSettings() {
   const { data } = await supabase.from('settings').select('*')
   const map: Record<string, number> = {}
@@ -57,17 +66,15 @@ Respond in plain text only.`
 PAGE: "${pageName || 'My Page'}"
 OTHER PAGES: ${pageList}
 
-CURRENT PAGE CODE (this is exactly what is rendered in the preview right now):
+CURRENT PAGE CODE:
 \`\`\`html
 ${pageCode || '<!-- empty page -->'}
 \`\`\`
 
-You can see the current page code above. When the user asks to modify something, you understand exactly what is already there and make precise targeted changes while keeping everything else intact.
+You can see the current page code above. Make precise changes while keeping everything intact.
+If the user sends a screenshot, use it to understand what they want visually.
 
-If the user sends a screenshot or image, use it to understand what they see visually and what they want changed.
-
-INSTRUCTIONS:
-Build exactly what the user asks. Return your response in this exact format:
+Return your response in this exact format — nothing before or after:
 
 <MESSAGE>Brief description of what you built or changed</MESSAGE>
 <CODE>
@@ -76,7 +83,7 @@ Build exactly what the user asks. Return your response in this exact format:
 </html>
 </CODE>
 
-STACK — always include ALL of these in every page:
+STACK — always include ALL of these:
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7',dark:'#5b50d6'}}}}}</script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -91,12 +98,47 @@ DESIGN:
 - Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
 - Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
 - Table: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden
-- Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
-- Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
+- Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full
+- Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full
+- Sidebar nav inactive: text-white/50 hover:text-white hover:bg-white/[0.05]
+- Sidebar nav active: bg-brand/10 text-brand
+
+ALPINE SIDEBAR PATTERN:
+<div x-data="app()" x-init="init()">
+  <aside class="fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] flex flex-col z-40">
+    <div class="p-4 border-b border-white/[0.08] flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">A</div>
+      <span class="text-white font-semibold text-sm">My App</span>
+    </div>
+    <nav class="flex-1 p-2 space-y-0.5">
+      <div @click="section='dashboard'" :class="section==='dashboard'?'bg-brand/10 text-brand':'text-white/50 hover:text-white hover:bg-white/[0.05]'" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-all">
+        <i class="fa-solid fa-gauge w-4 text-center"></i><span>Dashboard</span>
+      </div>
+    </nav>
+  </aside>
+  <header class="fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] flex items-center justify-between px-6 z-30">
+    <h1 class="text-white font-medium text-sm" x-text="section.charAt(0).toUpperCase()+section.slice(1)"></h1>
+  </header>
+  <main class="ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]">
+    <div x-show="section==='dashboard'">...</div>
+  </main>
+</div>
+<script>
+function app() {
+  return {
+    section: 'dashboard',
+    items: [],
+    init() {
+      this.items = JSON.parse(localStorage.getItem('items') || '[]')
+      this.$watch('items', v => localStorage.setItem('items', JSON.stringify(v)))
+    }
+  }
+}
+</script>
 
 RULES:
-- Output ONLY the XML format — nothing before MESSAGE or after CODE closing tag
-- Always output the COMPLETE HTML document
+- Output ONLY the XML format above
+- Always output COMPLETE HTML document
 - Use Tailwind classes only
 - Every button must work
 - Persist data to localStorage
@@ -105,7 +147,6 @@ RULES:
   try {
     const lastMessage = messages[messages.length - 1]
 
-    // Build last message content - support images
     let lastContent: any = lastMessage?.content || ''
     if (imageBase64 && imageMediaType) {
       lastContent = [
@@ -136,7 +177,6 @@ RULES:
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
     const userCharge = apiCost * settings.markupMultiplier
 
-    // Track usage for everyone including admin
     if (isAdmin) {
       await supabase.from('transactions').insert({
         user_id: userId,
@@ -159,7 +199,6 @@ RULES:
       }
     }
 
-    // Parse response
     let message = 'Done!'
     let code = null
 

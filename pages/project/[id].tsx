@@ -160,6 +160,28 @@ export default function ProjectBuilder() {
     e.target.value = ''
   }
 
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        e.preventDefault()
+        const file = items[i].getAsFile()
+        if (!file) continue
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          const result = ev.target?.result as string
+          const base64 = result.split(',')[1]
+          const mediaType = file.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+          setPendingImage({ base64, mediaType, preview: result })
+        }
+        reader.readAsDataURL(file)
+        break
+      }
+    }
+  }
+
   async function callAPI(msgs: any[], planOnly = false) {
     const payload: any = {
       messages: msgs,
@@ -377,7 +399,8 @@ export default function ProjectBuilder() {
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Describe what to build or change...'}
+                  onPaste={handlePaste}
+                  placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
                   rows={3} style={s.textarea} disabled={loading}
                 />
                 <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} style={s.sendBtn}>
