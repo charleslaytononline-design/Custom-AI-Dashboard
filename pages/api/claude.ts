@@ -38,7 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const isAdmin = profile.role === 'admin'
 
-  if (!isAdmin && profile.credit_balance <= 0) {
+  if (profile.credit_balance <= 0) {
     return res.status(402).json({
       error: 'insufficient_credits',
       message: 'You need to purchase credits to continue building.',
@@ -211,27 +211,16 @@ RULES:
       }
     }
 
-    // Track usage
-    if (isAdmin) {
-      await supabase.from('transactions').insert({
-        user_id: userId,
-        type: 'usage',
-        amount: -userCharge,
-        description: `AI build (admin): ${pageName}`,
-        tokens_used: totalTokens,
-        api_cost: apiCost,
-      })
-    } else {
-      const { data: deducted } = await supabase.rpc('deduct_credits', {
-        p_user_id: userId,
-        p_amount: userCharge,
-        p_description: `AI build: ${pageName}`,
-        p_tokens_used: totalTokens,
-        p_api_cost: apiCost,
-      })
-      if (!deducted) {
-        return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits.' })
-      }
+    // Deduct credits from everyone including admin
+    const { data: deducted } = await supabase.rpc('deduct_credits', {
+      p_user_id: userId,
+      p_amount: userCharge,
+      p_description: `AI build: ${pageName}`,
+      p_tokens_used: totalTokens,
+      p_api_cost: apiCost,
+    })
+    if (!deducted) {
+      return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits.' })
     }
 
     // Parse response
@@ -272,7 +261,7 @@ RULES:
       apiCost,
       userCharge,
       imageGenerated: !!generatedImageUrl,
-      newBalance: isAdmin ? 'admin' : (updatedProfile?.credit_balance || 0),
+      newBalance: updatedProfile?.credit_balance || 0,
     })
   } catch (err: any) {
     res.status(500).json({ error: err.message })

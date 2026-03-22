@@ -18,7 +18,7 @@ export default function ProjectBuilder() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [creditBalance, setCreditBalance] = useState<number | 'admin'>(0)
+  const [creditBalance, setCreditBalance] = useState<number>(0)
   const [newPageName, setNewPageName] = useState('')
   const [showNewPage, setShowNewPage] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'pages'>('chat')
@@ -38,7 +38,7 @@ export default function ProjectBuilder() {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
       loadProfile(data.user.id)
-      if (data.user.email === ADMIN_EMAIL) setCreditBalance('admin')
+      // balance loaded from profile
     })
   }, [])
 
@@ -205,7 +205,7 @@ export default function ProjectBuilder() {
     const data = await res.json()
     if (data.error === 'insufficient_credits') { setShowBuyCredits(true); throw new Error(data.message || 'Insufficient credits') }
     if (data.error) throw new Error(data.error)
-    if (data.newBalance !== undefined && data.newBalance !== 'admin') setCreditBalance(data.newBalance)
+    if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
     if (data.tokensUsed) setTotalTokensUsed(prev => prev + data.tokensUsed)
     return data
   }
@@ -289,8 +289,8 @@ export default function ProjectBuilder() {
   if (!user || !project) return <div style={s.loading}>Loading...</div>
 
   const isAdmin = user?.email === ADMIN_EMAIL
-  const balanceDisplay = creditBalance === 'admin' ? '∞ Admin' : `$${(creditBalance as number).toFixed(2)}`
-  const balanceColor = creditBalance === 'admin' ? '#9d92f5' : (creditBalance as number) > 0 ? '#5DCAA5' : '#f09595'
+  const balanceDisplay = `$${creditBalance.toFixed(2)}`
+  const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
 
   return (
     <div style={s.root}>
@@ -309,7 +309,7 @@ export default function ProjectBuilder() {
           )}
           <div style={s.balancePill}>
             <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
-            {creditBalance !== 'admin' && <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>}
+            <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>
           </div>
           <div style={{ fontSize:10, color:'#444' }}>{totalTokensUsed.toLocaleString()} tokens</div>
           <span style={s.email}>{user.email}</span>

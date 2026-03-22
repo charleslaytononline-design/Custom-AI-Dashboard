@@ -27,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const isAdmin = profile.role === 'admin'
 
-  if (!isAdmin && profile.credit_balance < MARKUP_PER_IMAGE) {
+  if (profile.credit_balance < MARKUP_PER_IMAGE) {
     return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits to generate an image.' })
   }
 
@@ -109,24 +109,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.log('Storage upload failed, using Replicate URL:', storageErr)
     }
 
-    // Step 4: Deduct credits
-    if (!isAdmin) {
-      await supabase.rpc('deduct_credits', {
-        p_user_id: userId,
-        p_amount: MARKUP_PER_IMAGE,
-        p_description: `Image generation: ${prompt.slice(0, 50)}`,
-        p_tokens_used: 0,
-        p_api_cost: COST_PER_IMAGE,
-      })
-    } else {
-      await supabase.from('transactions').insert({
-        user_id: userId,
-        type: 'usage',
-        amount: -MARKUP_PER_IMAGE,
-        description: `Image generation (admin): ${prompt.slice(0, 50)}`,
-        api_cost: COST_PER_IMAGE,
-      })
-    }
+    // Step 4: Deduct credits from everyone including admin
+    await supabase.rpc('deduct_credits', {
+      p_user_id: userId,
+      p_amount: MARKUP_PER_IMAGE,
+      p_description: `Image generation: ${prompt.slice(0, 50)}`,
+      p_tokens_used: 0,
+      p_api_cost: COST_PER_IMAGE,
+    })
 
     // Get updated balance
     const { data: updatedProfile } = await supabase
@@ -134,7 +124,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     res.status(200).json({
       url: permanentUrl,
-      newBalance: isAdmin ? 'admin' : (updatedProfile?.credit_balance || 0),
+      newBalance: updatedProfile?.credit_balance || 0,
     })
 
   } catch (err: any) {

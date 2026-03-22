@@ -41,7 +41,7 @@ export default function Admin() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/home'); return }
+      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/dashboard'); return }
       setUser(data.user)
       loadAll()
     })
@@ -83,16 +83,19 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      setSettings(map as unknown as Settings)
+      setSettings(map as Settings)
     }
   }
 
   async function loadRevenue() {
-    const { data } = await supabase.from('transactions').select('amount, api_cost, type')
+    const { data } = await supabase.from('transactions').select('amount, api_cost, type, description')
     if (!data) return
     let revenue = 0, apiCost = 0
     data.forEach((t: any) => {
-      if (t.type === 'usage') { revenue += Math.abs(t.amount); apiCost += (t.api_cost || 0) }
+      if (t.type === 'usage') {
+        revenue += Math.abs(t.amount)
+        apiCost += (t.api_cost || 0)
+      }
     })
     setTotalRevenue(revenue)
     setTotalApiCost(apiCost)
@@ -149,7 +152,7 @@ export default function Admin() {
           </div>
         </div>
         <nav style={s.nav}>
-          <div style={s.navItem} onClick={() => router.push('/home')}>
+          <div style={s.navItem} onClick={() => router.push('/dashboard')}>
             <span>⊞</span> Projects
           </div>
           <div style={{ ...s.navItem, ...s.navActive }}>
