@@ -246,18 +246,9 @@ export default function Dashboard() {
           {activePage && <><span style={s.sep}>/</span><span style={s.pageName}>{activePage.name}</span></>}
         </div>
         <div style={s.topRight}>
-          {/* Mode toggle */}
-          <div style={s.modeToggle}>
-            <button onClick={() => { setMode('plan'); setPendingPlan(null) }} style={{ ...s.modeBtn, ...(mode === 'plan' ? s.modeBtnActive : {}) }}>
-              <span style={{ marginRight: 5 }}>📋</span> Plan
-            </button>
-            <button onClick={() => setMode('build')} style={{ ...s.modeBtn, ...(mode === 'build' ? s.modeBtnActive : {}) }}>
-              <span style={{ marginRight: 5 }}>⚡</span> Build
-            </button>
-          </div>
           {activePage && (
             <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnActive : {}) }}>
-              {'</>'}  {showCode ? 'Hide Code' : 'View Code'}
+              {'</>'} {showCode ? 'Hide Code' : 'View Code'}
             </button>
           )}
           <div style={s.tokenBadge}>
@@ -280,15 +271,6 @@ export default function Dashboard() {
 
           {sidebarTab === 'chat' && (
             <>
-              {/* Mode indicator */}
-              <div style={s.modeBar}>
-                {mode === 'plan' ? (
-                  <span style={s.modePlanBadge}>📋 Planning Mode — describe what you want, I'll make a plan first</span>
-                ) : (
-                  <span style={s.modeBuildBadge}>⚡ Build Mode — I'll build directly from your description</span>
-                )}
-              </div>
-
               <div style={s.messages}>
                 {messages.length === 0 && (
                   <div style={s.emptyChat}>
@@ -341,6 +323,14 @@ export default function Dashboard() {
               </div>
 
               <div style={s.inputArea}>
+                <div style={s.modeToggle}>
+                  <button onClick={() => { setMode('plan'); setPendingPlan(null) }} style={{ ...s.modeBtn, ...(mode === 'plan' ? s.modeBtnActive : {}) }}>
+                    📋 Plan
+                  </button>
+                  <button onClick={() => setMode('build')} style={{ ...s.modeBtn, ...(mode === 'build' ? s.modeBtnActive : {}) }}>
+                    ⚡ Build
+                  </button>
+                </div>
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
@@ -430,8 +420,8 @@ const s: Record<string, React.CSSProperties> = {
   sep: { color:'#333', fontSize:16 },
   pageName: { fontSize:13, color:'#666' },
   topRight: { display:'flex', alignItems:'center', gap:12 },
-  modeToggle: { display:'flex', background:'#1a1a1a', borderRadius:8, padding:3, border:'1px solid rgba(255,255,255,0.07)' },
-  modeBtn: { padding:'4px 12px', borderRadius:6, border:'none', cursor:'pointer', fontSize:12, fontWeight:500, background:'transparent', color:'#666', transition:'all 0.15s' },
+  modeToggle: { display:'flex', background:'#1a1a1a', borderRadius:8, padding:3, border:'1px solid rgba(255,255,255,0.07)', width:'100%' },
+  modeBtn: { flex:1, padding:'6px 0', borderRadius:6, border:'none', cursor:'pointer', fontSize:12, fontWeight:500, background:'transparent', color:'#666', transition:'all 0.15s', textAlign:'center' as const },
   modeBtnActive: { background:'#7c6ef7', color:'white' },
   codeBtn: { padding:'5px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#888', fontSize:12, cursor:'pointer', fontFamily:'monospace' },
   codeBtnActive: { background:'rgba(124,110,247,0.15)', borderColor:'rgba(124,110,247,0.4)', color:'#9d92f5' },
