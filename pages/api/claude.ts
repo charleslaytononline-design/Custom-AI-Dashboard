@@ -1,12 +1,58 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import Anthropic from '@anthropic-ai/sdk'
+import { createClient } from '@supabase/supabase-js'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+// Service role to bypass RLS for credit operations
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+async function getSettings() {
+  const { data } = await supabase.from('settings').select('*')
+  const map: Record<string, number> = {}
+  data?.forEach((s: any) => { map[s.key] = parseFloat(s.value) })
+  return {
+    markupMultiplier: map['markup_multiplier'] || 3.0,
+    inputCostPer1k: map['input_cost_per_1k'] || 0.003,
+    outputCostPer1k: map['output_cost_per_1k'] || 0.015,
+  }
+}
+
+function calculateCost(inputTokens: number, outputTokens: number, settings: any) {
+  const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
+  const userCharge = apiCost * settings.markupMultiplier
+  return { apiCost, userCharge }
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId } = req.body
+
+  if (!userId) return res.status(401).json({ error: 'Not authenticated' })
+
+  // Check credit balance before proceeding
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('credit_balance, role')
+    .eq('id', userId)
+    .single()
+
+  if (!profile) return res.status(401).json({ error: 'User not found' })
+
+  // Allow admin to use without credits for testing
+  if (profile.role !== 'admin' && profile.credit_balance <= 0) {
+    return res.status(402).json({ 
+      error: 'insufficient_credits',
+      message: 'You need to purchase credits to continue building.',
+      balance: profile.credit_balance
+    })
+  }
+
+  const settings = await getSettings()
   const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
 
   const system = planOnly
@@ -42,30 +88,26 @@ DESIGN:
 - Sidebar: fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] z-40
 - Topbar: fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] z-30 flex items-center px-6
 - Main: ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]
-- Primary text: text-white
-- Muted text: text-white/50
 - Buttons primary: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
 - Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
 - Table wrapper: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden w-full
 - Thead: bg-[#1a1a1a] text-white/40 text-xs uppercase tracking-wider
 - Th/Td: px-4 py-3 text-left
 - Tbody tr: border-t border-white/[0.05] text-white/80 text-sm hover:bg-white/[0.02]
-- Stat card: bg-[#141414] border border-white/[0.08] rounded-xl p-5
 - Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 - Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
-- Yellow badge: bg-amber-500/10 text-amber-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 - Sidebar nav inactive: flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer text-white/50 hover:text-white hover:bg-white/[0.05] transition-all
 - Sidebar nav active: flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer bg-brand/10 text-brand
 
-ALPINE PATTERN for multi-section apps:
+ALPINE PATTERN:
 <div x-data="app()" x-init="init()">
   <aside class="fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] flex flex-col z-40">
     <div class="p-4 border-b border-white/[0.08] flex items-center gap-2.5">
       <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">A</div>
       <span class="text-white font-semibold text-sm">My App</span>
     </div>
-    <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
-      <div @click="section='dashboard'" :class="section==='dashboard' ? 'bg-brand/10 text-brand' : 'text-white/50 hover:text-white hover:bg-white/[0.05]'" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-all">
+    <nav class="flex-1 p-2 space-y-0.5">
+      <div @click="section='dashboard'" :class="section==='dashboard'?'bg-brand/10 text-brand':'text-white/50 hover:text-white hover:bg-white/[0.05]'" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-all">
         <i class="fa-solid fa-gauge w-4 text-center"></i><span>Dashboard</span>
       </div>
     </nav>
@@ -83,7 +125,6 @@ function app() {
   return {
     section: 'dashboard',
     items: [],
-    showModal: false,
     init() {
       this.items = JSON.parse(localStorage.getItem('appItems') || '[]')
       this.$watch('items', v => localStorage.setItem('appItems', JSON.stringify(v)))
@@ -93,12 +134,11 @@ function app() {
 </script>
 
 RULES:
-- Always output the COMPLETE HTML document
-- Use Tailwind classes only — no custom CSS blocks
-- Every button must work — no dead UI
-- Use realistic sample data, not lorem ipsum
-- Persist all data to localStorage
-- Keep ALL existing features when updating — only add, never remove`
+- Always output complete HTML document
+- Use Tailwind classes only
+- Every button must work
+- Persist data to localStorage
+- Keep ALL existing features when updating`
 
   try {
     const response = await client.messages.create({
@@ -109,37 +149,65 @@ RULES:
     })
 
     const raw = response.content.map((b: any) => b.text || '').join('')
-    const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+    const inputTokens = response.usage.input_tokens
+    const outputTokens = response.usage.output_tokens
+    const totalTokens = inputTokens + outputTokens
+
+    // Calculate costs
+    const { apiCost, userCharge } = calculateCost(inputTokens, outputTokens, settings)
+
+    // Deduct credits (skip for admin)
+    if (profile.role !== 'admin') {
+      const { data: deducted } = await supabase.rpc('deduct_credits', {
+        p_user_id: userId,
+        p_amount: userCharge,
+        p_description: `AI build: ${pageName}`,
+        p_tokens_used: totalTokens,
+        p_api_cost: apiCost,
+      })
+
+      if (!deducted) {
+        return res.status(402).json({ 
+          error: 'insufficient_credits',
+          message: 'Not enough credits. Please purchase more to continue.',
+        })
+      }
+    }
+
+    // Parse response
+    let message = 'Done!'
+    let code = null
 
     if (planOnly) {
-      return res.status(200).json({ message: raw, tokensUsed })
+      message = raw
+    } else {
+      const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/i)
+      const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/i)
+      if (messageMatch && codeMatch) {
+        message = messageMatch[1].trim()
+        code = codeMatch[1].trim()
+      } else {
+        const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*<\/html>/i)
+        if (htmlMatch) code = htmlMatch[0]
+        message = 'Done! Your page has been updated.'
+      }
     }
 
-    // Extract using XML tags — much more reliable than JSON parsing
-    const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/i)
-    const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/i)
+    // Get updated balance
+    const { data: updatedProfile } = await supabase
+      .from('profiles')
+      .select('credit_balance')
+      .eq('id', userId)
+      .single()
 
-    if (messageMatch && codeMatch) {
-      return res.status(200).json({
-        message: messageMatch[1].trim(),
-        code: codeMatch[1].trim(),
-        tokensUsed
-      })
-    }
-
-    // Fallback: try to find raw HTML
-    const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*<\/html>/i)
-    if (htmlMatch) {
-      return res.status(200).json({
-        message: 'Done! Your page has been updated.',
-        code: htmlMatch[0],
-        tokensUsed
-      })
-    }
-
-    // Last resort
-    return res.status(200).json({ message: raw.slice(0, 300), tokensUsed })
-
+    res.status(200).json({ 
+      message, 
+      code,
+      tokensUsed: totalTokens,
+      apiCost,
+      userCharge,
+      newBalance: updatedProfile?.credit_balance || 0,
+    })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }
