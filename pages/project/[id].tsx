@@ -50,31 +50,40 @@ export default function ProjectBuilder() {
 
   const renderIframe = useCallback((code: string) => {
     if (!iframeRef.current) return
-    // The iframe sandbox does NOT include allow-same-origin.
-    // Without it the iframe gets a null origin so hash/path navigation stays
-    // sandboxed — clicking <a href="#benefits"> no longer loads the real project
-    // builder page inside the preview.
-    // Downside: localStorage throws SecurityError, so we polyfill it in-memory.
-    const polyfill = `<script>
+    // Inject a nav guard so generated <a href="..."> links don't navigate the
+    // iframe to real app routes (which would load the project builder inside the preview).
+    // - Hash links (#section) → smoothly scroll to the element, no navigation
+    // - External http(s) links → open in new tab
+    // - Same-origin path links → blocked entirely
+    // - history.pushState/replaceState → neutralised
+    // allow-same-origin is kept so Alpine.js, localStorage etc. work normally.
+    const guard = `<script>
 (function(){
-  function Mem(){this._={}}
-  Mem.prototype={
-    getItem:function(k){return this._.hasOwnProperty(k)?this._[k]:null},
-    setItem:function(k,v){this._[k]=String(v)},
-    removeItem:function(k){delete this._[k]},
-    clear:function(){this._={}},
-    key:function(i){return Object.keys(this._)[i]||null},
-    get length(){return Object.keys(this._).length}
-  };
-  try{localStorage.setItem('__chk','1');localStorage.removeItem('__chk')}
-  catch(e){
-    var m=new Mem(),s=new Mem();
-    try{Object.defineProperty(window,'localStorage',{value:m,configurable:true,writable:true})}catch(_){window.localStorage=m}
-    try{Object.defineProperty(window,'sessionStorage',{value:s,configurable:true,writable:true})}catch(_){window.sessionStorage=s}
-  }
-})()
+  document.addEventListener('click', function(e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    var href = a.getAttribute('href') || '';
+    if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (href.startsWith('#')) {
+      var id = href.slice(1);
+      var el = document.getElementById(id);
+      if (el) el.scrollIntoView({behavior:'smooth'});
+    } else if (href.startsWith('http://') || href.startsWith('https://')) {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+    // all other links (same-origin paths) are silently blocked
+  }, true);
+  try {
+    var _push = history.pushState.bind(history);
+    var _replace = history.replaceState.bind(history);
+    history.pushState = function(s,t,u){ if(u && String(u).startsWith('#')) _push(s,t,u); };
+    history.replaceState = function(s,t,u){ if(u && String(u).startsWith('#')) _replace(s,t,u); };
+  } catch(e){}
+})();
 <\/script>`
-    const injected = code.replace(/(<head[^>]*>)/i, '$1' + polyfill)
+    const injected = code.replace(/(<head[^>]*>)/i, '$1' + guard)
     iframeRef.current.srcdoc = injected || code
   }, [])
 
@@ -459,7 +468,7 @@ if (data) {
         {/* RIGHT PANEL */}
         <div style={s.right}>
           <div style={s.previewBar}>
-            {/* Page selector dropdown */}
+            {/* Page selector */}
             <div style={s.pageSelector}>
               <span style={s.pageSelectorIcon}>⊞</span>
               <select
@@ -473,14 +482,24 @@ if (data) {
                 {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            {/* Fake URL bar */}
+            {/* URL bar showing preview link */}
             <div style={s.urlBar}>
-              <span style={{ color: '#2a2a2a' }}>preview /</span>
-              <span style={{ color: '#555', marginLeft: 6 }}>
+              <span style={{ color: '#333', userSelect: 'none' as const }}>customaidashboard.com / preview /</span>
+              <span style={{ color: '#666', marginLeft: 6 }}>
                 {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
               </span>
             </div>
-            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn}>↺</button>
+            {/* Open in new tab */}
+            {activePage && (
+              <button
+                onClick={() => window.open(`/api/preview/${activePage.id}`, '_blank', 'noopener')}
+                style={s.openBtn}
+                title="Open preview in new tab"
+              >
+                ↗
+              </button>
+            )}
+            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn} title="Refresh preview">↺</button>
           </div>
           {showCode && activePage ? (
             <div style={s.codePanel}>
@@ -491,7 +510,7 @@ if (data) {
               <pre style={s.codeContent}>{activePage.code}</pre>
             </div>
           ) : (
-            <iframe ref={iframeRef} sandbox="allow-scripts allow-forms allow-modals" style={s.iframe} title="preview" />
+            <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" style={s.iframe} title="preview" />
           )}
         </div>
       </div>
@@ -583,6 +602,7 @@ const s: Record<string, React.CSSProperties> = {
   pageSelectorIcon: { fontSize:12, color:'#555' },
   pageSelectorSelect: { background:'none', border:'none', color:'#aaa', fontSize:12, outline:'none', cursor:'pointer', maxWidth:120 },
   urlBar: { flex:1, display:'flex', alignItems:'center', padding:'4px 12px', background:'#141414', border:'1px solid rgba(255,255,255,0.06)', borderRadius:7, fontSize:12 },
+  openBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
   refreshBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
   iframe: { flex:1, border:'none', background:'#0a0a0a', width:'100%', height:'100%' },
   codePanel: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
