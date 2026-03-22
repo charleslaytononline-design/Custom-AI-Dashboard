@@ -467,9 +467,11 @@ export default function Admin() {
                             {u.role === 'admin' ? '▼ User' : '▲ Admin'}
                           </button>
                         )}
-                        <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
-                          {u.suspended ? 'Unsuspend' : 'Suspend'}
-                        </button>
+                        {u.id !== user?.id && (
+                          <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
+                            {u.suspended ? 'Unsuspend' : 'Suspend'}
+                          </button>
+                        )}
                         <button onClick={() => { setGiftUserId(u.id); setActiveTab('revenue') }} style={s.actionBtn}>
                           Gift $
                         </button>
