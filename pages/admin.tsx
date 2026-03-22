@@ -85,7 +85,7 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      setSettings(map as Settings)
+      setSettings(map as unknown as Settings)
     }
   }
 
