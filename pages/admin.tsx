@@ -101,6 +101,10 @@ export default function Admin() {
   const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
 
+  // Clients DB status
+  const [clientsDbStatus, setClientsDbStatus] = useState<'checking' | 'connected' | 'error'>('checking')
+  const [clientsDbError, setClientsDbError] = useState('')
+
   // Plans state
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
   const [showNewPlan, setShowNewPlan] = useState(false)
@@ -114,6 +118,13 @@ export default function Admin() {
       setUser(data.user)
       loadAll()
     })
+    fetch('/api/check-clients-db')
+      .then(r => r.json())
+      .then(d => {
+        if (d.connected) { setClientsDbStatus('connected') }
+        else { setClientsDbStatus('error'); setClientsDbError(d.reason || 'Not configured') }
+      })
+      .catch(() => { setClientsDbStatus('error'); setClientsDbError('Request failed') })
   }, [])
 
   async function loadAll() {
@@ -713,21 +724,25 @@ export default function Admin() {
             </div>
 
             {/* Clients DB */}
-            <div style={{ ...s.settingsCard, border: '1px solid rgba(20,184,166,0.2)' }}>
+            <div style={{ ...s.settingsCard, border: `1px solid ${clientsDbStatus === 'connected' ? 'rgba(20,184,166,0.2)' : clientsDbStatus === 'checking' ? 'rgba(255,255,255,0.07)' : 'rgba(163,45,45,0.2)'}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? '#5DCAA5' : '#f09595' }} />
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'checking' ? '#666' : '#f09595' }} />
                 <span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>Clients Database</span>
-                <span style={{ ...s.badge, ...(process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? s.badgeGreen : s.badgeRed) }}>
-                  {process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? 'Connected' : 'Not configured'}
+                <span style={{ ...s.badge, ...(clientsDbStatus === 'connected' ? s.badgeGreen : clientsDbStatus === 'checking' ? s.badgeGray : s.badgeRed) }}>
+                  {clientsDbStatus === 'connected' ? 'Connected' : clientsDbStatus === 'checking' ? 'Checking...' : 'Not connected'}
                 </span>
               </div>
               <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>Stores user-generated app data (schemas, tables, rows) in isolated per-project schemas</div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Provider</span><span style={s.dbVal}>Supabase (separate project)</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Isolation</span><span style={s.dbVal}>Schema per project (proj_{'{project_id}'})</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Registry</span><span style={s.dbVal}>schema_registry · schema_usage</span></div>
-              <div style={{ marginTop: 12, padding: '10px 12px', background: '#0a0a0a', borderRadius: 8, fontSize: 11, color: '#555' }}>
-                Set <code style={{ color: '#9d92f5' }}>CLIENTS_SUPABASE_URL</code> and <code style={{ color: '#9d92f5' }}>CLIENTS_SUPABASE_SERVICE_ROLE_KEY</code> in Vercel environment variables to activate.
-              </div>
+              {clientsDbStatus === 'error' && (
+                <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(163,45,45,0.06)', border: '1px solid rgba(163,45,45,0.15)', borderRadius: 8, fontSize: 11, color: '#f09595' }}>
+                  {clientsDbError === 'env_missing'
+                    ? <>Set <code>CLIENTS_SUPABASE_URL</code> and <code>CLIENTS_SUPABASE_SERVICE_ROLE_KEY</code> in Vercel env vars, then redeploy.</>
+                    : `Error: ${clientsDbError}`}
+                </div>
+              )}
             </div>
           </div>
 
