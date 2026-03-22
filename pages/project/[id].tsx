@@ -49,7 +49,27 @@ export default function ProjectBuilder() {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const renderIframe = useCallback((code: string) => {
-    if (iframeRef.current) iframeRef.current.srcdoc = code
+    if (!iframeRef.current) return
+    // Inject a guard that blocks same-origin navigation inside the preview iframe.
+    // Without this, generated links/scripts can navigate the iframe to real app routes
+    // (e.g. /home, /project/[id]) which loads the full project builder inside the preview.
+    const guard = `<script>
+(function(){
+  document.addEventListener('click', function(e) {
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a) return;
+    var href = a.getAttribute('href') || '';
+    if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) return;
+    try {
+      var url = new URL(href, location.href);
+      if (url.origin === location.origin) { e.preventDefault(); e.stopPropagation(); }
+    } catch(_) {}
+  }, true);
+  window.addEventListener('beforeunload', function(e) { e.preventDefault(); e.returnValue = ''; });
+})();
+<\/script>`
+    const guarded = code.replace(/(<head[^>]*>)/i, '$1' + guard)
+    iframeRef.current.srcdoc = guarded || code
   }, [])
 
   useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage])
