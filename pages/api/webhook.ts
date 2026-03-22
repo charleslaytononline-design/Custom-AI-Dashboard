@@ -30,9 +30,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let event: Stripe.Event
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET!)
-  } catch (err: any) {
-    console.error('Webhook error:', err.message)
-    return res.status(400).json({ error: err.message })
+  } catch {
+    return res.status(400).json({ error: 'Invalid webhook signature' })
   }
 
   if (event.type === 'checkout.session.completed') {
@@ -50,11 +49,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })
 
     if (error) {
-      console.error('Failed to add credits:', error)
       return res.status(500).json({ error: 'Failed to add credits' })
     }
-
-    console.log(`Added $${creditsNum} credits to user ${userId}`)
   }
 
   res.status(200).json({ received: true })

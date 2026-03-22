@@ -3,8 +3,6 @@ import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
 
-const ADMIN_EMAIL = 'charleslayton.online@gmail.com'
-
 interface Project {
   id: string; name: string; description: string; created_at: string; updated_at: string
 }
@@ -79,7 +77,7 @@ export default function Dashboard() {
     setProjects(prev => prev.filter(p => p.id !== id))
   }
 
-  const isAdmin = user?.email === ADMIN_EMAIL
+  const isAdmin = profile?.role === 'admin'
   const balance = profile?.credit_balance || 0
   const hasCredits = isAdmin || balance > 0
 

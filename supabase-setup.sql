@@ -57,11 +57,14 @@ alter table projects enable row level security;
 alter table pages enable row level security;
 alter table usage enable row level security;
 
--- Profiles: users see own, admin sees all
+-- Profiles: users see own, admin sees/updates all
 create policy "users view own profile" on profiles for select using (auth.uid() = id);
 create policy "users insert own profile" on profiles for insert with check (auth.uid() = id);
 create policy "users update own profile" on profiles for update using (auth.uid() = id);
 create policy "admin views all profiles" on profiles for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+create policy "admin updates all profiles" on profiles for update using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
@@ -74,11 +77,14 @@ create policy "admin views all projects" on projects for select using (
   exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 );
 
--- Pages: users see only own
+-- Pages: users see only own, admin sees all
 create policy "users view own pages" on pages for select using (auth.uid() = user_id);
 create policy "users insert own pages" on pages for insert with check (auth.uid() = user_id);
 create policy "users update own pages" on pages for update using (auth.uid() = user_id);
 create policy "users delete own pages" on pages for delete using (auth.uid() = user_id);
+create policy "admin views all pages" on pages for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
 
 -- Usage: users see own
 create policy "users view own usage" on usage for select using (auth.uid() = user_id);
@@ -118,3 +124,24 @@ create index if not exists usage_user_id_idx on usage(user_id);
 create index if not exists profiles_role_idx on profiles(role);
 
 -- Done!
+
+-- ============================================
+-- AMENDMENTS — run these in Supabase SQL Editor
+-- on your EXISTING database (already set up)
+-- ============================================
+
+-- 1. Allow admins to update any profile (needed for role promotion/demotion)
+drop policy if exists "admin updates all profiles" on profiles;
+create policy "admin updates all profiles" on profiles for update using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- 2. Allow admins to view all pages (for admin monitoring)
+drop policy if exists "admin views all pages" on pages;
+create policy "admin views all pages" on pages for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
+
+-- 3. Add suspended column if missing
+alter table profiles add column if not exists suspended boolean not null default false;
+alter table profiles add column if not exists credit_balance numeric not null default 0;

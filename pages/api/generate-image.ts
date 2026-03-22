@@ -104,9 +104,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           .getPublicUrl(fileName)
         permanentUrl = urlData.publicUrl
       }
-    } catch (storageErr) {
+    } catch {
       // Storage failed - use Replicate URL as fallback (expires in 24h)
-      console.log('Storage upload failed, using Replicate URL:', storageErr)
     }
 
     // Step 4: Deduct credits from everyone including admin
@@ -128,7 +127,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })
 
   } catch (err: any) {
-    console.error('Image generation error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Image generation failed' })
   }
 }

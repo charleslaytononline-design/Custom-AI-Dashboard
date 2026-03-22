@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 
-const ADMIN_EMAIL = 'charleslayton.online@gmail.com'
-
 const CREDIT_PACKS = [
   { id: 'pack_5',  amount: 5,  label: '$5',  desc: '~50 builds' },
   { id: 'pack_10', amount: 10, label: '$10', desc: '~100 builds' },
@@ -57,7 +55,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setBuyingPack('')
   }
 
-  const isAdmin = user?.email === ADMIN_EMAIL
+  const isAdmin = profile?.role === 'admin'
   const balance = profile?.credit_balance || 0
   const path = router.pathname
 
@@ -77,6 +75,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             onClick={() => router.push('/home')}
           >
             <span>⊞</span> Projects
+          </div>
+          <div
+            style={{ ...s.navItem, ...(path === '/profile' ? s.navActive : {}) }}
+            onClick={() => router.push('/profile')}
+          >
+            <span>◎</span> My Profile
           </div>
           {isAdmin && (
             <div

@@ -206,8 +206,8 @@ RULES:
         if (imgData.url) {
           generatedImageUrl = imgData.url
         }
-      } catch (imgErr) {
-        console.error('Image generation failed:', imgErr)
+      } catch {
+        // Image generation failed silently — page still builds without image
       }
     }
 

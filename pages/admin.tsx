@@ -2,8 +2,29 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
+import { createServerSupabaseClient } from '@supabase/auth-helpers-nextjs'
+import type { GetServerSidePropsContext } from 'next'
 
-const ADMIN_EMAIL = 'charleslayton.online@gmail.com'
+export async function getServerSideProps(ctx: GetServerSidePropsContext) {
+  const serverSupabase = createServerSupabaseClient(ctx)
+  const { data: { session } } = await serverSupabase.auth.getSession()
+
+  if (!session) {
+    return { redirect: { destination: '/', permanent: false } }
+  }
+
+  const { data: profile } = await serverSupabase
+    .from('profiles')
+    .select('role')
+    .eq('id', session.user.id)
+    .single()
+
+  if (!profile || profile.role !== 'admin') {
+    return { redirect: { destination: '/home', permanent: false } }
+  }
+
+  return { props: {} }
+}
 
 interface UserRow {
   id: string
@@ -48,8 +69,10 @@ export default function Admin() {
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
 
   useEffect(() => {
+    // Server-side guard (getServerSideProps) already verified admin role.
+    // Just load the user for display purposes.
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/home'); return }
+      if (!data.user) { router.push('/'); return }
       setUser(data.user)
       loadAll()
     })
@@ -185,6 +208,13 @@ export default function Admin() {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, suspended: !suspended } : u))
   }
 
+  async function changeRole(userId: string, currentRole: string) {
+    const newRole = currentRole === 'admin' ? 'user' : 'admin'
+    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', userId)
+    if (error) { alert('Failed to update role: ' + error.message); return }
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u))
+  }
+
   function formatDate(iso: string | null | undefined) {
     if (!iso) return '—'
     const d = new Date(iso)
@@ -311,12 +341,17 @@ export default function Admin() {
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
                     <td style={s.td}><span style={{ ...s.badge, ...(u.suspended ? s.badgeRed : s.badgeGreen) }}>{u.suspended ? 'Suspended' : 'Active'}</span></td>
                     <td style={s.td}>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {u.email !== ADMIN_EMAIL && (
-                          <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
-                            {u.suspended ? 'Unsuspend' : 'Suspend'}
-                          </button>
-                        )}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                        <button
+                          onClick={() => changeRole(u.id, u.role)}
+                          style={{ ...s.actionBtn, ...(u.role === 'admin' ? s.actionOrange : s.actionPurple) }}
+                          title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
+                        >
+                          {u.role === 'admin' ? '▼ User' : '▲ Admin'}
+                        </button>
+                        <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
+                          {u.suspended ? 'Unsuspend' : 'Suspend'}
+                        </button>
                         <button onClick={() => { setGiftUserId(u.id); setActiveTab('revenue') }} style={s.actionBtn}>
                           Gift $
                         </button>
@@ -446,6 +481,8 @@ const s: Record<string, React.CSSProperties> = {
   actionBtn: { padding: '4px 10px', border: 'none', borderRadius: 5, fontSize: 10, fontWeight: 500, cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: '#888' },
   actionRed: { background: 'rgba(163,45,45,0.12)', color: '#f09595' },
   actionGreen: { background: 'rgba(29,158,117,0.12)', color: '#5DCAA5' },
+  actionPurple: { background: 'rgba(124,110,247,0.12)', color: '#9d92f5' },
+  actionOrange: { background: 'rgba(186,117,23,0.12)', color: '#f0a952' },
   giftCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 24 },
   giftRow: { display: 'flex', gap: 16, alignItems: 'flex-end' },
   field: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1 },

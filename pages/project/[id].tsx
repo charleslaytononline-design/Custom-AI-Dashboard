@@ -2,8 +2,6 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../../lib/supabase'
 
-const ADMIN_EMAIL = 'charleslayton.online@gmail.com'
-
 interface Page { id: string; name: string; code: string; updated_at: string }
 interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
 type AppMode = 'build' | 'plan'
@@ -282,7 +280,6 @@ if (data) {
 
   if (!user || !project) return <div style={s.loading}>Loading...</div>
 
-  const isAdmin = user?.email === ADMIN_EMAIL
   const balanceDisplay = `$${creditBalance.toFixed(2)}`
   const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
 
