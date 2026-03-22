@@ -9,13 +9,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Increase body size limit for image uploads
 export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
+  api: { bodyParser: { sizeLimit: '10mb' } },
 }
 
 async function getSettings() {
@@ -37,10 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
   const { data: profile } = await supabase
-    .from('profiles')
-    .select('credit_balance, role')
-    .eq('id', userId)
-    .single()
+    .from('profiles').select('credit_balance, role').eq('id', userId).single()
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
@@ -56,12 +48,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const settings = await getSettings()
   const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
 
   const system = planOnly
     ? `You are an AI app builder. The user wants to build something on a page called "${pageName}".
 Write a clear bullet-point plan of what you will build. No code. Max 12 bullet points.
 Respond in plain text only.`
-    : `You are an expert UI engineer inside "Custom AI Dashboard" — an AI app builder like Lovable.
+    : `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
 
 PAGE: "${pageName || 'My Page'}"
 OTHER PAGES: ${pageList}
@@ -71,10 +64,31 @@ CURRENT PAGE CODE:
 ${pageCode || '<!-- empty page -->'}
 \`\`\`
 
-You can see the current page code above. Make precise changes while keeping everything intact.
-If the user sends a screenshot, use it to understand what they want visually.
+IMAGE GENERATION CAPABILITY:
+You can generate real AI images using Flux when users need images in their pages.
+When you need an image, output a special tag BEFORE the CODE block:
 
-Return your response in this exact format — nothing before or after:
+<GENERATE_IMAGE>detailed description of the image needed, be very specific about style, content, colors, mood</GENERATE_IMAGE>
+<IMAGE_PLACEHOLDER><!-- IMAGE_WILL_BE_INSERTED_HERE --></IMAGE_PLACEHOLDER>
+
+Then in your CODE, use this exact placeholder where the image should appear:
+<img src="__GENERATED_IMAGE_URL__" alt="description" class="..." />
+
+The platform will automatically generate the image with Flux AI and replace __GENERATED_IMAGE_URL__ with the real URL.
+
+When to generate images:
+- Hero sections needing a visual (robots, tech, business, people, landscapes)
+- Product mockups or illustrations
+- Background images
+- Any time the user asks for a specific image or visual
+- When the current code has a boring placeholder div where an image should be
+
+For the image prompt, be extremely detailed and specific:
+BAD: "AI robot"
+GOOD: "Photorealistic glowing cyan AI humanoid robot, transparent body showing circuit patterns, standing in front of multiple holographic screens showing data, dark background with teal ambient lighting, cinematic quality, 8k resolution"
+
+INSTRUCTIONS:
+Return your response in this exact format:
 
 <MESSAGE>Brief description of what you built or changed</MESSAGE>
 <CODE>
@@ -98,8 +112,8 @@ DESIGN:
 - Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
 - Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
 - Table: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden
-- Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full
-- Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full
+- Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
+- Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
 - Sidebar nav inactive: text-white/50 hover:text-white hover:bg-white/[0.05]
 - Sidebar nav active: bg-brand/10 text-brand
 
@@ -137,12 +151,13 @@ function app() {
 </script>
 
 RULES:
-- Output ONLY the XML format above
+- Output ONLY the XML format — nothing before MESSAGE or after CODE closing tag
 - Always output COMPLETE HTML document
 - Use Tailwind classes only
 - Every button must work
 - Persist data to localStorage
-- Keep ALL existing features when updating`
+- Keep ALL existing features when updating
+- When generating images, make the prompt extremely detailed and cinematic`
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -150,10 +165,7 @@ RULES:
     let lastContent: any = lastMessage?.content || ''
     if (imageBase64 && imageMediaType) {
       lastContent = [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: imageMediaType, data: imageBase64 }
-        },
+        { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
         { type: 'text', text: typeof lastMessage?.content === 'string' ? lastMessage.content : 'See the image above.' }
       ]
     }
@@ -177,6 +189,29 @@ RULES:
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
     const userCharge = apiCost * settings.markupMultiplier
 
+    // Check if image generation is needed
+    const imagePromptMatch = raw.match(/<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/i)
+    let generatedImageUrl: string | null = null
+
+    if (imagePromptMatch) {
+      const imagePrompt = imagePromptMatch[1].trim()
+      try {
+        // Call our own image generation endpoint
+        const imgRes = await fetch(`${appUrl}/api/generate-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: imagePrompt, userId }),
+        })
+        const imgData = await imgRes.json()
+        if (imgData.url) {
+          generatedImageUrl = imgData.url
+        }
+      } catch (imgErr) {
+        console.error('Image generation failed:', imgErr)
+      }
+    }
+
+    // Track usage
     if (isAdmin) {
       await supabase.from('transactions').insert({
         user_id: userId,
@@ -199,6 +234,7 @@ RULES:
       }
     }
 
+    // Parse response
     let message = 'Done!'
     let code = null
 
@@ -210,9 +246,18 @@ RULES:
       if (messageMatch && codeMatch) {
         message = messageMatch[1].trim()
         code = codeMatch[1].trim()
+        // Replace image placeholder with real URL
+        if (generatedImageUrl && code) {
+          code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
+        }
       } else {
         const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*<\/html>/i)
-        if (htmlMatch) code = htmlMatch[0]
+        if (htmlMatch) {
+          code = htmlMatch[0]
+          if (generatedImageUrl) {
+            code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
+          }
+        }
         message = 'Done! Your page has been updated.'
       }
     }
@@ -221,11 +266,12 @@ RULES:
       .from('profiles').select('credit_balance').eq('id', userId).single()
 
     res.status(200).json({
-      message,
+      message: generatedImageUrl ? message + ' (AI image generated ✓)' : message,
       code,
       tokensUsed: totalTokens,
       apiCost,
       userCharge,
+      imageGenerated: !!generatedImageUrl,
       newBalance: isAdmin ? 'admin' : (updatedProfile?.credit_balance || 0),
     })
   } catch (err: any) {
