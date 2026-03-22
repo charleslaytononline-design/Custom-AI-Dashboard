@@ -13,8 +13,10 @@ interface UserRow {
   created_at: string
   projectCount?: number
   tokenCount?: number
+  imageCount?: number
   totalSpend?: number
-  apiCost?: number
+  anthropicCost?: number
+  replicateCost?: number
 }
 
 interface Settings {
@@ -58,17 +60,27 @@ export default function Admin() {
     const { data: profiles } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
     if (!profiles) return
     const { data: projects } = await supabase.from('projects').select('user_id')
-    const { data: transactions } = await supabase.from('transactions').select('user_id, amount, api_cost, type')
+    const { data: transactions } = await supabase.from('transactions').select('user_id, amount, api_cost, type, tokens_used, description')
 
     const projectCounts: Record<string, number> = {}
     const tokenSpend: Record<string, number> = {}
-    const apiCosts: Record<string, number> = {}
+    const tokenCounts: Record<string, number> = {}
+    const imageCounts: Record<string, number> = {}
+    const anthropicCosts: Record<string, number> = {}
+    const replicateCosts: Record<string, number> = {}
 
     projects?.forEach((p: any) => { projectCounts[p.user_id] = (projectCounts[p.user_id] || 0) + 1 })
     transactions?.forEach((t: any) => {
       if (t.type === 'usage') {
+        const isImage = (t.description || '').toLowerCase().includes('image')
         tokenSpend[t.user_id] = (tokenSpend[t.user_id] || 0) + Math.abs(t.amount)
-        apiCosts[t.user_id] = (apiCosts[t.user_id] || 0) + (t.api_cost || 0)
+        tokenCounts[t.user_id] = (tokenCounts[t.user_id] || 0) + (t.tokens_used || 0)
+        if (isImage) {
+          imageCounts[t.user_id] = (imageCounts[t.user_id] || 0) + 1
+          replicateCosts[t.user_id] = (replicateCosts[t.user_id] || 0) + (t.api_cost || 0)
+        } else {
+          anthropicCosts[t.user_id] = (anthropicCosts[t.user_id] || 0) + (t.api_cost || 0)
+        }
       }
     })
 
@@ -76,7 +88,10 @@ export default function Admin() {
       ...p,
       projectCount: projectCounts[p.id] || 0,
       totalSpend: tokenSpend[p.id] || 0,
-      apiCost: apiCosts[p.id] || 0,
+      tokenCount: tokenCounts[p.id] || 0,
+      imageCount: imageCounts[p.id] || 0,
+      anthropicCost: anthropicCosts[p.id] || 0,
+      replicateCost: replicateCosts[p.id] || 0,
     })))
   }
 
@@ -279,8 +294,11 @@ export default function Admin() {
                       <td style={s.td}><span style={{ fontSize:13, color:'#5DCAA5', fontWeight:500 }}>${(u.credit_balance||0).toFixed(2)}</span></td>
                       <td style={s.td}><span style={s.num}>{u.projectCount}</span></td>
                       <td style={s.td}><span style={s.num}>${(u.totalSpend||0).toFixed(2)}</span></td>
-                      <td style={s.td}><span style={{ ...s.num, color:'#f09595' }}>${(u.apiCost||0).toFixed(4)}</span></td>
-                      <td style={s.td}><span style={{ ...s.num, color:'#5DCAA5' }}>${((u.totalSpend||0)-(u.apiCost||0)).toFixed(2)}</span></td>
+                      <td style={s.td}><span style={{ ...s.num, color:'#f09595' }}>${(u.anthropicCost||0).toFixed(4)}</span></td>
+                      <td style={s.td}><span style={{ ...s.num, color:'#2dd4bf' }}>${(u.replicateCost||0).toFixed(4)}</span></td>
+                      <td style={s.td}><span style={s.num}>{(u.tokenCount||0).toLocaleString()}</span></td>
+                      <td style={s.td}><span style={s.num}>{u.imageCount||0}</span></td>
+                      <td style={s.td}><span style={{ ...s.num, color:'#5DCAA5' }}>${((u.totalSpend||0)-(u.anthropicCost||0)-(u.replicateCost||0)).toFixed(4)}</span></td>
                       <td style={s.td}><span style={{ ...s.badge, ...(u.suspended ? s.badgeRed : s.badgeGreen) }}>{u.suspended ? 'Suspended' : 'Active'}</span></td>
                       <td style={s.td}>
                         <div style={{ display:'flex', gap:6 }}>
