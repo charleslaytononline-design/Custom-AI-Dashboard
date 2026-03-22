@@ -1,55 +1,120 @@
 -- ============================================
--- Custom AI Dashboard - Supabase Setup
--- Paste this entire file into:
--- Supabase Dashboard > SQL Editor > New Query
--- Then click "Run"
+-- Custom AI Dashboard v2 - Full Setup
+-- Run this in Supabase SQL Editor
 -- ============================================
 
--- Pages table: stores each user's pages and their generated code
-create table if not exists pages (
+-- Drop old tables if starting fresh
+drop table if exists usage cascade;
+drop table if exists pages cascade;
+drop table if exists profiles cascade;
+drop table if exists projects cascade;
+
+-- Profiles table (one per user, created on signup)
+create table profiles (
+  id uuid references auth.users(id) on delete cascade primary key,
+  email text not null,
+  role text not null default 'user',
+  created_at timestamptz default now()
+);
+
+-- Projects table (like Lovable projects)
+create table projects (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
-  name text not null default 'My Page',
+  name text not null default 'My Project',
+  description text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Pages table (each project has multiple pages)
+create table pages (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references projects(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  name text not null default 'Page 1',
   code text not null default '',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
 
--- Usage table: tracks token usage per user per page
-create table if not exists usage (
+-- Usage tracking
+create table usage (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade not null,
+  project_id uuid references projects(id) on delete set null,
   page_id uuid references pages(id) on delete set null,
   tokens integer not null default 0,
   created_at timestamptz default now()
 );
 
--- Row Level Security: users can only see/edit their own data
+-- ============================================
+-- Row Level Security
+-- ============================================
+
+alter table profiles enable row level security;
+alter table projects enable row level security;
 alter table pages enable row level security;
 alter table usage enable row level security;
 
--- Pages policies
-create policy "Users can view own pages"
-  on pages for select using (auth.uid() = user_id);
+-- Profiles: users see own, admin sees all
+create policy "users view own profile" on profiles for select using (auth.uid() = id);
+create policy "users insert own profile" on profiles for insert with check (auth.uid() = id);
+create policy "users update own profile" on profiles for update using (auth.uid() = id);
+create policy "admin views all profiles" on profiles for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
 
-create policy "Users can insert own pages"
-  on pages for insert with check (auth.uid() = user_id);
+-- Projects: users see only own
+create policy "users view own projects" on projects for select using (auth.uid() = user_id);
+create policy "users insert own projects" on projects for insert with check (auth.uid() = user_id);
+create policy "users update own projects" on projects for update using (auth.uid() = user_id);
+create policy "users delete own projects" on projects for delete using (auth.uid() = user_id);
+create policy "admin views all projects" on projects for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
 
-create policy "Users can update own pages"
-  on pages for update using (auth.uid() = user_id);
+-- Pages: users see only own
+create policy "users view own pages" on pages for select using (auth.uid() = user_id);
+create policy "users insert own pages" on pages for insert with check (auth.uid() = user_id);
+create policy "users update own pages" on pages for update using (auth.uid() = user_id);
+create policy "users delete own pages" on pages for delete using (auth.uid() = user_id);
 
-create policy "Users can delete own pages"
-  on pages for delete using (auth.uid() = user_id);
+-- Usage: users see own
+create policy "users view own usage" on usage for select using (auth.uid() = user_id);
+create policy "users insert own usage" on usage for insert with check (auth.uid() = user_id);
+create policy "admin views all usage" on usage for select using (
+  exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+);
 
--- Usage policies
-create policy "Users can view own usage"
-  on usage for select using (auth.uid() = user_id);
+-- ============================================
+-- Auto-create profile on signup
+-- ============================================
+create or replace function handle_new_user()
+returns trigger as $$
+begin
+  insert into profiles (id, email, role)
+  values (
+    new.id,
+    new.email,
+    case when new.email = 'charleslayton.online@gmail.com' then 'admin' else 'user' end
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
 
-create policy "Users can insert own usage"
-  on usage for insert with check (auth.uid() = user_id);
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure handle_new_user();
 
--- Index for faster queries
+-- ============================================
+-- Indexes
+-- ============================================
+create index if not exists projects_user_id_idx on projects(user_id);
+create index if not exists pages_project_id_idx on pages(project_id);
 create index if not exists pages_user_id_idx on pages(user_id);
 create index if not exists usage_user_id_idx on usage(user_id);
+create index if not exists profiles_role_idx on profiles(role);
 
--- Done! Your database is ready.
+-- Done!
