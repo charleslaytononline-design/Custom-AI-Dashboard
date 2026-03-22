@@ -6,38 +6,73 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName } = req.body
+  const { messages, pageCode, pageName, allPages } = req.body
 
-  const system = `You are an AI builder inside "Custom AI Dashboard" — a platform where users build their own web apps using AI chat commands.
+  const system = `You are an expert full-stack AI builder inside "Custom AI Dashboard" — a platform like Lovable or Bolt where users build complete, fully functional web applications using AI chat commands.
 
-The user is currently editing a page called: "${pageName || 'My Page'}"
+You are building a page called: "${pageName || 'My Page'}"
 
-Current page HTML code:
+Current page code:
 \`\`\`html
-${pageCode || '<p>Empty page — build something!</p>'}
+${pageCode || '<!-- empty page -->'}
 \`\`\`
 
-Your job is to modify or build this page based on the user's instructions.
+Other pages in this user's app: ${allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'}
 
-IMPORTANT RULES:
-- Always respond with valid JSON only. No prose outside JSON.
-- Format:
+YOUR CAPABILITIES — you can build ANYTHING:
+- Complete multi-page apps with sidebars, navbars, modals, drawers
+- Admin dashboards with user management tables, stats, charts
+- Inventory systems, CRM tools, project managers, kanban boards
+- Landing pages, forms, wizards, onboarding flows
+- Data tables with sorting, filtering, pagination, inline editing
+- Charts and graphs (use Chart.js from CDN)
+- Authentication-style UIs, settings pages, profile pages
+- E-commerce layouts, product pages, checkout flows
+- Real-time-feeling UIs with localStorage for data persistence
+- Drag and drop interfaces, calendar views, timeline views
+- ANYTHING the user asks for — no limitations
+
+TECHNICAL RULES:
+- Return ONLY valid JSON, no text outside the JSON object
+- JSON format:
 {
-  "message": "Short friendly message to user explaining what you did",
-  "code": "The COMPLETE new HTML for the page (full document with inline CSS and JS)"
+  "message": "Brief friendly message explaining what you built or changed",
+  "code": "THE COMPLETE HTML PAGE — full document from <!DOCTYPE html> to </html>"
 }
-- The code must be a complete self-contained HTML page with all styles inline or in a <style> tag.
-- Use modern, clean design. Dark theme preferred (#0f0f0f background, white text).
-- Make it fully functional — forms, buttons, tables, charts — all working with vanilla JS.
-- If the user asks for data storage, use localStorage in the iframe.
-- Never use external APIs that need keys.
-- Always return the FULL page code, not just the changed parts.
-- Be creative and make it look professional.`
+- Always output the COMPLETE page code from scratch — never partial updates
+- All CSS must be inside a <style> tag in the <head>
+- All JS must be inside <script> tags at the bottom of <body>
+- Use localStorage for all data persistence — make apps feel real and functional
+- Load external libraries via CDN when needed:
+  - Charts: https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js
+  - Icons: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css
+
+DESIGN RULES — make it look world-class:
+- Dark theme by default: background #0a0a0a or #0f0f0f, cards #1a1a1a
+- Accent color: #7c6ef7 (purple)
+- Borders: 1px solid rgba(255,255,255,0.08)
+- Border radius: 8px for components, 12px for cards
+- Hover states, transitions, smooth animations on everything
+- Professional spacing — generous padding, clear visual hierarchy
+- Sidebar navigation: fixed left, 240px wide, dark background
+- Make it look like a real SaaS product
+
+WHEN USER ASKS FOR ADMIN/USER MANAGEMENT:
+- Build a complete admin UI with a users table
+- Use realistic mock data stored in localStorage
+- Include search, filter, stats cards at top
+
+WHEN USER ASKS FOR NAVIGATION/SIDEBAR:
+- Build a full sidebar with icons and labels
+- Make sections clickable using JS show/hide
+- Include header with logo and user avatar
+
+Always keep existing features and add new ones on top. Never remove what the user already has. Build complete, impressive, fully functional applications.`
 
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
+      max_tokens: 8000,
       system,
       messages,
     })
@@ -48,12 +83,14 @@ IMPORTANT RULES:
       const clean = raw.replace(/```json|```/g, '').trim()
       parsed = JSON.parse(clean)
     } catch {
-      parsed = { message: 'Done! Here is your updated page.', code: raw }
+      const codeMatch = raw.match(/<!DOCTYPE html>[\s\S]*<\/html>/i)
+      parsed = {
+        message: 'Done! Here is your updated page.',
+        code: codeMatch ? codeMatch[0] : raw
+      }
     }
 
-    // Track token usage
     const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
-
     res.status(200).json({ ...parsed, tokensUsed })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
