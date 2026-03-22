@@ -3,22 +3,10 @@ import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
 
-interface Transaction {
-  id: string
-  amount: number
-  api_cost: number
-  type: string
-  description: string
-  tokens_used: number
-  created_at: string
-}
-
 export default function Profile() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [stats, setStats] = useState({ builds: 0, tokens: 0, images: 0, totalSpent: 0, anthropicCost: 0, replicateCost: 0 })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,46 +14,16 @@ export default function Profile() {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
       loadProfile(data.user.id)
-      loadTransactions(data.user.id)
     })
   }, [])
 
   async function loadProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    if (data) setProfile(data)
-  }
-
-  async function loadTransactions(userId: string) {
-    const { data } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-
-    if (data) {
-      setTransactions(data.slice(0, 20))
-
-      let builds = 0, tokens = 0, images = 0, totalSpent = 0, anthropicCost = 0, replicateCost = 0
-      data.forEach((t: Transaction) => {
-        if (t.type === 'usage') {
-          const isImage = (t.description || '').toLowerCase().includes('image')
-          totalSpent += Math.abs(t.amount)
-          tokens += t.tokens_used || 0
-          if (isImage) { images++; replicateCost += t.api_cost || 0 }
-          else { builds++; anthropicCost += t.api_cost || 0 }
-        }
-      })
-      setStats({ builds, tokens, images, totalSpent, anthropicCost, replicateCost })
-    }
-    setLoading(false)
+    if (data) { setProfile(data); setLoading(false) }
   }
 
   function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-  }
-
-  function formatDateTime(iso: string) {
-    return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   }
 
   const balance = profile?.credit_balance || 0
@@ -122,73 +80,6 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* USAGE STATS */}
-          <div style={s.statsGrid}>
-            <div style={s.statCard}>
-              <div style={s.statLabel}>Total Builds</div>
-              <div style={s.statVal}>{stats.builds.toLocaleString()}</div>
-              <div style={s.statSub}>AI generations</div>
-            </div>
-            <div style={s.statCard}>
-              <div style={s.statLabel}>Tokens Used</div>
-              <div style={s.statVal}>{stats.tokens.toLocaleString()}</div>
-              <div style={s.statSub}>input + output</div>
-            </div>
-            <div style={s.statCard}>
-              <div style={s.statLabel}>Images Generated</div>
-              <div style={s.statVal}>{stats.images}</div>
-              <div style={s.statSub}>via Flux AI</div>
-            </div>
-            <div style={s.statCard}>
-              <div style={s.statLabel}>Total Spent</div>
-              <div style={{ ...s.statVal, color: '#f09595' }}>${stats.totalSpent.toFixed(2)}</div>
-              <div style={s.statSub}>credits consumed</div>
-            </div>
-          </div>
-
-          {/* TRANSACTION HISTORY */}
-          <div style={s.section}>
-            <h2 style={s.sectionTitle}>Transaction History</h2>
-            {transactions.length === 0 ? (
-              <div style={s.empty}>No transactions yet. Start building to see your usage here.</div>
-            ) : (
-              <div style={s.tableWrap}>
-                <table style={s.table}>
-                  <thead>
-                    <tr style={s.thead}>
-                      <th style={s.th}>Date</th>
-                      <th style={s.th}>Description</th>
-                      <th style={s.th}>Type</th>
-                      <th style={s.th}>Tokens</th>
-                      <th style={s.th}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map(t => (
-                      <tr key={t.id} style={s.tr}>
-                        <td style={s.td}><span style={s.dateText}>{formatDateTime(t.created_at)}</span></td>
-                        <td style={s.td}><span style={{ fontSize: 13, color: '#c0c0c0' }}>{t.description || '—'}</span></td>
-                        <td style={s.td}>
-                          <span style={{
-                            ...s.badge,
-                            ...(t.type === 'purchase' ? s.badgeGreen : t.type === 'gift' ? s.badgePurple : s.badgeGray)
-                          }}>
-                            {t.type}
-                          </span>
-                        </td>
-                        <td style={s.td}><span style={s.dimText}>{t.tokens_used ? t.tokens_used.toLocaleString() : '—'}</span></td>
-                        <td style={s.td}>
-                          <span style={{ fontSize: 13, fontWeight: 500, color: t.amount >= 0 ? '#5DCAA5' : '#f09595' }}>
-                            {t.amount >= 0 ? '+' : ''}${Math.abs(t.amount).toFixed(4)}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
         </>
       )}
     </div>

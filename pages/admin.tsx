@@ -342,13 +342,15 @@ export default function Admin() {
                     <td style={s.td}><span style={{ ...s.badge, ...(u.suspended ? s.badgeRed : s.badgeGreen) }}>{u.suspended ? 'Suspended' : 'Active'}</span></td>
                     <td style={s.td}>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-                        <button
-                          onClick={() => changeRole(u.id, u.role)}
-                          style={{ ...s.actionBtn, ...(u.role === 'admin' ? s.actionOrange : s.actionPurple) }}
-                          title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
-                        >
-                          {u.role === 'admin' ? '▼ User' : '▲ Admin'}
-                        </button>
+                        {u.id !== user?.id && (
+                          <button
+                            onClick={() => changeRole(u.id, u.role)}
+                            style={{ ...s.actionBtn, ...(u.role === 'admin' ? s.actionOrange : s.actionPurple) }}
+                            title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
+                          >
+                            {u.role === 'admin' ? '▼ User' : '▲ Admin'}
+                          </button>
+                        )}
                         <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
                           {u.suspended ? 'Unsuspend' : 'Suspend'}
                         </button>
