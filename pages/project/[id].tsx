@@ -50,26 +50,32 @@ export default function ProjectBuilder() {
 
   const renderIframe = useCallback((code: string) => {
     if (!iframeRef.current) return
-    // Inject a guard that blocks same-origin navigation inside the preview iframe.
-    // Without this, generated links/scripts can navigate the iframe to real app routes
-    // (e.g. /home, /project/[id]) which loads the full project builder inside the preview.
-    const guard = `<script>
+    // The iframe sandbox does NOT include allow-same-origin.
+    // Without it the iframe gets a null origin so hash/path navigation stays
+    // sandboxed — clicking <a href="#benefits"> no longer loads the real project
+    // builder page inside the preview.
+    // Downside: localStorage throws SecurityError, so we polyfill it in-memory.
+    const polyfill = `<script>
 (function(){
-  document.addEventListener('click', function(e) {
-    var a = e.target && e.target.closest ? e.target.closest('a') : null;
-    if (!a) return;
-    var href = a.getAttribute('href') || '';
-    if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) return;
-    try {
-      var url = new URL(href, location.href);
-      if (url.origin === location.origin) { e.preventDefault(); e.stopPropagation(); }
-    } catch(_) {}
-  }, true);
-  window.addEventListener('beforeunload', function(e) { e.preventDefault(); e.returnValue = ''; });
-})();
+  function Mem(){this._={}}
+  Mem.prototype={
+    getItem:function(k){return this._.hasOwnProperty(k)?this._[k]:null},
+    setItem:function(k,v){this._[k]=String(v)},
+    removeItem:function(k){delete this._[k]},
+    clear:function(){this._={}},
+    key:function(i){return Object.keys(this._)[i]||null},
+    get length(){return Object.keys(this._).length}
+  };
+  try{localStorage.setItem('__chk','1');localStorage.removeItem('__chk')}
+  catch(e){
+    var m=new Mem(),s=new Mem();
+    try{Object.defineProperty(window,'localStorage',{value:m,configurable:true,writable:true})}catch(_){window.localStorage=m}
+    try{Object.defineProperty(window,'sessionStorage',{value:s,configurable:true,writable:true})}catch(_){window.sessionStorage=s}
+  }
+})()
 <\/script>`
-    const guarded = code.replace(/(<head[^>]*>)/i, '$1' + guard)
-    iframeRef.current.srcdoc = guarded || code
+    const injected = code.replace(/(<head[^>]*>)/i, '$1' + polyfill)
+    iframeRef.current.srcdoc = injected || code
   }, [])
 
   useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage])
@@ -453,8 +459,28 @@ if (data) {
         {/* RIGHT PANEL */}
         <div style={s.right}>
           <div style={s.previewBar}>
-            <div style={s.urlBar}>{activePage?.name || 'No page'}</div>
-            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn}>↺ Refresh</button>
+            {/* Page selector dropdown */}
+            <div style={s.pageSelector}>
+              <span style={s.pageSelectorIcon}>⊞</span>
+              <select
+                value={activePage?.id || ''}
+                onChange={e => {
+                  const page = pages.find(p => p.id === e.target.value)
+                  if (page) { setActivePage(page); setSidebarTab('chat') }
+                }}
+                style={s.pageSelectorSelect}
+              >
+                {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            {/* Fake URL bar */}
+            <div style={s.urlBar}>
+              <span style={{ color: '#2a2a2a' }}>preview /</span>
+              <span style={{ color: '#555', marginLeft: 6 }}>
+                {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
+              </span>
+            </div>
+            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn}>↺</button>
           </div>
           {showCode && activePage ? (
             <div style={s.codePanel}>
@@ -465,7 +491,7 @@ if (data) {
               <pre style={s.codeContent}>{activePage.code}</pre>
             </div>
           ) : (
-            <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" style={s.iframe} title="preview" />
+            <iframe ref={iframeRef} sandbox="allow-scripts allow-forms allow-modals" style={s.iframe} title="preview" />
           )}
         </div>
       </div>
@@ -552,9 +578,12 @@ const s: Record<string, React.CSSProperties> = {
   pageItemOn: { background:'rgba(124,110,247,0.07)' },
   delBtn: { background:'none', border:'none', color:'#333', cursor:'pointer', fontSize:11 },
   right: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
-  previewBar: { display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
-  urlBar: { flex:1, padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, fontSize:12, color:'#444' },
-  refreshBtn: { padding:'4px 12px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#666', cursor:'pointer', fontSize:12 },
+  previewBar: { display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
+  pageSelector: { display:'flex', alignItems:'center', gap:6, padding:'3px 8px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:7, flexShrink:0 },
+  pageSelectorIcon: { fontSize:12, color:'#555' },
+  pageSelectorSelect: { background:'none', border:'none', color:'#aaa', fontSize:12, outline:'none', cursor:'pointer', maxWidth:120 },
+  urlBar: { flex:1, display:'flex', alignItems:'center', padding:'4px 12px', background:'#141414', border:'1px solid rgba(255,255,255,0.06)', borderRadius:7, fontSize:12 },
+  refreshBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
   iframe: { flex:1, border:'none', background:'#0a0a0a', width:'100%', height:'100%' },
   codePanel: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
   codeHeader: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
