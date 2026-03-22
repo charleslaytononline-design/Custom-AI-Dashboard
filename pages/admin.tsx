@@ -33,6 +33,7 @@ interface UserRow {
   suspended: boolean
   credit_balance: number
   created_at: string
+  plan_id?: string | null
   projectCount?: number
   pageCount?: number
   messageCount?: number
@@ -44,20 +45,52 @@ interface UserRow {
   lastActive?: string
 }
 
+interface Plan {
+  id: string
+  name: string
+  price_monthly: number
+  ai_credits_monthly: number
+  max_projects: number
+  max_tables_per_project: number
+  max_rows_per_table: number
+  max_storage_mb: number
+  can_connect_own_supabase: boolean
+  max_builds_per_month: number
+  is_active: boolean
+  sort_order: number
+  stripe_price_id: string | null
+}
+
 interface Settings {
   markup_multiplier: string
   input_cost_per_1k: string
   output_cost_per_1k: string
 }
 
+const BLANK_PLAN: Omit<Plan, 'id'> = {
+  name: '',
+  price_monthly: 0,
+  ai_credits_monthly: 0,
+  max_projects: 1,
+  max_tables_per_project: 5,
+  max_rows_per_table: 1000,
+  max_storage_mb: 100,
+  can_connect_own_supabase: false,
+  max_builds_per_month: 10,
+  is_active: true,
+  sort_order: 99,
+  stripe_price_id: null,
+}
+
 export default function Admin() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
   const [users, setUsers] = useState<UserRow[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -68,9 +101,14 @@ export default function Admin() {
   const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
 
+  // Plans state
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
+  const [showNewPlan, setShowNewPlan] = useState(false)
+  const [newPlan, setNewPlan] = useState<Omit<Plan, 'id'>>(BLANK_PLAN)
+  const [planSaving, setPlanSaving] = useState(false)
+  const [planMsg, setPlanMsg] = useState('')
+
   useEffect(() => {
-    // Server-side guard (getServerSideProps) already verified admin role.
-    // Just load the user for display purposes.
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
@@ -79,8 +117,13 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans()])
     setLoading(false)
+  }
+
+  async function loadPlans() {
+    const { data } = await supabase.from('plans').select('*').order('sort_order')
+    if (data) setPlans(data)
   }
 
   async function loadUsers() {
@@ -125,7 +168,6 @@ export default function Admin() {
         } else {
           anthropicCosts[t.user_id] = (anthropicCosts[t.user_id] || 0) + (t.api_cost || 0)
         }
-        // Track most recent activity
         if (!lastActive[t.user_id] || t.created_at > lastActive[t.user_id]) {
           lastActive[t.user_id] = t.created_at
         }
@@ -215,10 +257,62 @@ export default function Admin() {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u))
   }
 
+  async function assignPlan(userId: string, planId: string | null) {
+    await supabase.from('profiles').update({ plan_id: planId || null }).eq('id', userId)
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan_id: planId } : u))
+  }
+
+  async function savePlan(plan: Plan) {
+    setPlanSaving(true)
+    const { error } = await supabase.from('plans').update({
+      name: plan.name,
+      price_monthly: plan.price_monthly,
+      ai_credits_monthly: plan.ai_credits_monthly,
+      max_projects: plan.max_projects,
+      max_tables_per_project: plan.max_tables_per_project,
+      max_rows_per_table: plan.max_rows_per_table,
+      max_storage_mb: plan.max_storage_mb,
+      can_connect_own_supabase: plan.can_connect_own_supabase,
+      max_builds_per_month: plan.max_builds_per_month,
+      is_active: plan.is_active,
+      sort_order: plan.sort_order,
+      stripe_price_id: plan.stripe_price_id,
+    }).eq('id', plan.id)
+    setPlanSaving(false)
+    if (error) { setPlanMsg('Error: ' + error.message); return }
+    setPlanMsg('Plan saved!')
+    setEditingPlan(null)
+    loadPlans()
+    setTimeout(() => setPlanMsg(''), 3000)
+  }
+
+  async function createPlan() {
+    if (!newPlan.name.trim()) { setPlanMsg('Plan name required'); return }
+    setPlanSaving(true)
+    const { error } = await supabase.from('plans').insert(newPlan)
+    setPlanSaving(false)
+    if (error) { setPlanMsg('Error: ' + error.message); return }
+    setPlanMsg('Plan created!')
+    setNewPlan(BLANK_PLAN)
+    setShowNewPlan(false)
+    loadPlans()
+    setTimeout(() => setPlanMsg(''), 3000)
+  }
+
+  async function deletePlan(planId: string) {
+    if (!confirm('Delete this plan? Users on this plan will not be affected immediately.')) return
+    await supabase.from('plans').delete().eq('id', planId)
+    setPlans(prev => prev.filter(p => p.id !== planId))
+  }
+
   function formatDate(iso: string | null | undefined) {
     if (!iso) return '—'
-    const d = new Date(iso)
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  }
+
+  function getPlanName(planId: string | null | undefined) {
+    if (!planId) return 'Free'
+    return plans.find(p => p.id === planId)?.name || 'Free'
   }
 
   const margin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : '0'
@@ -283,7 +377,7 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -303,6 +397,7 @@ export default function Admin() {
                 <tr style={s.thead}>
                   <th style={s.th}>User</th>
                   <th style={s.th}>Role</th>
+                  <th style={s.th}>Plan</th>
                   <th style={s.th}>Credits</th>
                   <th style={s.th}>Projects</th>
                   <th style={s.th}>Pages</th>
@@ -328,6 +423,16 @@ export default function Admin() {
                       </div>
                     </td>
                     <td style={s.td}><span style={{ ...s.badge, ...(u.role === 'admin' ? s.badgePurple : s.badgeGray) }}>{u.role}</span></td>
+                    <td style={s.td}>
+                      <select
+                        value={u.plan_id || ''}
+                        onChange={e => assignPlan(u.id, e.target.value || null)}
+                        style={s.planSelect}
+                      >
+                        <option value="">Free</option>
+                        {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </td>
                     <td style={s.td}><span style={{ fontSize: 13, color: '#5DCAA5', fontWeight: 500 }}>${(u.credit_balance || 0).toFixed(2)}</span></td>
                     <td style={s.td}><span style={s.num}>{u.projectCount}</span></td>
                     <td style={s.td}><span style={s.num}>{u.pageCount}</span></td>
@@ -440,6 +545,229 @@ export default function Admin() {
           </div>
         </div>
       )}
+
+      {/* PLANS TAB */}
+      {activeTab === 'plans' && (
+        <div style={s.section}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={s.sectionTitle}>Subscription Plans</h2>
+            <button onClick={() => { setShowNewPlan(true); setEditingPlan(null) }} style={s.saveBtn}>+ New Plan</button>
+          </div>
+          {planMsg && <div style={{ marginBottom: 12, fontSize: 13, color: '#5DCAA5' }}>{planMsg}</div>}
+
+          {/* Plans table */}
+          <div style={s.tableWrap}>
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  <th style={s.th}>Name</th>
+                  <th style={s.th}>Price/mo</th>
+                  <th style={s.th}>AI Credits/mo</th>
+                  <th style={s.th}>Max Projects</th>
+                  <th style={s.th}>Tables/Project</th>
+                  <th style={s.th}>Rows/Table</th>
+                  <th style={s.th}>Storage</th>
+                  <th style={s.th}>Own Supabase</th>
+                  <th style={s.th}>Builds/mo</th>
+                  <th style={s.th}>Users</th>
+                  <th style={s.th}>Active</th>
+                  <th style={s.th}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plans.map(plan => (
+                  <tr key={plan.id} style={s.tr}>
+                    {editingPlan?.id === plan.id ? (
+                      // Inline edit row
+                      <>
+                        <td style={s.td}><input value={editingPlan.name} onChange={e => setEditingPlan(p => p ? { ...p, name: e.target.value } : p)} style={s.inlineInput} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.price_monthly} onChange={e => setEditingPlan(p => p ? { ...p, price_monthly: parseFloat(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 60 }} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.ai_credits_monthly} onChange={e => setEditingPlan(p => p ? { ...p, ai_credits_monthly: parseFloat(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 70 }} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.max_projects} onChange={e => setEditingPlan(p => p ? { ...p, max_projects: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 50 }} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.max_tables_per_project} onChange={e => setEditingPlan(p => p ? { ...p, max_tables_per_project: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 50 }} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.max_rows_per_table} onChange={e => setEditingPlan(p => p ? { ...p, max_rows_per_table: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 70 }} /></td>
+                        <td style={s.td}><input type="number" value={editingPlan.max_storage_mb} onChange={e => setEditingPlan(p => p ? { ...p, max_storage_mb: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 60 }} />MB</td>
+                        <td style={s.td}>
+                          <input type="checkbox" checked={editingPlan.can_connect_own_supabase} onChange={e => setEditingPlan(p => p ? { ...p, can_connect_own_supabase: e.target.checked } : p)} />
+                        </td>
+                        <td style={s.td}><input type="number" value={editingPlan.max_builds_per_month} onChange={e => setEditingPlan(p => p ? { ...p, max_builds_per_month: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 50 }} /></td>
+                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id).length}</span></td>
+                        <td style={s.td}>
+                          <input type="checkbox" checked={editingPlan.is_active} onChange={e => setEditingPlan(p => p ? { ...p, is_active: e.target.checked } : p)} />
+                        </td>
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={() => savePlan(editingPlan)} disabled={planSaving} style={{ ...s.actionBtn, ...s.actionGreen }}>{planSaving ? '...' : 'Save'}</button>
+                            <button onClick={() => setEditingPlan(null)} style={s.actionBtn}>Cancel</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      // Display row
+                      <>
+                        <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>{plan.name}</span></td>
+                        <td style={s.td}><span style={{ fontSize: 13, color: plan.price_monthly === 0 ? '#888' : '#5DCAA5' }}>{plan.price_monthly === 0 ? 'Free' : `$${plan.price_monthly}`}</span></td>
+                        <td style={s.td}><span style={s.num}>${plan.ai_credits_monthly.toFixed(2)}</span></td>
+                        <td style={s.td}><span style={s.num}>{plan.max_projects}</span></td>
+                        <td style={s.td}><span style={s.num}>{plan.max_tables_per_project}</span></td>
+                        <td style={s.td}><span style={s.num}>{plan.max_rows_per_table.toLocaleString()}</span></td>
+                        <td style={s.td}><span style={s.num}>{plan.max_storage_mb} MB</span></td>
+                        <td style={s.td}><span style={{ ...s.badge, ...(plan.can_connect_own_supabase ? s.badgeGreen : s.badgeGray) }}>{plan.can_connect_own_supabase ? 'Yes' : 'No'}</span></td>
+                        <td style={s.td}><span style={s.num}>{plan.max_builds_per_month === -1 ? '∞' : plan.max_builds_per_month}</span></td>
+                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id).length}</span></td>
+                        <td style={s.td}><span style={{ ...s.badge, ...(plan.is_active ? s.badgeGreen : s.badgeRed) }}>{plan.is_active ? 'Active' : 'Hidden'}</span></td>
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={() => { setEditingPlan(plan); setShowNewPlan(false) }} style={{ ...s.actionBtn, ...s.actionPurple }}>Edit</button>
+                            <button onClick={() => deletePlan(plan.id)} style={{ ...s.actionBtn, ...s.actionRed }}>Delete</button>
+                          </div>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* New plan form */}
+          {showNewPlan && (
+            <div style={{ ...s.settingsCard, marginTop: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 16 }}>New Plan</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
+                <div style={s.field}>
+                  <label style={s.label}>Plan Name</label>
+                  <input value={newPlan.name} onChange={e => setNewPlan(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Pro" style={s.input} />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Price / month ($)</label>
+                  <input type="number" value={newPlan.price_monthly} onChange={e => setNewPlan(p => ({ ...p, price_monthly: parseFloat(e.target.value) || 0 }))} style={s.input} min="0" step="1" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>AI Credits / month ($)</label>
+                  <input type="number" value={newPlan.ai_credits_monthly} onChange={e => setNewPlan(p => ({ ...p, ai_credits_monthly: parseFloat(e.target.value) || 0 }))} style={s.input} min="0" step="1" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Max Projects</label>
+                  <input type="number" value={newPlan.max_projects} onChange={e => setNewPlan(p => ({ ...p, max_projects: parseInt(e.target.value) || 0 }))} style={s.input} min="0" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Tables / Project</label>
+                  <input type="number" value={newPlan.max_tables_per_project} onChange={e => setNewPlan(p => ({ ...p, max_tables_per_project: parseInt(e.target.value) || 0 }))} style={s.input} min="0" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Rows / Table</label>
+                  <input type="number" value={newPlan.max_rows_per_table} onChange={e => setNewPlan(p => ({ ...p, max_rows_per_table: parseInt(e.target.value) || 0 }))} style={s.input} min="0" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Storage (MB)</label>
+                  <input type="number" value={newPlan.max_storage_mb} onChange={e => setNewPlan(p => ({ ...p, max_storage_mb: parseInt(e.target.value) || 0 }))} style={s.input} min="0" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Builds / month</label>
+                  <input type="number" value={newPlan.max_builds_per_month} onChange={e => setNewPlan(p => ({ ...p, max_builds_per_month: parseInt(e.target.value) || 0 }))} style={s.input} min="-1" />
+                  <span style={{ fontSize: 10, color: '#444', marginTop: 2 }}>-1 = unlimited</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 16 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={newPlan.can_connect_own_supabase} onChange={e => setNewPlan(p => ({ ...p, can_connect_own_supabase: e.target.checked }))} />
+                  Allow own Supabase connection
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={newPlan.is_active} onChange={e => setNewPlan(p => ({ ...p, is_active: e.target.checked }))} />
+                  Visible to users
+                </label>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Stripe Price ID (optional)</label>
+                <input value={newPlan.stripe_price_id || ''} onChange={e => setNewPlan(p => ({ ...p, stripe_price_id: e.target.value || null }))} placeholder="price_..." style={s.input} />
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button onClick={createPlan} disabled={planSaving} style={s.saveBtn}>{planSaving ? 'Creating...' : 'Create Plan'}</button>
+                <button onClick={() => setShowNewPlan(false)} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* DATABASE TAB */}
+      {activeTab === 'database' && (
+        <div style={s.section}>
+          <h2 style={s.sectionTitle}>Database Infrastructure</h2>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+            {/* App DB */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(124,110,247,0.2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#5DCAA5' }} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>App Database</span>
+                <span style={{ ...s.badge, ...s.badgeGreen }}>Connected</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>Stores user auth, profiles, projects, pages, transactions, chat history</div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Provider</span><span style={s.dbVal}>Supabase</span></div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Tables</span><span style={s.dbVal}>profiles · projects · pages · transactions · settings · plans · chat_history</span></div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Users</span><span style={s.dbVal}>{users.length} accounts</span></div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>RLS</span><span style={{ ...s.badge, ...s.badgeGreen }}>Enabled</span></div>
+            </div>
+
+            {/* Clients DB */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(20,184,166,0.2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? '#5DCAA5' : '#f09595' }} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>Clients Database</span>
+                <span style={{ ...s.badge, ...(process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? s.badgeGreen : s.badgeRed) }}>
+                  {process.env.NEXT_PUBLIC_CLIENTS_SUPABASE_URL ? 'Connected' : 'Not configured'}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>Stores user-generated app data (schemas, tables, rows) in isolated per-project schemas</div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Provider</span><span style={s.dbVal}>Supabase (separate project)</span></div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Isolation</span><span style={s.dbVal}>Schema per project (proj_{'{project_id}'})</span></div>
+              <div style={s.dbInfoRow}><span style={s.dbLabel}>Registry</span><span style={s.dbVal}>schema_registry · schema_usage</span></div>
+              <div style={{ marginTop: 12, padding: '10px 12px', background: '#0a0a0a', borderRadius: 8, fontSize: 11, color: '#555' }}>
+                Set <code style={{ color: '#9d92f5' }}>CLIENTS_SUPABASE_URL</code> and <code style={{ color: '#9d92f5' }}>CLIENTS_SUPABASE_SERVICE_ROLE_KEY</code> in Vercel environment variables to activate.
+              </div>
+            </div>
+          </div>
+
+          {/* Per-plan limits summary */}
+          <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Plan Limits Overview</h3>
+          <div style={s.tableWrap}>
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  <th style={s.th}>Plan</th>
+                  <th style={s.th}>Price</th>
+                  <th style={s.th}>Projects</th>
+                  <th style={s.th}>Tables / Project</th>
+                  <th style={s.th}>Rows / Table</th>
+                  <th style={s.th}>Storage</th>
+                  <th style={s.th}>Builds / mo</th>
+                  <th style={s.th}>Own Supabase</th>
+                  <th style={s.th}>AI Credits</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plans.map(plan => (
+                  <tr key={plan.id} style={s.tr}>
+                    <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: plan.is_active ? '#f0f0f0' : '#555' }}>{plan.name}{!plan.is_active && ' (hidden)'}</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.price_monthly === 0 ? 'Free' : `$${plan.price_monthly}/mo`}</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.max_projects}</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.max_tables_per_project}</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.max_rows_per_table.toLocaleString()}</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.max_storage_mb} MB</span></td>
+                    <td style={s.td}><span style={s.num}>{plan.max_builds_per_month === -1 ? '∞' : plan.max_builds_per_month}</span></td>
+                    <td style={s.td}><span style={{ ...s.badge, ...(plan.can_connect_own_supabase ? s.badgeGreen : s.badgeGray) }}>{plan.can_connect_own_supabase ? 'Yes' : 'No'}</span></td>
+                    <td style={s.td}><span style={s.num}>${plan.ai_credits_monthly.toFixed(2)}/mo</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: 11, color: '#444', marginTop: 10 }}>Edit limits in the Plans tab. Changes apply immediately to new usage checks.</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -485,6 +813,8 @@ const s: Record<string, React.CSSProperties> = {
   actionGreen: { background: 'rgba(29,158,117,0.12)', color: '#5DCAA5' },
   actionPurple: { background: 'rgba(124,110,247,0.12)', color: '#9d92f5' },
   actionOrange: { background: 'rgba(186,117,23,0.12)', color: '#f0a952' },
+  planSelect: { padding: '3px 6px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, color: '#f0f0f0', fontSize: 11, outline: 'none', cursor: 'pointer' },
+  inlineInput: { padding: '3px 6px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#f0f0f0', fontSize: 12, outline: 'none', width: 90 },
   giftCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 24 },
   giftRow: { display: 'flex', gap: 16, alignItems: 'flex-end' },
   field: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1 },
@@ -499,4 +829,7 @@ const s: Record<string, React.CSSProperties> = {
   marginPreview: { background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, padding: 16, marginBottom: 20 },
   marginRow: { display: 'flex', gap: 32, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 13 },
   saveBtn: { padding: '10px 24px', background: '#7c6ef7', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  dbInfoRow: { display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' },
+  dbLabel: { fontSize: 11, color: '#555', width: 70, flexShrink: 0 },
+  dbVal: { fontSize: 12, color: '#888' },
 }
