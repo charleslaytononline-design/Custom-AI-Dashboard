@@ -65,8 +65,7 @@ export default function ProjectBuilder() {
   async function loadProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
     if (data) {
-      if (data.role === 'admin') setCreditBalance('admin')
-      else setCreditBalance(data.credit_balance || 0)
+      setCreditBalance(data.credit_balance || 0)
     }
     // Load total tokens
     const { data: usage } = await supabase.from('transactions').select('tokens_used').eq('user_id', userId)
