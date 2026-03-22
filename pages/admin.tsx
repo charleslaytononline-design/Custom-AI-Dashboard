@@ -38,10 +38,12 @@ export default function Admin() {
   const [totalRevenue, setTotalRevenue] = useState(0)
   const [totalApiCost, setTotalApiCost] = useState(0)
   const [totalProfit, setTotalProfit] = useState(0)
+  const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
+  const [replicateCostTotal, setReplicateCostTotal] = useState(0)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/dashboard'); return }
+      if (!data.user || data.user.email !== ADMIN_EMAIL) { router.push('/home'); return }
       setUser(data.user)
       loadAll()
     })
@@ -83,23 +85,27 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      setSettings(map as unknown as Settings)
+      setSettings(map as Settings)
     }
   }
 
   async function loadRevenue() {
     const { data } = await supabase.from('transactions').select('amount, api_cost, type, description')
     if (!data) return
-    let revenue = 0, apiCost = 0
+    let revenue = 0, anthropicTotal = 0, replicateTotal = 0
     data.forEach((t: any) => {
       if (t.type === 'usage') {
         revenue += Math.abs(t.amount)
-        apiCost += (t.api_cost || 0)
+        const isImage = (t.description || '').toLowerCase().includes('image')
+        if (isImage) replicateTotal += (t.api_cost || 0)
+        else anthropicTotal += (t.api_cost || 0)
       }
     })
     setTotalRevenue(revenue)
-    setTotalApiCost(apiCost)
-    setTotalProfit(revenue - apiCost)
+    setTotalApiCost(anthropicTotal + replicateTotal)
+    setTotalProfit(revenue - anthropicTotal - replicateTotal)
+    setAnthropicCostTotal(anthropicTotal)
+    setReplicateCostTotal(replicateTotal)
   }
 
   async function saveSettings() {
@@ -152,7 +158,7 @@ export default function Admin() {
           </div>
         </div>
         <nav style={s.nav}>
-          <div style={s.navItem} onClick={() => router.push('/dashboard')}>
+          <div style={s.navItem} onClick={() => router.push('/home')}>
             <span>⊞</span> Projects
           </div>
           <div style={{ ...s.navItem, ...s.navActive }}>
@@ -181,26 +187,16 @@ export default function Admin() {
         </div>
 
         {/* REVENUE STATS */}
-        <div style={s.statsGrid}>
+        <div style={{ ...s.statsGrid, gridTemplateColumns:'repeat(4, 1fr)', marginBottom:12 }}>
           <div style={s.statCard}>
             <div style={s.statLabel}>Total Revenue</div>
             <div style={s.statVal}>${totalRevenue.toFixed(2)}</div>
             <div style={s.statSub}>charged to users</div>
           </div>
           <div style={s.statCard}>
-            <div style={s.statLabel}>API Costs</div>
-            <div style={{ ...s.statVal, color:'#f09595' }}>${totalApiCost.toFixed(4)}</div>
-            <div style={s.statSub}>paid to Anthropic</div>
-          </div>
-          <div style={s.statCard}>
             <div style={s.statLabel}>Your Profit</div>
             <div style={{ ...s.statVal, color:'#5DCAA5' }}>${totalProfit.toFixed(2)}</div>
-            <div style={s.statSub}>{margin}% margin</div>
-          </div>
-          <div style={s.statCard}>
-            <div style={s.statLabel}>Markup</div>
-            <div style={{ ...s.statVal, color:'#9d92f5' }}>{settings.markup_multiplier}x</div>
-            <div style={s.statSub}>current multiplier</div>
+            <div style={s.statSub}>{margin}% margin · {settings.markup_multiplier}x markup</div>
           </div>
           <div style={s.statCard}>
             <div style={s.statLabel}>Total Users</div>
@@ -208,9 +204,31 @@ export default function Admin() {
             <div style={s.statSub}>{users.filter(u=>u.role==='admin').length} admin</div>
           </div>
           <div style={s.statCard}>
-            <div style={s.statLabel}>Total Credits Held</div>
+            <div style={s.statLabel}>Credits Held</div>
             <div style={s.statVal}>${users.reduce((s,u)=>s+(u.credit_balance||0),0).toFixed(2)}</div>
             <div style={s.statSub}>across all users</div>
+          </div>
+        </div>
+        <div style={{ ...s.statsGrid, gridTemplateColumns:'repeat(4, 1fr)' }}>
+          <div style={{ ...s.statCard, border:'1px solid rgba(99,102,241,0.2)', background:'rgba(99,102,241,0.05)' }}>
+            <div style={{ ...s.statLabel, color:'#818cf8' }}>Anthropic (Claude)</div>
+            <div style={{ ...s.statVal, color:'#f09595', fontSize:18 }}>${anthropicCostTotal.toFixed(4)}</div>
+            <div style={s.statSub}>AI text generation</div>
+          </div>
+          <div style={{ ...s.statCard, border:'1px solid rgba(20,184,166,0.2)', background:'rgba(20,184,166,0.05)' }}>
+            <div style={{ ...s.statLabel, color:'#2dd4bf' }}>Replicate (Flux)</div>
+            <div style={{ ...s.statVal, color:'#f09595', fontSize:18 }}>${replicateCostTotal.toFixed(4)}</div>
+            <div style={s.statSub}>AI image generation</div>
+          </div>
+          <div style={s.statCard}>
+            <div style={s.statLabel}>Total API Costs</div>
+            <div style={{ ...s.statVal, color:'#f09595', fontSize:18 }}>${totalApiCost.toFixed(4)}</div>
+            <div style={s.statSub}>Anthropic + Replicate</div>
+          </div>
+          <div style={s.statCard}>
+            <div style={s.statLabel}>Cost per $1 Revenue</div>
+            <div style={{ ...s.statVal, fontSize:18 }}>${totalRevenue > 0 ? (totalApiCost / totalRevenue).toFixed(3) : '0.000'}</div>
+            <div style={s.statSub}>you keep ${totalRevenue > 0 ? (1 - totalApiCost/totalRevenue).toFixed(3) : '1.000'} per $1</div>
           </div>
         </div>
 
@@ -239,7 +257,10 @@ export default function Admin() {
                     <th style={s.th}>Credits</th>
                     <th style={s.th}>Projects</th>
                     <th style={s.th}>Total Spend</th>
-                    <th style={s.th}>API Cost</th>
+                    <th style={{ ...s.th, color:'#818cf8' }}>Anthropic Cost</th>
+                    <th style={{ ...s.th, color:'#2dd4bf' }}>Replicate Cost</th>
+                    <th style={s.th}>Tokens</th>
+                    <th style={s.th}>Images</th>
                     <th style={s.th}>Profit</th>
                     <th style={s.th}>Status</th>
                     <th style={s.th}>Actions</th>
