@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
+import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../lib/welcomeConfig'
 
 interface Project {
   id: string; name: string; description: string; created_at: string; updated_at: string
@@ -58,13 +59,24 @@ export default function Dashboard() {
     }
 
     setCreating(true)
+
+    // Fetch admin-configured welcome page, fall back to default
+    let starterCode: string
+    try {
+      const { data: cfgRow } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
+      const cfg = cfgRow?.value ? JSON.parse(cfgRow.value) : DEFAULT_WELCOME_CONFIG
+      starterCode = generateWelcomeHtml(cfg)
+    } catch {
+      starterCode = generateWelcomeHtml(DEFAULT_WELCOME_CONFIG)
+    }
+
     const { data, error } = await supabase.from('projects').insert({
       user_id: user.id, name: newName.trim(), description: newDesc.trim(),
     }).select().single()
 
     if (!error && data) {
       await supabase.from('pages').insert({
-        project_id: data.id, user_id: user.id, name: 'Home', code: getStarterCode(),
+        project_id: data.id, user_id: user.id, name: 'Home', code: starterCode,
       })
       // Log project creation
       fetch('/api/log', {
@@ -195,9 +207,6 @@ Dashboard.getLayout = function getLayout(page: React.ReactNode) {
   return <Layout>{page}</Layout>
 }
 
-function getStarterCode() {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"><\/script><script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7'}}}}}<\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></head><body class="bg-[#0a0a0a] min-h-screen flex items-center justify-center p-10"><div class="text-center max-w-lg"><div class="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto mb-6"><i class="fa-solid fa-wand-magic-sparkles text-brand text-xl"></i></div><h1 class="text-white text-2xl font-semibold mb-3">Start building</h1><p class="text-white/50 text-sm leading-relaxed mb-8">Use the AI chat on the left to build anything you want.</p><div class="bg-brand/10 border border-brand/20 rounded-xl p-4 text-brand text-sm">Try: "Build an admin dashboard with a sidebar, stats and users table"</div></div></body></html>`
-}
 
 const s: Record<string, React.CSSProperties> = {
   main: { flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' },

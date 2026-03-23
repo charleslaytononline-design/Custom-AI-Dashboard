@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
 import { createServerSupabaseClient } from '@supabase/auth-helpers-nextjs'
 import type { GetServerSidePropsContext } from 'next'
+import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../lib/welcomeConfig'
+import type { WelcomeConfig, WelcomeSection, SectionType } from '../lib/welcomeConfig'
 
 export async function getServerSideProps(ctx: GetServerSidePropsContext) {
   const serverSupabase = createServerSupabaseClient(ctx)
@@ -116,7 +118,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -156,6 +158,13 @@ export default function Admin() {
   const [alertMsg, setAlertMsg] = useState('')
   const [expandedLog, setExpandedLog] = useState<string | null>(null)
 
+  // Welcome page editor state
+  const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfig>(DEFAULT_WELCOME_CONFIG)
+  const [welcomeSaving, setWelcomeSaving] = useState(false)
+  const [welcomeMsg, setWelcomeMsg] = useState('')
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
+  const [addSectionType, setAddSectionType] = useState<SectionType>('text')
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
@@ -172,7 +181,7 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings(), loadWelcomeConfig()])
     setLoading(false)
   }
 
@@ -210,6 +219,52 @@ export default function Admin() {
 
   function toggleAlertSetting(event_type: string) {
     setAlertSettings(prev => prev.map(s => s.event_type === event_type ? { ...s, send_email: !s.send_email } : s))
+  }
+
+  // Welcome page editor helpers
+  async function loadWelcomeConfig() {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
+    if (data?.value) {
+      try { setWelcomeConfig(JSON.parse(data.value)) } catch {}
+    }
+  }
+
+  async function saveWelcomeConfig() {
+    setWelcomeSaving(true)
+    await supabase.from('settings').upsert({ key: 'welcome_page_config', value: JSON.stringify(welcomeConfig), updated_at: new Date().toISOString() })
+    setWelcomeSaving(false)
+    setWelcomeMsg('Saved! New projects will use this page.')
+    setTimeout(() => setWelcomeMsg(''), 4000)
+  }
+
+  function updateSection(id: string, patch: Partial<WelcomeSection>) {
+    setWelcomeConfig(prev => ({ sections: prev.sections.map(s => s.id === id ? { ...s, ...patch } : s) }))
+  }
+
+  function moveSection(id: string, dir: -1 | 1) {
+    setWelcomeConfig(prev => {
+      const arr = [...prev.sections]
+      const idx = arr.findIndex(s => s.id === id)
+      const target = idx + dir
+      if (target < 0 || target >= arr.length) return prev
+      ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
+      return { sections: arr }
+    })
+  }
+
+  function removeSection(id: string) {
+    setWelcomeConfig(prev => ({ sections: prev.sections.filter(s => s.id !== id) }))
+    if (editingSectionId === id) setEditingSectionId(null)
+  }
+
+  function addSection() {
+    const id = `section_${Date.now()}`
+    const defaults: Record<SectionType, string> = {
+      icon: '✨', title: 'New heading', subtitle: 'Supporting text here.',
+      box: 'Highlighted tip or call-to-action.', text: 'New paragraph of text.',
+    }
+    setWelcomeConfig(prev => ({ sections: [...prev.sections, { id, type: addSectionType, content: defaults[addSectionType], visible: true }] }))
+    setEditingSectionId(id)
   }
 
   async function loadPlans() {
@@ -493,7 +548,7 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -1140,6 +1195,114 @@ export default function Admin() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* WELCOME TAB */}
+      {activeTab === 'welcome' && (() => {
+        const TYPE_LABELS: Record<SectionType, string> = {
+          icon: 'Icon', title: 'Title', subtitle: 'Subtitle', box: 'Highlight Box', text: 'Text',
+        }
+        const TYPE_COLORS: Record<SectionType, string> = {
+          icon: '#f0a952', title: '#f0f0f0', subtitle: '#888', box: '#9d92f5', text: '#aaa',
+        }
+        const previewHtml = generateWelcomeHtml(welcomeConfig)
+
+        return (
+          <div style={s.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h2 style={s.sectionTitle}>Welcome Page Editor</h2>
+                <p style={{ fontSize: 12, color: '#555', marginTop: -10 }}>This is what users see when they first open a new project.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {welcomeMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{welcomeMsg}</span>}
+                <button onClick={() => { setWelcomeConfig(DEFAULT_WELCOME_CONFIG); setEditingSectionId(null) }} style={{ ...s.actionBtn, padding: '8px 14px' }}>Reset to Default</button>
+                <button onClick={saveWelcomeConfig} disabled={welcomeSaving} style={s.saveBtn}>
+                  {welcomeSaving ? 'Saving...' : 'Save & Publish'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+              {/* Editor panel */}
+              <div>
+                {/* Section list */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+                  {welcomeConfig.sections.map((sec, idx) => (
+                    <div key={sec.id} style={{ background: '#111', border: `1px solid ${editingSectionId === sec.id ? 'rgba(124,110,247,0.4)' : 'rgba(255,255,255,0.07)'}`, borderRadius: 10, overflow: 'hidden' }}>
+                      {/* Section header row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+                        {/* Visibility toggle */}
+                        <button
+                          onClick={() => updateSection(sec.id, { visible: !sec.visible })}
+                          title={sec.visible ? 'Click to hide' : 'Click to show'}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: sec.visible ? 1 : 0.35, flexShrink: 0 }}
+                        >👁</button>
+                        {/* Type badge */}
+                        <span style={{ fontSize: 10, fontWeight: 600, color: TYPE_COLORS[sec.type], background: 'rgba(255,255,255,0.05)', borderRadius: 4, padding: '2px 7px', flexShrink: 0 }}>
+                          {TYPE_LABELS[sec.type]}
+                        </span>
+                        {/* Content preview — click to edit */}
+                        <span
+                          onClick={() => setEditingSectionId(editingSectionId === sec.id ? null : sec.id)}
+                          style={{ flex: 1, fontSize: 12, color: sec.visible ? '#ccc' : '#444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                        >
+                          {sec.content || '(empty)'}
+                        </span>
+                        {/* Move / delete */}
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <button onClick={() => moveSection(sec.id, -1)} disabled={idx === 0} style={{ ...s.actionBtn, padding: '2px 7px', opacity: idx === 0 ? 0.3 : 1 }}>↑</button>
+                          <button onClick={() => moveSection(sec.id, 1)} disabled={idx === welcomeConfig.sections.length - 1} style={{ ...s.actionBtn, padding: '2px 7px', opacity: idx === welcomeConfig.sections.length - 1 ? 0.3 : 1 }}>↓</button>
+                          <button onClick={() => removeSection(sec.id)} style={{ ...s.actionBtn, ...s.actionRed, padding: '2px 7px' }}>✕</button>
+                        </div>
+                      </div>
+
+                      {/* Inline editor — shown when expanded */}
+                      {editingSectionId === sec.id && (
+                        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '10px 12px', background: '#0d0d0d' }}>
+                          <label style={{ ...s.label, marginBottom: 6, display: 'block' }}>Content</label>
+                          <textarea
+                            value={sec.content}
+                            onChange={e => updateSection(sec.id, { content: e.target.value })}
+                            rows={sec.type === 'text' || sec.type === 'subtitle' ? 3 : 2}
+                            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, color: '#f0f0f0', fontSize: 13, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                          />
+                          {sec.type === 'icon' && (
+                            <p style={{ fontSize: 11, color: '#555', marginTop: 6 }}>Paste any emoji — it will be displayed in a styled rounded box.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add section row */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <select value={addSectionType} onChange={e => setAddSectionType(e.target.value as SectionType)} style={{ ...s.planSelect, flex: 1, padding: '8px 10px' }}>
+                    {(Object.keys(TYPE_LABELS) as SectionType[]).map(t => (
+                      <option key={t} value={t}>{TYPE_LABELS[t]}</option>
+                    ))}
+                  </select>
+                  <button onClick={addSection} style={{ ...s.saveBtn, padding: '8px 18px', whiteSpace: 'nowrap' as const }}>+ Add Section</button>
+                </div>
+              </div>
+
+              {/* Live preview panel */}
+              <div style={{ position: 'sticky', top: 20 }}>
+                <div style={{ fontSize: 11, color: '#555', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Live Preview</div>
+                <div style={{ border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflow: 'hidden' }}>
+                  <iframe
+                    srcDoc={previewHtml}
+                    sandbox="allow-scripts"
+                    style={{ width: '100%', height: 420, border: 'none', display: 'block' }}
+                    title="Welcome page preview"
+                  />
+                </div>
+                <p style={{ fontSize: 11, color: '#444', marginTop: 8 }}>Preview updates as you edit. Hit "Save & Publish" to apply to new projects.</p>
+              </div>
             </div>
           </div>
         )
