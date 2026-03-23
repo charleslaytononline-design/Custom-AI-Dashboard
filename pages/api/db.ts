@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).end()
   if (!clientsDb) return res.status(503).json({ error: 'Clients database not configured' })
 
-  const { projectId, table, action, data, filters, limit } = req.body
+  const { projectId, table, action, data, limit } = req.body
 
   if (!projectId || !table || !action) {
     return res.status(400).json({ error: 'projectId, table, and action are required' })
@@ -27,23 +27,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Invalid table name' })
   }
 
-  // Verify project exists in App DB (proves the projectId is real)
+  // Verify project exists in App DB
   const { data: project } = await appDb.from('projects').select('id, user_id').eq('id', projectId).single()
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
   const schemaName = `proj_${projectId}`
-  const qualifiedTable = `${schemaName}.${table}`
 
   try {
     if (action === 'select') {
       const rowLimit = Math.min(Number(limit) || 500, 1000)
-      const { data: rows, error } = await clientsDb
-        .from(qualifiedTable)
-        .select('*')
-        .limit(rowLimit)
-        .order('created_at', { ascending: false })
+      const { data: result, error } = await clientsDb.rpc('project_select', {
+        p_schema: schemaName,
+        p_table: table,
+        p_limit: rowLimit,
+      })
       if (error) return res.status(200).json({ error: error.message, data: [] })
-      return res.status(200).json({ data: rows || [] })
+      return res.status(200).json({ data: result || [] })
     }
 
     if (action === 'insert') {
@@ -56,30 +55,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ? await appDb.from('plans').select('max_rows_per_table').eq('id', userPlanId).single()
         : await appDb.from('plans').select('max_rows_per_table').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
       if (plan?.max_rows_per_table) {
-        const { count } = await clientsDb.from(qualifiedTable).select('*', { count: 'exact', head: true })
+        const { data: count } = await clientsDb.rpc('project_count', { p_schema: schemaName, p_table: table })
         if (count !== null && count >= plan.max_rows_per_table) {
           return res.status(200).json({ error: 'row_limit_reached', message: `Row limit of ${plan.max_rows_per_table} reached for this table. Upgrade your plan.` })
         }
       }
 
-      const { data: inserted, error } = await clientsDb.from(qualifiedTable).insert(data).select().single()
+      const { data: result, error } = await clientsDb.rpc('project_insert', {
+        p_schema: schemaName,
+        p_table: table,
+        p_data: data,
+      })
       if (error) return res.status(200).json({ error: error.message })
-      return res.status(200).json({ data: inserted })
+      return res.status(200).json({ data: result })
     }
 
     if (action === 'update') {
       if (!data?.id) return res.status(400).json({ error: 'data.id required for update' })
       const { id, ...updateFields } = data
-      const { data: updated, error } = await clientsDb.from(qualifiedTable).update(updateFields).eq('id', id).select().single()
+      const { data: result, error } = await clientsDb.rpc('project_update', {
+        p_schema: schemaName,
+        p_table: table,
+        p_id: id,
+        p_data: updateFields,
+      })
       if (error) return res.status(200).json({ error: error.message })
-      return res.status(200).json({ data: updated })
+      return res.status(200).json({ data: result })
     }
 
     if (action === 'delete') {
       if (!data?.id) return res.status(400).json({ error: 'data.id required for delete' })
-      const { error } = await clientsDb.from(qualifiedTable).delete().eq('id', data.id)
+      const { data: result, error } = await clientsDb.rpc('project_delete', {
+        p_schema: schemaName,
+        p_table: table,
+        p_id: data.id,
+      })
       if (error) return res.status(200).json({ error: error.message })
-      return res.status(200).json({ data: { deleted: true } })
+      return res.status(200).json({ data: { deleted: result } })
     }
 
     return res.status(400).json({ error: `Unknown action: ${action}` })

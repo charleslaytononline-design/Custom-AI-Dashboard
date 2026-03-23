@@ -12,7 +12,8 @@
       "Bash(npx tsc:*)",
       "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__get_project_url",
       "Bash(npx next:*)",
-      "Bash(node_modules/.bin/next build:*)"
+      "Bash(node_modules/.bin/next build:*)",
+      "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__list_tables"
     ]
   }
 }
