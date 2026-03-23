@@ -254,6 +254,11 @@ export default function ProjectBuilder() {
     } catch (networkErr: any) {
       throw new Error('The builder timed out. Try a simpler request or try again.')
     }
+    // Vercel returns plain text (not JSON) on function timeouts/crashes
+    const contentType = res.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      throw new Error('The build timed out or the server encountered an error. Try a simpler request or try again.')
+    }
     const data = await res.json()
     if (data.error === 'insufficient_credits') {
       setShowBuyCredits(true)
@@ -291,6 +296,7 @@ export default function ProjectBuilder() {
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
     }
     setLoading(false)
@@ -319,6 +325,7 @@ export default function ProjectBuilder() {
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, stack: err.stack?.slice(0, 300) })
     }
     setLoading(false)
@@ -353,6 +360,7 @@ export default function ProjectBuilder() {
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
     }
     setLoading(false)
