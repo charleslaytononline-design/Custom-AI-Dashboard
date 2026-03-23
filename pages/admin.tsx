@@ -118,7 +118,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome' | 'ai_connections'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome' | 'ai_connections' | 'actions'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -164,12 +164,23 @@ export default function Admin() {
   const [aiConnectionsSaving, setAiConnectionsSaving] = useState(false)
   const [aiConnectionsMsg, setAiConnectionsMsg] = useState('')
 
+  // Actions tab state
+  const [actionsUserSearch, setActionsUserSearch] = useState('')
+  const [actionsAuthData, setActionsAuthData] = useState<Array<{ id: string; email: string; email_confirmed_at: string | null; created_at: string; last_sign_in_at: string | null }>>([])
+  const [actionsLoading, setActionsLoading] = useState<Record<string, boolean>>({})
+  const [actionsMsg, setActionsMsg] = useState<Record<string, string>>({})
+  const [actionsDataLoading, setActionsDataLoading] = useState(false)
+
   // Welcome page editor state
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfig>(DEFAULT_WELCOME_CONFIG)
   const [welcomeSaving, setWelcomeSaving] = useState(false)
   const [welcomeMsg, setWelcomeMsg] = useState('')
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
   const [addSectionType, setAddSectionType] = useState<SectionType>('text')
+
+  useEffect(() => {
+    if (activeTab === 'actions') loadActionsData()
+  }, [activeTab])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -208,6 +219,43 @@ export default function Admin() {
     setAiConnectionsSaving(false)
     setAiConnectionsMsg('Saved! Changes apply to the next build.')
     setTimeout(() => setAiConnectionsMsg(''), 4000)
+  }
+
+  async function loadActionsData() {
+    setActionsDataLoading(true)
+    const res = await fetch('/api/admin/users-auth')
+    const data = await res.json()
+    if (data.users) setActionsAuthData(data.users)
+    setActionsDataLoading(false)
+  }
+
+  async function resendConfirmation(userId: string, email: string) {
+    setActionsLoading(prev => ({ ...prev, [userId]: true }))
+    const res = await fetch('/api/admin/resend-confirmation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, email }),
+    })
+    const data = await res.json()
+    const msg = data.ok ? '✓ Confirmation email sent' : `Error: ${data.error}`
+    setActionsMsg(prev => ({ ...prev, [userId]: msg }))
+    setActionsLoading(prev => ({ ...prev, [userId]: false }))
+    setTimeout(() => setActionsMsg(prev => { const n = { ...prev }; delete n[userId]; return n }), 6000)
+  }
+
+  async function forceConfirmEmail(userId: string) {
+    setActionsLoading(prev => ({ ...prev, [userId + '_force']: true }))
+    const res = await fetch('/api/admin/confirm-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    })
+    const data = await res.json()
+    const msg = data.ok ? '✓ Email confirmed — user can now sign in' : `Error: ${data.error}`
+    setActionsMsg(prev => ({ ...prev, [userId]: msg }))
+    setActionsLoading(prev => ({ ...prev, [userId + '_force']: false }))
+    if (data.ok) loadActionsData()
+    setTimeout(() => setActionsMsg(prev => { const n = { ...prev }; delete n[userId]; return n }), 6000)
   }
 
   async function loadRoles() {
@@ -573,7 +621,7 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome', 'ai_connections'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome', 'ai_connections', 'actions'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab === 'ai_connections' ? 'AI Connections' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -1432,6 +1480,105 @@ export default function Admin() {
           </div>
         )
       })()}
+      {/* ACTIONS TAB */}
+      {activeTab === 'actions' && (() => {
+        const filtered = actionsAuthData.filter(u =>
+          !actionsUserSearch || u.email?.toLowerCase().includes(actionsUserSearch.toLowerCase())
+        )
+        return (
+          <div style={s.section}>
+            <div style={s.tableTop}>
+              <div>
+                <h2 style={s.sectionTitle}>User Actions</h2>
+                <p style={{ fontSize: 12, color: '#555', marginTop: -10, marginBottom: 0 }}>Manage user accounts — resend confirmation emails or manually confirm users</p>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input value={actionsUserSearch} onChange={e => setActionsUserSearch(e.target.value)} placeholder="Search by email..." style={s.searchInput} />
+                <button onClick={loadActionsData} disabled={actionsDataLoading} style={{ ...s.saveBtn, padding: '7px 14px', fontSize: 11, opacity: actionsDataLoading ? 0.5 : 1 }}>
+                  {actionsDataLoading ? 'Loading…' : '↻ Refresh'}
+                </button>
+              </div>
+            </div>
+
+            {/* Info banner */}
+            <div style={{ background: 'rgba(124,110,247,0.06)', border: '1px solid rgba(124,110,247,0.15)', borderRadius: 10, padding: '14px 18px', marginBottom: 16, fontSize: 12, color: '#9d92f5', lineHeight: 1.7 }}>
+              <strong>About signup emails:</strong> Confirmation emails are now sent via <strong>Resend</strong> (bypasses Supabase rate limits).
+              Use the buttons below to manually resend a confirmation or force-confirm a user who can't receive email.
+            </div>
+
+            <div style={s.tableWrap}>
+              <table style={s.table}>
+                <thead>
+                  <tr style={s.thead}>
+                    <th style={s.th}>User</th>
+                    <th style={s.th}>Joined</th>
+                    <th style={s.th}>Last Sign In</th>
+                    <th style={s.th}>Email Status</th>
+                    <th style={s.th}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {actionsDataLoading ? (
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: '#555', padding: 32 }}>Loading users…</td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: '#555', padding: 32 }}>No users found</td></tr>
+                  ) : filtered.map(u => {
+                    const confirmed = !!u.email_confirmed_at
+                    const isLoading = actionsLoading[u.id] || actionsLoading[u.id + '_force']
+                    const msg = actionsMsg[u.id]
+                    const joinDate = new Date(u.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+                    const lastSign = u.last_sign_in_at
+                      ? new Date(u.last_sign_in_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+                      : '—'
+                    return (
+                      <tr key={u.id} style={s.tr}>
+                        <td style={s.td}>
+                          <div style={s.userCell}>
+                            <div style={s.uAvatar}>{(u.email || '?')[0].toUpperCase()}</div>
+                            <span style={{ fontSize: 12, color: '#ccc' }}>{u.email}</span>
+                          </div>
+                        </td>
+                        <td style={{ ...s.td, ...s.num }}>{joinDate}</td>
+                        <td style={{ ...s.td, ...s.num }}>{lastSign}</td>
+                        <td style={s.td}>
+                          <span style={{ ...s.badge, ...(confirmed ? s.badgeGreen : s.badgeRed) }}>
+                            {confirmed ? '✓ Confirmed' : '✗ Unconfirmed'}
+                          </span>
+                        </td>
+                        <td style={s.td}>
+                          {msg ? (
+                            <span style={{ fontSize: 11, color: msg.startsWith('✓') ? '#5DCAA5' : '#f09595' }}>{msg}</span>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button
+                                onClick={() => resendConfirmation(u.id, u.email)}
+                                disabled={isLoading}
+                                style={{ ...s.actionBtn, ...s.actionPurple, opacity: isLoading ? 0.5 : 1 }}
+                              >
+                                {actionsLoading[u.id] ? 'Sending…' : 'Resend Confirmation'}
+                              </button>
+                              {!confirmed && (
+                                <button
+                                  onClick={() => forceConfirmEmail(u.id)}
+                                  disabled={isLoading}
+                                  style={{ ...s.actionBtn, ...s.actionGreen, opacity: isLoading ? 0.5 : 1 }}
+                                >
+                                  {actionsLoading[u.id + '_force'] ? 'Confirming…' : 'Force Confirm'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }

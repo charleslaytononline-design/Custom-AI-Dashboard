@@ -40,12 +40,23 @@ export default function Login() {
 
     if (mode === 'signup') {
       log('signup_attempt', 'info', `Signup attempted`, email, { email })
-      const { error: signupError } = await supabase.auth.signUp({ email, password })
-      if (signupError) {
-        setError(signupError.message)
-        log('signup_failure', 'warn', `Signup failed: ${signupError.message}`, email, { email, error: signupError.message })
+      // Use our own /api/signup endpoint which bypasses Supabase's email rate limit
+      // by creating the user via admin API and sending confirmation via Resend
+      const signupRes = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const signupData = await signupRes.json()
+      if (!signupRes.ok || signupData.error) {
+        const msg = signupData.error || 'Signup failed. Please try again.'
+        setError(msg)
+        log('signup_failure', 'warn', `Signup failed: ${msg}`, email, { email, error: msg })
+      } else if (signupData.autoConfirmed) {
+        setSuccess('Account created! You can now sign in.')
+        log('signup_success', 'info', `New signup (auto-confirmed): ${email}`, email, { email })
       } else {
-        setSuccess('Account created! Check your email to confirm, then sign in.')
+        setSuccess('Account created! Check your email to confirm your address, then sign in.')
         log('signup_success', 'info', `New signup: ${email}`, email, { email })
       }
     } else {
