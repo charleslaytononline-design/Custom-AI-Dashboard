@@ -230,24 +230,32 @@ RULES:
     if (planOnly) {
       message = raw
     } else {
-      const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/i)
-      const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/i)
+      // Case-SENSITIVE match — /i would cause <CODE> to match HTML <code> tags
+      // inside the generated page, corrupting the extraction via lazy *? match.
+      const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
+      const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/)
       if (messageMatch && codeMatch) {
         message = messageMatch[1].trim()
         code = codeMatch[1].trim()
-        // Replace image placeholder with real URL
         if (generatedImageUrl && code) {
           code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
         }
       } else {
-        const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*<\/html>/i)
+        // Fallback 1: raw <!DOCTYPE html> block
+        const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
         if (htmlMatch) {
           code = htmlMatch[0]
-          if (generatedImageUrl) {
-            code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
-          }
+        } else {
+          // Fallback 2: markdown ```html ... ``` block
+          const mdMatch = raw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
+          if (mdMatch) code = mdMatch[1]
         }
-        message = 'Done! Your page has been updated.'
+        if (generatedImageUrl && code) {
+          code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
+        }
+        message = code
+          ? 'Done! Your page has been updated.'
+          : 'Something went wrong generating the page. Please try again.'
       }
     }
 
