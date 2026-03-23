@@ -236,6 +236,7 @@ export default function ProjectBuilder() {
       allPages: pages,
       planOnly,
       userId: user?.id,
+      projectId,
     }
 
     if (pendingImage && !planOnly) {
@@ -259,9 +260,17 @@ export default function ProjectBuilder() {
       logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
       throw new Error(data.message || 'Insufficient credits')
     }
+    if (data.error === 'build_limit_reached') {
+      setShowBuyCredits(true)
+      logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
+      throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
+    }
     if (data.error) {
       logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
-      throw new Error(data.error)
+      const msg = (data.error.includes('pattern') || data.error.includes('unexpected'))
+        ? 'Something went wrong generating the page. Please try again.'
+        : data.error
+      throw new Error(msg)
     }
     if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
     return data
@@ -310,7 +319,7 @@ export default function ProjectBuilder() {
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
-      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId })
+      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, stack: err.stack?.slice(0, 300) })
     }
     setLoading(false)
   }

@@ -9,6 +9,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const clientsDb = process.env.CLIENTS_SUPABASE_URL && process.env.CLIENTS_SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.CLIENTS_SUPABASE_URL, process.env.CLIENTS_SUPABASE_SERVICE_ROLE_KEY)
+  : null
+
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
   maxDuration: 120,
@@ -71,7 +75,7 @@ async function getSettings() {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId } = req.body
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
@@ -96,6 +100,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message: 'You need to purchase credits to continue building.',
       balance: profile.credit_balance,
     })
+  }
+
+  // Plan build-limit check
+  if (userId && !planOnly) {
+    const { data: planProfile } = await supabase.from('profiles').select('plan_id, role').eq('id', userId).single()
+    if (planProfile?.plan_id && planProfile.role !== 'admin') {
+      const { data: plan } = await supabase.from('plans').select('name, max_builds_per_month').eq('id', planProfile.plan_id).single()
+      if (plan?.max_builds_per_month) {
+        const monthStart = new Date()
+        monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
+        const { count } = await supabase.from('usage').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', monthStart.toISOString())
+        if (count !== null && count >= plan.max_builds_per_month) {
+          return res.status(200).json({
+            error: 'build_limit_reached',
+            message: `You've used all ${plan.max_builds_per_month} builds this month on the ${plan.name} plan. Upgrade to build more.`,
+            planName: plan.name,
+          })
+        }
+      }
+    }
   }
 
   const settings = await getSettings()
@@ -138,6 +162,37 @@ When to generate images:
 For the image prompt, be extremely detailed and specific:
 BAD: "AI robot"
 GOOD: "Photorealistic glowing cyan AI humanoid robot, transparent body showing circuit patterns, standing in front of multiple holographic screens showing data, dark background with teal ambient lighting, cinematic quality, 8k resolution"
+
+DATABASE CAPABILITY:
+You can create real persistent database tables when users need data that persists across sessions.
+To create a table, output this tag BEFORE the CODE block:
+
+<CREATE_TABLE>
+{"name":"table_name","columns":[
+  {"name":"id","type":"uuid","primaryKey":true},
+  {"name":"field_name","type":"text"},
+  {"name":"created_at","type":"timestamptz","default":"now()"}
+]}
+</CREATE_TABLE>
+
+Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb
+
+Then in your CODE, use fetch('/api/db') with PROJECT_ID:
+<script>
+const PROJECT_ID = '__PROJECT_ID__'
+async function dbQuery(table, action, data) {
+  const r = await fetch('/api/db', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({projectId: PROJECT_ID, table, action, data})})
+  return r.json()
+}
+// select: await dbQuery('leads', 'select')  → {data:[...]}
+// insert: await dbQuery('leads', 'insert', {name:'John', email:'j@j.com'})
+// update: await dbQuery('leads', 'update', {id:'uuid', status:'done'})
+// delete: await dbQuery('leads', 'delete', {id:'uuid'})
+</script>
+
+Use real DB for: forms, CRM records, orders — anything submitted by users that must persist.
+Use localStorage for: UI state, config, read-only display data.
 
 INSTRUCTIONS:
 Return your response in this exact format:
@@ -227,8 +282,14 @@ RULES:
       ]
     }
 
+    const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
+    // Cap to last 8 history messages to prevent context overflow (fixes 116-token parse failures)
+    const cappedHistory = rawHistory.length > 8 ? rawHistory.slice(-8) : rawHistory
+    const firstUserIdx = cappedHistory.findIndex((m: any) => m.role === 'user')
+    const safeHistory = firstUserIdx > 0 ? cappedHistory.slice(firstUserIdx) : cappedHistory
+
     const apiMessages = [
-      ...messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content })),
+      ...safeHistory,
       { role: lastMessage?.role || 'user', content: lastContent },
     ]
 
@@ -275,6 +336,37 @@ RULES:
       }
     }
 
+    // Handle <CREATE_TABLE> tag — create real table in Clients DB
+    const createTableMatch = raw.match(/<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/i)
+    if (createTableMatch && clientsDb && projectId && !planOnly) {
+      try {
+        const tableDef = JSON.parse(createTableMatch[1].trim())
+        const schemaName = `proj_${projectId}`
+        const { data: planProfile } = await supabase.from('profiles').select('plan_id').eq('id', userId).single()
+        const { data: plan } = planProfile?.plan_id
+          ? await supabase.from('plans').select('max_tables_per_project').eq('id', planProfile.plan_id).single()
+          : { data: null }
+        const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
+        const currentCount = usageRow?.table_count || 0
+        const tableLimit = plan?.max_tables_per_project ?? 999
+        if (currentCount >= tableLimit) {
+          await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit})`, userEmail, { userId, projectId })
+        } else {
+          await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
+          await clientsDb.from('schema_registry').upsert(
+            { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
+            { onConflict: 'project_id' }
+          )
+          await clientsDb.from('schema_usage').upsert(
+            { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: currentCount + 1, sampled_at: new Date().toISOString() },
+            { onConflict: 'project_id' }
+          )
+        }
+      } catch (tableErr: any) {
+        await log('builder_error', 'warn', `CREATE_TABLE failed: ${tableErr.message}`, userEmail, { userId, projectId })
+      }
+    }
+
     // If image generation failed, replace the placeholder with a dark grey fallback
     // so the page renders cleanly instead of showing a broken image icon
     const imageFallback = generatedImageUrl
@@ -312,6 +404,9 @@ RULES:
         if (generatedImageUrl && code) {
           code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
         }
+        if (code && projectId) {
+          code = code.replace(/__PROJECT_ID__/g, projectId)
+        }
       } else {
         // Fallback 1: raw <!DOCTYPE html> block
         const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
@@ -324,6 +419,9 @@ RULES:
         }
         if (generatedImageUrl && code) {
           code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
+        }
+        if (code && projectId) {
+          code = code.replace(/__PROJECT_ID__/g, projectId)
         }
 
         if (!code) {

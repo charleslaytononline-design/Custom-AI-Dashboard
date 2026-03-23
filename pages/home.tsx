@@ -60,6 +60,19 @@ export default function Dashboard() {
       return
     }
 
+    // Check max_projects plan limit
+    if (profile?.plan_id && profile.role !== 'admin') {
+      const { data: plan } = await supabase.from('plans').select('name, max_projects').eq('id', profile.plan_id).single()
+      if (plan?.max_projects) {
+        const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
+        if (count !== null && count >= plan.max_projects) {
+          setShowNew(false)
+          openBuyModal()
+          return
+        }
+      }
+    }
+
     setCreating(true)
 
     // Fetch admin-configured welcome page, fall back to default

@@ -96,6 +96,17 @@ interface AlertSetting {
   send_email: boolean
 }
 
+interface ChatMessage {
+  id: string
+  user_id: string
+  project_id: string
+  page_id: string | null
+  role: 'user' | 'assistant'
+  content: string
+  is_plan: boolean
+  created_at: string
+}
+
 const BLANK_PLAN: Omit<Plan, 'id'> = {
   name: '',
   price_monthly: 0,
@@ -119,7 +130,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome' | 'ai_connections' | 'actions'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'ai_connections' | 'actions'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -158,6 +169,11 @@ export default function Admin() {
   const [alertSaving, setAlertSaving] = useState(false)
   const [alertMsg, setAlertMsg] = useState('')
   const [expandedLog, setExpandedLog] = useState<string | null>(null)
+
+  // Chat History state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatSearch, setChatSearch] = useState('')
+  const [expandedChat, setExpandedChat] = useState<string | null>(null)
 
   // AI Connections state
   const [aiChatModel, setAiChatModel] = useState('claude-sonnet-4-5')
@@ -199,7 +215,7 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings(), loadWelcomeConfig(), loadAiConnections()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadChatHistory(), loadAlertSettings(), loadWelcomeConfig(), loadAiConnections()])
     setLoading(false)
   }
 
@@ -271,6 +287,15 @@ export default function Admin() {
       .order('created_at', { ascending: false })
       .limit(500)
     if (data) setLogs(data)
+  }
+
+  async function loadChatHistory() {
+    const { data } = await supabase
+      .from('chat_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    if (data) setChatMessages(data)
   }
 
   async function loadAlertSettings() {
@@ -623,9 +648,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome', 'ai_connections', 'actions'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_connections', 'actions'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_connections' ? 'AI Connections' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_connections' ? 'AI Connections' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1265,6 +1290,79 @@ export default function Admin() {
                             <td colSpan={6} style={{ padding: '10px 14px' }}>
                               <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                 {JSON.stringify(log.metadata, null, 2)}
+                              </pre>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* CHAT HISTORY TAB */}
+      {activeTab === 'chat_history' && (() => {
+        const filteredChats = chatMessages.filter(m => {
+          if (!chatSearch) return true
+          const email = users.find(u => u.id === m.user_id)?.email || ''
+          return email.toLowerCase().includes(chatSearch.toLowerCase()) ||
+            m.content.toLowerCase().includes(chatSearch.toLowerCase())
+        })
+        return (
+          <div style={s.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
+              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Chat History <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredChats.length} of {chatMessages.length})</span></h2>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Search by email or content..." style={{ ...s.searchInput, width: 240 }} />
+                <button onClick={loadChatHistory} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+              </div>
+            </div>
+            <div style={s.tableWrap}>
+              {filteredChats.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No chat history yet</div>
+              ) : (
+                <table style={s.table}>
+                  <thead>
+                    <tr style={s.thead}>
+                      <th style={s.th}>Time</th>
+                      <th style={s.th}>User</th>
+                      <th style={s.th}>Role</th>
+                      <th style={s.th}>Content</th>
+                      <th style={s.th}>Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredChats.map(msg => (
+                      <React.Fragment key={msg.id}>
+                        <tr style={{ ...s.tr, cursor: 'pointer' }} onClick={() => setExpandedChat(expandedChat === msg.id ? null : msg.id)}>
+                          <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                            {new Date(msg.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                          <td style={{ ...s.td, fontSize: 12, color: '#666' }}>
+                            {users.find(u => u.id === msg.user_id)?.email || msg.user_id.slice(0, 8) + '…'}
+                          </td>
+                          <td style={s.td}>
+                            <span style={{ ...s.badge, background: msg.role === 'user' ? 'rgba(93,202,165,0.12)' : 'rgba(157,146,245,0.12)', color: msg.role === 'user' ? '#5DCAA5' : '#9d92f5' }}>
+                              {msg.role}
+                            </span>
+                          </td>
+                          <td style={{ ...s.td, maxWidth: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontSize: 12, color: '#ccc' }}>{msg.content.slice(0, 120)}{msg.content.length > 120 ? '…' : ''}</span>
+                          </td>
+                          <td style={s.td}>
+                            {msg.is_plan && <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952', fontSize: 10 }}>plan</span>}
+                            <span style={{ fontSize: 10, color: '#444', marginLeft: 4 }}>▶ expand</span>
+                          </td>
+                        </tr>
+                        {expandedChat === msg.id && (
+                          <tr style={{ background: '#0d0d0d' }}>
+                            <td colSpan={5} style={{ padding: '10px 14px' }}>
+                              <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                {msg.content}
                               </pre>
                             </td>
                           </tr>

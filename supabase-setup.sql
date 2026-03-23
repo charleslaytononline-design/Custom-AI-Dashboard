@@ -145,3 +145,31 @@ create policy "admin views all pages" on pages for select using (
 -- 3. Add suspended column if missing
 alter table profiles add column if not exists suspended boolean not null default false;
 alter table profiles add column if not exists credit_balance numeric not null default 0;
+
+-- ============================================
+-- chat_history table (stores builder conversations)
+-- Run this block if the table doesn't exist yet
+-- ============================================
+create table if not exists chat_history (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references projects(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  page_id uuid references pages(id) on delete cascade not null,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null default '',
+  is_plan boolean not null default false,
+  created_at timestamptz default now()
+);
+
+alter table chat_history enable row level security;
+
+create policy "users manage own chat history" on chat_history
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "admin views all chat history" on chat_history
+  for select using (
+    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  );
+
+create index if not exists chat_history_page_id_idx on chat_history(page_id);
+create index if not exists chat_history_user_id_idx on chat_history(user_id);
