@@ -57,12 +57,13 @@ async function log(
 
 async function getSettings() {
   const { data } = await supabase.from('settings').select('*')
-  const map: Record<string, number> = {}
-  data?.forEach((s: any) => { map[s.key] = parseFloat(s.value) })
+  const map: Record<string, string> = {}
+  data?.forEach((s: any) => { map[s.key] = s.value })
   return {
-    markupMultiplier: map['markup_multiplier'] || 3.0,
-    inputCostPer1k: map['input_cost_per_1k'] || 0.003,
-    outputCostPer1k: map['output_cost_per_1k'] || 0.015,
+    markupMultiplier: parseFloat(map['markup_multiplier']) || 3.0,
+    inputCostPer1k: parseFloat(map['input_cost_per_1k']) || 0.003,
+    outputCostPer1k: parseFloat(map['output_cost_per_1k']) || 0.015,
+    chatModel: map['ai_chat_model'] || 'claude-sonnet-4-5',
   }
 }
 
@@ -226,7 +227,7 @@ RULES:
     ]
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: settings.chatModel,
       max_tokens: 16000,  // Increased from 8000 — complex full-page HTML needs more room
       system,
       messages: apiMessages,
@@ -256,16 +257,23 @@ RULES:
         if (imgData.url) {
           generatedImageUrl = imgData.url
         } else {
-          await log('builder_error', 'warn', `Image generation failed during build`, userEmail, {
-            userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.error,
+          // generate-image already logged the specific Replicate error — add a build-level log too
+          await log('builder_error', 'warn', `Image generation failed during build: ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
+            userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.detail || imgData.error,
           })
         }
       } catch (imgErr: any) {
-        await log('builder_error', 'warn', `Image generation threw an error: ${imgErr.message}`, userEmail, {
+        await log('builder_error', 'warn', `Image generation network error: ${imgErr.message}`, userEmail, {
           userId, pageName, error: imgErr.message,
         })
       }
     }
+
+    // If image generation failed, replace the placeholder with a dark grey fallback
+    // so the page renders cleanly instead of showing a broken image icon
+    const imageFallback = generatedImageUrl
+      ? generatedImageUrl
+      : 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
 
     // Deduct credits from everyone including admin
     const { data: deducted } = await supabase.rpc('deduct_credits', {
@@ -296,7 +304,7 @@ RULES:
         message = messageMatch[1].trim()
         code = codeMatch[1].trim()
         if (generatedImageUrl && code) {
-          code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
+          code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
         }
       } else {
         // Fallback 1: raw <!DOCTYPE html> block
@@ -309,7 +317,7 @@ RULES:
           if (mdMatch) code = mdMatch[1]
         }
         if (generatedImageUrl && code) {
-          code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
+          code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
         }
 
         if (!code) {

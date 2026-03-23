@@ -118,7 +118,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'welcome' | 'ai_connections'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -158,6 +158,12 @@ export default function Admin() {
   const [alertMsg, setAlertMsg] = useState('')
   const [expandedLog, setExpandedLog] = useState<string | null>(null)
 
+  // AI Connections state
+  const [aiChatModel, setAiChatModel] = useState('claude-sonnet-4-5')
+  const [aiImageModel, setAiImageModel] = useState('black-forest-labs/flux-2-pro')
+  const [aiConnectionsSaving, setAiConnectionsSaving] = useState(false)
+  const [aiConnectionsMsg, setAiConnectionsMsg] = useState('')
+
   // Welcome page editor state
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfig>(DEFAULT_WELCOME_CONFIG)
   const [welcomeSaving, setWelcomeSaving] = useState(false)
@@ -181,8 +187,27 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings(), loadWelcomeConfig()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings(), loadWelcomeConfig(), loadAiConnections()])
     setLoading(false)
+  }
+
+  async function loadAiConnections() {
+    const { data } = await supabase.from('settings').select('key, value').in('key', ['ai_chat_model', 'ai_image_model'])
+    if (data) {
+      const map: Record<string, string> = {}
+      data.forEach((s: any) => { map[s.key] = s.value })
+      if (map.ai_chat_model) setAiChatModel(map.ai_chat_model)
+      if (map.ai_image_model) setAiImageModel(map.ai_image_model)
+    }
+  }
+
+  async function saveAiConnections() {
+    setAiConnectionsSaving(true)
+    await supabase.from('settings').upsert({ key: 'ai_chat_model', value: aiChatModel, updated_at: new Date().toISOString() })
+    await supabase.from('settings').upsert({ key: 'ai_image_model', value: aiImageModel, updated_at: new Date().toISOString() })
+    setAiConnectionsSaving(false)
+    setAiConnectionsMsg('Saved! Changes apply to the next build.')
+    setTimeout(() => setAiConnectionsMsg(''), 4000)
   }
 
   async function loadRoles() {
@@ -548,9 +573,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome', 'ai_connections'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_connections' ? 'AI Connections' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1203,6 +1228,102 @@ export default function Admin() {
           </div>
         )
       })()}
+
+      {/* AI CONNECTIONS TAB */}
+      {activeTab === 'ai_connections' && (
+        <div style={s.section}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div>
+              <h2 style={s.sectionTitle}>AI Connections</h2>
+              <p style={{ fontSize: 12, color: '#555', marginTop: -10 }}>Choose which AI models power your platform. Changes take effect on the next build or image generation.</p>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              {aiConnectionsMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{aiConnectionsMsg}</span>}
+              <button onClick={saveAiConnections} disabled={aiConnectionsSaving} style={s.saveBtn}>
+                {aiConnectionsSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            {/* Chat / Text model */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🤖</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Chat / Text Model</div>
+                  <div style={{ fontSize: 11, color: '#555' }}>Anthropic — powers the AI builder</div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Model</label>
+                <select value={aiChatModel} onChange={e => setAiChatModel(e.target.value)} style={{ ...s.select, marginBottom: 12 }}>
+                  <optgroup label="Claude 4.6">
+                    <option value="claude-opus-4-6">claude-opus-4-6 — most capable, slowest</option>
+                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — best balance (recommended)</option>
+                  </optgroup>
+                  <optgroup label="Claude 4.5">
+                    <option value="claude-sonnet-4-5">claude-sonnet-4-5 — fast, capable</option>
+                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
+                  </optgroup>
+                </select>
+                <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 8, fontSize: 11, color: '#9d92f5', lineHeight: 1.6 }}>
+                  <strong>Current:</strong> {aiChatModel}<br />
+                  {aiChatModel.includes('opus') && 'Highest quality, ~$15/1M input tokens. Great for complex apps.'}
+                  {aiChatModel.includes('sonnet-4-6') && 'Latest Sonnet. Excellent quality with fast response times.'}
+                  {aiChatModel.includes('sonnet-4-5') && 'Reliable and fast. Best for most builds.'}
+                  {aiChatModel.includes('haiku') && 'Fastest and cheapest. Good for simple pages.'}
+                </div>
+              </div>
+            </div>
+
+            {/* Image model */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(20,184,166,0.2)', background: 'rgba(20,184,166,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(20,184,166,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🎨</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Image Generation Model</div>
+                  <div style={{ fontSize: 11, color: '#555' }}>Replicate — generates images in built apps</div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Model</label>
+                <select value={aiImageModel} onChange={e => setAiImageModel(e.target.value)} style={{ ...s.select, marginBottom: 12 }}>
+                  <optgroup label="Black Forest Labs (Flux)">
+                    <option value="black-forest-labs/flux-2-pro">flux-2-pro — highest quality (recommended)</option>
+                    <option value="black-forest-labs/flux-1.1-pro">flux-1.1-pro — reliable fallback</option>
+                    <option value="black-forest-labs/flux-schnell">flux-schnell — fastest, cheapest</option>
+                  </optgroup>
+                </select>
+                <div style={{ padding: '10px 14px', background: 'rgba(20,184,166,0.07)', border: '1px solid rgba(20,184,166,0.15)', borderRadius: 8, fontSize: 11, color: '#2dd4bf', lineHeight: 1.6 }}>
+                  <strong>Current:</strong> {aiImageModel}<br />
+                  {aiImageModel.includes('flux-2-pro') && 'Best quality. Auto-falls back to flux-1.1-pro on SSL/network errors.'}
+                  {aiImageModel.includes('flux-1.1-pro') && 'Highly reliable. Good quality. Used as fallback for flux-2-pro.'}
+                  {aiImageModel.includes('schnell') && 'Fastest generation (~5s). Lower quality, great for testing.'}
+                </div>
+              </div>
+              <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(240,169,82,0.07)', border: '1px solid rgba(240,169,82,0.15)', borderRadius: 7, fontSize: 11, color: '#f0a952', lineHeight: 1.5 }}>
+                ⚡ <strong>Auto-fallback enabled:</strong> If flux-2-pro fails due to an SSL or network error on Replicate's servers, the platform will automatically retry with flux-1.1-pro and log the fallback.
+              </div>
+            </div>
+          </div>
+
+          {/* Info section */}
+          <div style={{ ...s.settingsCard, marginTop: 16, background: 'rgba(255,255,255,0.02)' }}>
+            <h3 style={{ fontSize: 13, fontWeight: 500, color: '#888', marginBottom: 12 }}>How to add your own API keys</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, fontSize: 12, color: '#555', lineHeight: 1.7 }}>
+              <div>
+                <div style={{ color: '#9d92f5', fontWeight: 500, marginBottom: 4 }}>Anthropic (Chat)</div>
+                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>ANTHROPIC_API_KEY</code> in your Vercel environment variables. Get a key at console.anthropic.com.
+              </div>
+              <div>
+                <div style={{ color: '#2dd4bf', fontWeight: 500, marginBottom: 4 }}>Replicate (Images)</div>
+                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>REPLICATE_API_TOKEN</code> in your Vercel environment variables. Get a token at replicate.com/account/api-tokens.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* WELCOME TAB */}
       {activeTab === 'welcome' && (() => {
