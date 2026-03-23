@@ -67,6 +67,17 @@ interface Settings {
   output_cost_per_1k: string
 }
 
+interface Role {
+  id: string
+  name: string
+  description: string
+  can_access_admin: boolean
+  can_build: boolean
+  can_create_projects: boolean
+  bypass_credits: boolean
+  is_system: boolean
+}
+
 const BLANK_PLAN: Omit<Plan, 'id'> = {
   name: '',
   price_monthly: 0,
@@ -90,7 +101,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -112,6 +123,14 @@ export default function Admin() {
   const [planSaving, setPlanSaving] = useState(false)
   const [planMsg, setPlanMsg] = useState('')
 
+  // Roles state
+  const [roles, setRoles] = useState<Role[]>([])
+  const [editingRole, setEditingRole] = useState<Role | null>(null)
+  const [showNewRole, setShowNewRole] = useState(false)
+  const [newRoleForm, setNewRoleForm] = useState<Omit<Role, 'id' | 'is_system'>>({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true, bypass_credits: false })
+  const [roleMsg, setRoleMsg] = useState('')
+  const OWNER_EMAIL = 'charleslayton.online@gmail.com'
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
@@ -128,8 +147,13 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles()])
     setLoading(false)
+  }
+
+  async function loadRoles() {
+    const { data } = await supabase.from('roles').select('*').order('created_at')
+    if (data) setRoles(data)
   }
 
   async function loadPlans() {
@@ -261,11 +285,36 @@ export default function Admin() {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, suspended: !suspended } : u))
   }
 
-  async function changeRole(userId: string, currentRole: string) {
-    const newRole = currentRole === 'admin' ? 'user' : 'admin'
+  async function changeRole(userId: string, newRole: string) {
     const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', userId)
     if (error) { alert('Failed to update role: ' + error.message); return }
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u))
+  }
+
+  async function saveRole(role: Role) {
+    const { error } = await supabase.from('roles').update({ name: role.name, description: role.description, can_access_admin: role.can_access_admin, can_build: role.can_build, can_create_projects: role.can_create_projects, bypass_credits: role.bypass_credits }).eq('id', role.id)
+    if (error) { setRoleMsg('Error: ' + error.message); return }
+    setRoleMsg('Role saved!')
+    setEditingRole(null)
+    loadRoles()
+    setTimeout(() => setRoleMsg(''), 3000)
+  }
+
+  async function createRole() {
+    if (!newRoleForm.name.trim()) { setRoleMsg('Role name required'); return }
+    const { error } = await supabase.from('roles').insert({ ...newRoleForm, is_system: false })
+    if (error) { setRoleMsg('Error: ' + error.message); return }
+    setRoleMsg('Role created!')
+    setNewRoleForm({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true, bypass_credits: false })
+    setShowNewRole(false)
+    loadRoles()
+    setTimeout(() => setRoleMsg(''), 3000)
+  }
+
+  async function deleteRole(roleId: string) {
+    if (!confirm('Delete this role? Users with this role will keep it assigned until changed.')) return
+    await supabase.from('roles').delete().eq('id', roleId)
+    setRoles(prev => prev.filter(r => r.id !== roleId))
   }
 
   async function assignPlan(userId: string, planId: string | null) {
@@ -388,7 +437,7 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings', 'plans', 'database'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -433,7 +482,14 @@ export default function Admin() {
                         <span style={{ fontSize: 13, color: '#e0e0e0' }}>{u.email}</span>
                       </div>
                     </td>
-                    <td style={s.td}><span style={{ ...s.badge, ...(u.role === 'admin' ? s.badgePurple : s.badgeGray) }}>{u.role}</span></td>
+                    <td style={s.td}>
+                      {u.email === OWNER_EMAIL
+                        ? <span style={{ ...s.badge, ...s.badgePurple }}>{u.role}</span>
+                        : <select value={u.role} onChange={e => changeRole(u.id, e.target.value)} style={s.planSelect}>
+                            {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                          </select>
+                      }
+                    </td>
                     <td style={s.td}>
                       <select
                         value={u.plan_id || ''}
@@ -455,27 +511,18 @@ export default function Admin() {
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0)).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
-                    <td style={s.td}><span style={{ ...s.badge, ...(u.suspended ? s.badgeRed : s.badgeGreen) }}>{u.suspended ? 'Suspended' : 'Active'}</span></td>
                     <td style={s.td}>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
-                        {u.id !== user?.id && (
-                          <button
-                            onClick={() => changeRole(u.id, u.role)}
-                            style={{ ...s.actionBtn, ...(u.role === 'admin' ? s.actionOrange : s.actionPurple) }}
-                            title={u.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
-                          >
-                            {u.role === 'admin' ? '▼ User' : '▲ Admin'}
+                      {u.email === OWNER_EMAIL
+                        ? <span style={{ ...s.badge, ...s.badgeGreen }}>Active</span>
+                        : <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.badge, ...(u.suspended ? s.badgeRed : s.badgeGreen), cursor: 'pointer', border: 'none', background: u.suspended ? 'rgba(163,45,45,0.12)' : 'rgba(29,158,117,0.12)' }}>
+                            {u.suspended ? 'Suspended' : 'Active'}
                           </button>
-                        )}
-                        {u.id !== user?.id && (
-                          <button onClick={() => toggleSuspend(u.id, u.suspended)} style={{ ...s.actionBtn, ...(u.suspended ? s.actionGreen : s.actionRed) }}>
-                            {u.suspended ? 'Unsuspend' : 'Suspend'}
-                          </button>
-                        )}
-                        <button onClick={() => { setGiftUserId(u.id); setActiveTab('revenue') }} style={s.actionBtn}>
-                          Gift $
-                        </button>
-                      </div>
+                      }
+                    </td>
+                    <td style={s.td}>
+                      <button onClick={() => { setGiftUserId(u.id); setActiveTab('revenue') }} style={s.actionBtn}>
+                        Gift $
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -783,6 +830,116 @@ export default function Admin() {
             </table>
           </div>
           <p style={{ fontSize: 11, color: '#444', marginTop: 10 }}>Edit limits in the Plans tab. Changes apply immediately to new usage checks.</p>
+        </div>
+      )}
+
+      {/* ROLES TAB */}
+      {activeTab === 'roles' && (
+        <div style={s.section}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={s.sectionTitle}>Roles</h2>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {roleMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{roleMsg}</span>}
+              {!showNewRole && !editingRole && (
+                <button onClick={() => setShowNewRole(true)} style={s.saveBtn}>+ New Role</button>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: editingRole || showNewRole ? '1fr 1fr' : '1fr', gap: 16 }}>
+            {/* Role list */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {roles.map(role => (
+                <div key={role.id} style={{ ...s.settingsCard, padding: '16px 20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{role.name}</span>
+                        {role.is_system && <span style={{ ...s.badge, ...s.badgeGray, fontSize: 9 }}>🔒 system</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>{role.description || 'No description'}</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
+                        {role.can_access_admin && <span style={{ ...s.badge, ...s.badgePurple }}>Admin Panel</span>}
+                        {role.can_build && <span style={{ ...s.badge, ...s.badgeGreen }}>Can Build</span>}
+                        {role.can_create_projects && <span style={{ ...s.badge, ...s.badgeGreen }}>Create Projects</span>}
+                        {role.bypass_credits && <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952' }}>Bypass Credits</span>}
+                        {!role.can_build && !role.can_create_projects && !role.can_access_admin && !role.bypass_credits && (
+                          <span style={{ ...s.badge, ...s.badgeGray }}>No permissions</span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => { setEditingRole({ ...role }); setShowNewRole(false) }} style={{ ...s.actionBtn, ...s.actionPurple }}>Edit</button>
+                      {!role.is_system && (
+                        <button onClick={() => deleteRole(role.id)} style={{ ...s.actionBtn, ...s.actionRed }}>Delete</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Edit / New Role form */}
+            {(editingRole || showNewRole) && (
+              <div style={s.settingsCard}>
+                <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 16 }}>
+                  {editingRole ? `Edit: ${editingRole.name}` : 'New Role'}
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={s.field}>
+                    <label style={s.label}>Name</label>
+                    <input
+                      style={s.input}
+                      value={editingRole ? editingRole.name : newRoleForm.name}
+                      disabled={editingRole?.is_system}
+                      onChange={e => editingRole ? setEditingRole({ ...editingRole, name: e.target.value }) : setNewRoleForm(p => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. moderator"
+                    />
+                  </div>
+                  <div style={s.field}>
+                    <label style={s.label}>Description</label>
+                    <input
+                      style={s.input}
+                      value={editingRole ? editingRole.description : newRoleForm.description}
+                      onChange={e => editingRole ? setEditingRole({ ...editingRole, description: e.target.value }) : setNewRoleForm(p => ({ ...p, description: e.target.value }))}
+                      placeholder="What can this role do?"
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <label style={s.label}>Permissions</label>
+                    {([
+                      ['can_access_admin', 'Can Access Admin Panel'],
+                      ['can_build', 'Can Build with AI'],
+                      ['can_create_projects', 'Can Create Projects'],
+                      ['bypass_credits', 'Bypass Credits Requirement'],
+                    ] as [keyof Omit<Role, 'id' | 'name' | 'description' | 'is_system'>, string][]).map(([key, label]) => {
+                      const checked = editingRole ? editingRole[key] as boolean : newRoleForm[key] as boolean
+                      return (
+                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: '#ccc' }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => editingRole
+                              ? setEditingRole({ ...editingRole, [key]: e.target.checked })
+                              : setNewRoleForm(p => ({ ...p, [key]: e.target.checked }))
+                            }
+                            style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }}
+                          />
+                          {label}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button onClick={() => editingRole ? saveRole(editingRole) : createRole()} style={s.saveBtn}>
+                      {editingRole ? 'Save Changes' : 'Create Role'}
+                    </button>
+                    <button onClick={() => { setEditingRole(null); setShowNewRole(false) }} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
