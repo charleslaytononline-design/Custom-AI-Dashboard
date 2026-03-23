@@ -210,6 +210,15 @@ if (data) {
     }
   }
 
+  // Fire-and-forget log helper
+  function logEvent(event_type: string, severity: string, message: string, metadata?: object) {
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_type, severity, message, email: user?.email, metadata }),
+    }).catch(() => {})
+  }
+
   async function callAPI(msgs: any[], planOnly = false) {
     const payload: any = {
       messages: msgs,
@@ -231,8 +240,15 @@ if (data) {
       body: JSON.stringify(payload),
     })
     const data = await res.json()
-    if (data.error === 'insufficient_credits') { setShowBuyCredits(true); throw new Error(data.message || 'Insufficient credits') }
-    if (data.error) throw new Error(data.error)
+    if (data.error === 'insufficient_credits') {
+      setShowBuyCredits(true)
+      logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
+      throw new Error(data.message || 'Insufficient credits')
+    }
+    if (data.error) {
+      logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
+      throw new Error(data.error)
+    }
     if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
     return data
   }
@@ -249,7 +265,11 @@ if (data) {
       setMessages(prev => [...prev, aiMsg])
       await saveChatMessage('assistant', data.message, true)
       setPendingPlan(input)
-    } catch (err: any) { setLastError(err.message); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]) }
+    } catch (err: any) {
+      setLastError(err.message)
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
+    }
     setLoading(false)
   }
 
@@ -265,8 +285,17 @@ if (data) {
       const aiMsg: Message = { role: 'assistant', content: data.message }
       setMessages(prev => [...prev, aiMsg])
       await saveChatMessage('assistant', data.message)
-      if (data.code) await savePage(data.code)
-    } catch (err: any) { setLastError(err.message); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]) }
+      if (data.code) {
+        await savePage(data.code)
+      } else {
+        // No code returned — the server already logged this, but also log client-side for full trace
+        logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
+      }
+    } catch (err: any) {
+      setLastError(err.message)
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId })
+    }
     setLoading(false)
   }
 
@@ -289,10 +318,15 @@ if (data) {
       const aiMsg: Message = { role: 'assistant', content: data.message }
       setMessages(prev => [...prev, aiMsg])
       await saveChatMessage('assistant', data.message)
-      if (data.code) await savePage(data.code)
+      if (data.code) {
+        await savePage(data.code)
+      } else {
+        logEvent('builder_error', 'error', `sendMessage build returned no code: ${data.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
+      }
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
     }
     setLoading(false)
   }

@@ -1068,6 +1068,9 @@ export default function Admin() {
           project_created: 'Project Created',
           console_error:   'Console Error/Warn',
           unhandled_error: 'Unhandled Error',
+          builder_error:   'Builder Error',
+          api_error:       'API Error',
+          credits_error:   'Credits Error',
         }
 
         const filteredLogs = logs.filter(l => {
@@ -1085,6 +1088,7 @@ export default function Admin() {
           signup_attempt: '#9d92f5', signup_success: '#5DCAA5', signup_failure: '#f09595',
           form_typing: '#888', payment_success: '#f0a952', project_created: '#2dd4bf',
           console_error: '#f09595', unhandled_error: '#f09595',
+          builder_error: '#f09595', api_error: '#f09595', credits_error: '#f0a952',
         }
 
         return (

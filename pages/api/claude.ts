@@ -13,6 +13,48 @@ export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
 }
 
+// Central log helper — writes to platform_logs and fires email alert if configured
+async function log(
+  event_type: string,
+  severity: 'info' | 'warn' | 'error',
+  message: string,
+  email?: string | null,
+  metadata?: Record<string, unknown>
+) {
+  try {
+    await supabase.from('platform_logs').insert({
+      event_type, severity, message, email: email || null, metadata: metadata || null,
+    })
+
+    const { data: setting } = await supabase
+      .from('log_alert_settings').select('send_email').eq('event_type', event_type).single()
+
+    if (setting?.send_email && process.env.RESEND_API_KEY) {
+      const alertEmail = process.env.ALERT_TO_EMAIL || 'charleslayton.online@gmail.com'
+      const metaHtml = metadata
+        ? `<pre style="background:#f4f4f4;padding:12px;border-radius:6px;font-size:12px;overflow:auto;white-space:pre-wrap">${JSON.stringify(metadata, null, 2)}</pre>`
+        : ''
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: process.env.ALERT_FROM_EMAIL || 'alerts@resend.dev',
+          to: alertEmail,
+          subject: `[Dashboard Alert] ${event_type}`,
+          html: `<div style="font-family:sans-serif;max-width:600px"><h2 style="color:#7c6ef7">Platform Alert</h2>
+            <p style="color:#888;font-size:13px">${new Date().toUTCString()}</p>
+            <table style="width:100%;font-size:14px">
+              <tr><td style="color:#666;width:120px;padding:6px 0">Event</td><td style="font-weight:600">${event_type}</td></tr>
+              <tr><td style="color:#666;padding:6px 0">Severity</td><td>${severity}</td></tr>
+              ${email ? `<tr><td style="color:#666;padding:6px 0">User</td><td>${email}</td></tr>` : ''}
+              <tr><td style="color:#666;padding:6px 0;vertical-align:top">Message</td><td>${message}</td></tr>
+            </table>${metaHtml}</div>`,
+        }),
+      }).catch(() => {})
+    }
+  } catch {/* don't let logging failures break the main flow */}
+}
+
 async function getSettings() {
   const { data } = await supabase.from('settings').select('*')
   const map: Record<string, number> = {}
@@ -31,18 +73,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
-  const { data: profile } = await supabase
-    .from('profiles').select('credit_balance, role').eq('id', userId).single()
+  // Look up user profile
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles').select('credit_balance, role, email').eq('id', userId).single()
 
-  if (!profile) return res.status(401).json({ error: 'User not found' })
+  if (!profile) {
+    await log('api_error', 'error', `Profile not found for userId: ${userId}`, null, { userId, profileError })
+    return res.status(401).json({ error: 'User not found' })
+  }
 
-  const isAdmin = profile.role === 'admin'
+  const userEmail = profile.email || null
 
+  // Credit check
   if (profile.credit_balance <= 0) {
+    await log('credits_error', 'warn', `Build blocked — insufficient credits`, userEmail, {
+      userId, balance: profile.credit_balance, pageName,
+    })
     return res.status(402).json({
       error: 'insufficient_credits',
       message: 'You need to purchase credits to continue building.',
-      balance: profile.credit_balance
+      balance: profile.credit_balance,
     })
   }
 
@@ -166,18 +216,18 @@ RULES:
     if (imageBase64 && imageMediaType) {
       lastContent = [
         { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
-        { type: 'text', text: typeof lastMessage?.content === 'string' ? lastMessage.content : 'See the image above.' }
+        { type: 'text', text: typeof lastMessage?.content === 'string' ? lastMessage.content : 'See the image above.' },
       ]
     }
 
     const apiMessages = [
       ...messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content })),
-      { role: lastMessage?.role || 'user', content: lastContent }
+      { role: lastMessage?.role || 'user', content: lastContent },
     ]
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8000,
+      model: 'claude-sonnet-4-5',
+      max_tokens: 16000,  // Increased from 8000 — complex full-page HTML needs more room
       system,
       messages: apiMessages,
     })
@@ -188,6 +238,7 @@ RULES:
     const totalTokens = inputTokens + outputTokens
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
     const userCharge = apiCost * settings.markupMultiplier
+    const stopReason = response.stop_reason
 
     // Check if image generation is needed
     const imagePromptMatch = raw.match(/<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/i)
@@ -196,7 +247,6 @@ RULES:
     if (imagePromptMatch) {
       const imagePrompt = imagePromptMatch[1].trim()
       try {
-        // Call our own image generation endpoint
         const imgRes = await fetch(`${appUrl}/api/generate-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -205,9 +255,15 @@ RULES:
         const imgData = await imgRes.json()
         if (imgData.url) {
           generatedImageUrl = imgData.url
+        } else {
+          await log('builder_error', 'warn', `Image generation failed during build`, userEmail, {
+            userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.error,
+          })
         }
-      } catch {
-        // Image generation failed silently — page still builds without image
+      } catch (imgErr: any) {
+        await log('builder_error', 'warn', `Image generation threw an error: ${imgErr.message}`, userEmail, {
+          userId, pageName, error: imgErr.message,
+        })
       }
     }
 
@@ -220,20 +276,22 @@ RULES:
       p_api_cost: apiCost,
     })
     if (!deducted) {
+      await log('credits_error', 'warn', `deduct_credits failed after build`, userEmail, {
+        userId, pageName, userCharge, totalTokens,
+      })
       return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits.' })
     }
 
     // Parse response
     let message = 'Done!'
-    let code = null
+    let code: string | null = null
 
     if (planOnly) {
       message = raw
     } else {
-      // Case-SENSITIVE match — /i would cause <CODE> to match HTML <code> tags
-      // inside the generated page, corrupting the extraction via lazy *? match.
       const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
       const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/)
+
       if (messageMatch && codeMatch) {
         message = messageMatch[1].trim()
         code = codeMatch[1].trim()
@@ -253,9 +311,24 @@ RULES:
         if (generatedImageUrl && code) {
           code = code.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrl)
         }
-        message = code
-          ? 'Done! Your page has been updated.'
-          : 'Something went wrong generating the page. Please try again.'
+
+        if (!code) {
+          // Log the failure with the raw Claude response for debugging
+          await log('builder_error', 'error',
+            `Claude response could not be parsed into HTML (stop_reason: ${stopReason})`,
+            userEmail, {
+              userId,
+              pageName,
+              stop_reason: stopReason,
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              raw_preview: raw.slice(0, 800),  // first 800 chars of Claude's response for debugging
+            }
+          )
+          message = 'Something went wrong generating the page. Please try again.'
+        } else {
+          message = code ? 'Done! Your page has been updated.' : message
+        }
       }
     }
 
@@ -272,6 +345,13 @@ RULES:
       newBalance: updatedProfile?.credit_balance || 0,
     })
   } catch (err: any) {
+    // Log the exception with full details
+    await log('api_error', 'error', `Builder API exception: ${err.message}`, null, {
+      userId,
+      pageName,
+      error: err.message,
+      stack: err.stack?.slice(0, 500),
+    })
     res.status(500).json({ error: err.message })
   }
 }
