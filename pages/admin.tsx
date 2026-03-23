@@ -174,6 +174,7 @@ export default function Admin() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatSearch, setChatSearch] = useState('')
   const [expandedChat, setExpandedChat] = useState<string | null>(null)
+  const [chatUserFilter, setChatUserFilter] = useState('all')
 
   // AI Connections state
   const [aiChatModel, setAiChatModel] = useState('claude-sonnet-4-5')
@@ -1306,69 +1307,144 @@ export default function Admin() {
 
       {/* CHAT HISTORY TAB */}
       {activeTab === 'chat_history' && (() => {
-        const filteredChats = chatMessages.filter(m => {
-          if (!chatSearch) return true
-          const email = users.find(u => u.id === m.user_id)?.email || ''
-          return email.toLowerCase().includes(chatSearch.toLowerCase()) ||
-            m.content.toLowerCase().includes(chatSearch.toLowerCase())
+        const isError = (content: string) =>
+          content.startsWith('Error:') ||
+          content.toLowerCase().includes('went wrong') ||
+          content.toLowerCase().includes('timed out') ||
+          content.toLowerCase().includes('please try again') ||
+          content.toLowerCase().includes('build limit') ||
+          content.toLowerCase().includes('insufficient credits')
+
+        // Group all messages by project, pair user→assistant into turns
+        const allFiltered = chatMessages.filter(m => {
+          if (chatUserFilter !== 'all' && m.user_id !== chatUserFilter) return false
+          return true
         })
+
+        const byProject: Record<string, ChatMessage[]> = {}
+        allFiltered.forEach(m => {
+          if (!byProject[m.project_id]) byProject[m.project_id] = []
+          byProject[m.project_id].push(m)
+        })
+
+        const turns: Array<{ id: string; time: string; userId: string; userMsg: ChatMessage | null; aiMsg: ChatMessage | null }> = []
+        Object.values(byProject).forEach(msgs => {
+          const sorted = [...msgs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          let i = 0
+          while (i < sorted.length) {
+            if (sorted[i].role === 'user') {
+              const ai = sorted[i + 1]?.role === 'assistant' ? sorted[i + 1] : null
+              turns.push({ id: sorted[i].id, time: sorted[i].created_at, userId: sorted[i].user_id, userMsg: sorted[i], aiMsg: ai })
+              i += ai ? 2 : 1
+            } else {
+              turns.push({ id: sorted[i].id, time: sorted[i].created_at, userId: sorted[i].user_id, userMsg: null, aiMsg: sorted[i] })
+              i++
+            }
+          }
+        })
+        turns.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+
+        // Apply search filter across both messages in a turn
+        const filteredTurns = chatSearch
+          ? turns.filter(t => {
+              const q = chatSearch.toLowerCase()
+              const email = users.find(u => u.id === t.userId)?.email || ''
+              return email.toLowerCase().includes(q) ||
+                (t.userMsg?.content || '').toLowerCase().includes(q) ||
+                (t.aiMsg?.content || '').toLowerCase().includes(q)
+            })
+          : turns
+
         return (
           <div style={s.section}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
-              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Chat History <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredChats.length} of {chatMessages.length})</span></h2>
+              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Chat History <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredTurns.length} turns of {chatMessages.length} messages)</span></h2>
               <div style={{ display: 'flex', gap: 8 }}>
-                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Search by email or content..." style={{ ...s.searchInput, width: 240 }} />
+                <select value={chatUserFilter} onChange={e => setChatUserFilter(e.target.value)} style={s.planSelect}>
+                  <option value="all">All users</option>
+                  {users
+                    .filter(u => chatMessages.some(m => m.user_id === u.id))
+                    .sort((a, b) => a.email.localeCompare(b.email))
+                    .map(u => <option key={u.id} value={u.id}>{u.email}</option>)
+                  }
+                </select>
+                <input value={chatSearch} onChange={e => setChatSearch(e.target.value)} placeholder="Search content..." style={{ ...s.searchInput, width: 200 }} />
                 <button onClick={loadChatHistory} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
               </div>
             </div>
             <div style={s.tableWrap}>
-              {filteredChats.length === 0 ? (
+              {filteredTurns.length === 0 ? (
                 <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No chat history yet</div>
               ) : (
                 <table style={s.table}>
                   <thead>
                     <tr style={s.thead}>
-                      <th style={s.th}>Time</th>
-                      <th style={s.th}>User</th>
-                      <th style={s.th}>Role</th>
-                      <th style={s.th}>Content</th>
-                      <th style={s.th}>Flags</th>
+                      <th style={{ ...s.th, width: 110 }}>Time</th>
+                      <th style={{ ...s.th, width: 160 }}>User</th>
+                      <th style={s.th}>User Input</th>
+                      <th style={s.th}>AI Response</th>
+                      <th style={{ ...s.th, width: 80 }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredChats.map(msg => (
-                      <React.Fragment key={msg.id}>
-                        <tr style={{ ...s.tr, cursor: 'pointer' }} onClick={() => setExpandedChat(expandedChat === msg.id ? null : msg.id)}>
-                          <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
-                            {new Date(msg.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                          </td>
-                          <td style={{ ...s.td, fontSize: 12, color: '#666' }}>
-                            {users.find(u => u.id === msg.user_id)?.email || msg.user_id.slice(0, 8) + '…'}
-                          </td>
-                          <td style={s.td}>
-                            <span style={{ ...s.badge, background: msg.role === 'user' ? 'rgba(93,202,165,0.12)' : 'rgba(157,146,245,0.12)', color: msg.role === 'user' ? '#5DCAA5' : '#9d92f5' }}>
-                              {msg.role}
-                            </span>
-                          </td>
-                          <td style={{ ...s.td, maxWidth: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontSize: 12, color: '#ccc' }}>{msg.content.slice(0, 120)}{msg.content.length > 120 ? '…' : ''}</span>
-                          </td>
-                          <td style={s.td}>
-                            {msg.is_plan && <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952', fontSize: 10 }}>plan</span>}
-                            <span style={{ fontSize: 10, color: '#444', marginLeft: 4 }}>▶ expand</span>
-                          </td>
-                        </tr>
-                        {expandedChat === msg.id && (
-                          <tr style={{ background: '#0d0d0d' }}>
-                            <td colSpan={5} style={{ padding: '10px 14px' }}>
-                              <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                {msg.content}
-                              </pre>
+                    {filteredTurns.map(turn => {
+                      const hasError = turn.aiMsg ? isError(turn.aiMsg.content) : false
+                      const isPlan = turn.userMsg?.is_plan || turn.aiMsg?.is_plan
+                      const hasResponse = !!turn.aiMsg
+                      const turnKey = turn.id
+                      return (
+                        <React.Fragment key={turnKey}>
+                          <tr style={{ ...s.tr, cursor: 'pointer' }} onClick={() => setExpandedChat(expandedChat === turnKey ? null : turnKey)}>
+                            <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                              {new Date(turn.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </td>
+                            <td style={{ ...s.td, fontSize: 12, color: '#666', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {users.find(u => u.id === turn.userId)?.email || turn.userId.slice(0, 8) + '…'}
+                            </td>
+                            <td style={{ ...s.td, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <span style={{ fontSize: 12, color: '#5DCAA5' }}>
+                                {turn.userMsg ? (turn.userMsg.content.slice(0, 100) + (turn.userMsg.content.length > 100 ? '…' : '')) : '—'}
+                              </span>
+                            </td>
+                            <td style={{ ...s.td, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <span style={{ fontSize: 12, color: hasError ? '#f07575' : '#9d92f5' }}>
+                                {turn.aiMsg ? (turn.aiMsg.content.slice(0, 100) + (turn.aiMsg.content.length > 100 ? '…' : '')) : '—'}
+                              </span>
+                            </td>
+                            <td style={{ ...s.td, whiteSpace: 'nowrap' }}>
+                              {hasError
+                                ? <span style={{ ...s.badge, background: 'rgba(240,100,100,0.12)', color: '#f07575', fontSize: 10 }}>error</span>
+                                : isPlan
+                                  ? <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952', fontSize: 10 }}>plan</span>
+                                  : hasResponse
+                                    ? <span style={{ ...s.badge, background: 'rgba(93,202,165,0.12)', color: '#5DCAA5', fontSize: 10 }}>ok</span>
+                                    : <span style={{ ...s.badge, background: 'rgba(255,255,255,0.05)', color: '#555', fontSize: 10 }}>pending</span>
+                              }
                             </td>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
+                          {expandedChat === turnKey && (
+                            <tr style={{ background: '#0d0d0d' }}>
+                              <td colSpan={5} style={{ padding: '12px 16px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                  <div>
+                                    <div style={{ fontSize: 10, color: '#5DCAA5', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>User:</div>
+                                    <pre style={{ fontSize: 11, color: '#aaa', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {turn.userMsg?.content || '(no user message)'}
+                                    </pre>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, color: '#9d92f5', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>AI:</div>
+                                    <pre style={{ fontSize: 11, color: hasError ? '#f07575' : '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {turn.aiMsg?.content || '(no response yet)'}
+                                    </pre>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
