@@ -11,7 +11,7 @@ const supabase = createClient(
 
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
-  maxDuration: 60,
+  maxDuration: 120,
 }
 
 // Central log helper — writes to platform_logs and fires email alert if configured

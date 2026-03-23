@@ -243,11 +243,16 @@ export default function ProjectBuilder() {
       payload.imageMediaType = pendingImage.mediaType
     }
 
-    const res = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    let res: Response
+    try {
+      res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    } catch (networkErr: any) {
+      throw new Error('The builder timed out. Try a simpler request or try again.')
+    }
     const data = await res.json()
     if (data.error === 'insufficient_credits') {
       setShowBuyCredits(true)
