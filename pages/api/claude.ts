@@ -208,7 +208,9 @@ RULES:
 - Every button must work
 - Persist data to localStorage
 - Keep ALL existing features when updating
-- When generating images, make the prompt extremely detailed and cinematic`
+- When generating images, make the prompt extremely detailed and cinematic
+- Keep your total output under 28,000 tokens. Use concise Tailwind classes; avoid verbose inline comments in the HTML.
+- If the page is very complex, prioritise working functionality over decorative extras`
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -228,7 +230,7 @@ RULES:
 
     const response = await client.messages.create({
       model: settings.chatModel,
-      max_tokens: 16000,  // Increased from 8000 — complex full-page HTML needs more room
+      max_tokens: 32000,  // Increased from 16000 — complex full-page HTML with multiple sections needs more room
       system,
       messages: apiMessages,
     })
@@ -333,7 +335,9 @@ RULES:
               raw_preview: raw.slice(0, 800),  // first 800 chars of Claude's response for debugging
             }
           )
-          message = 'Something went wrong generating the page. Please try again.'
+          message = stopReason === 'max_tokens'
+            ? 'The page was too complex to generate in one shot. Try asking for fewer sections at once, or break it into multiple builds.'
+            : 'Something went wrong generating the page. Please try again.'
         } else {
           message = code ? 'Done! Your page has been updated.' : message
         }
