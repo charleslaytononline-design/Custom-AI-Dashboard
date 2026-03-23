@@ -25,9 +25,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { userId, email } = req.body
   if (!userId || !email) return res.status(400).json({ error: 'userId and email required' })
 
-  // Generate a fresh confirmation link using admin API (no email sent by Supabase)
+  // Generate a magic link — confirms email AND signs the user in when clicked
+  // (type 'signup' requires a password re-entry; 'magiclink' only needs email)
   const { data: linkData, error: linkError } = await adminSupabase.auth.admin.generateLink({
-    type: 'signup',
+    type: 'magiclink',
     email,
   })
 
@@ -57,16 +58,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               <div style="font-size:12px;color:#666">Build anything with AI</div>
             </div>
           </div>
-          <h2 style="font-size:20px;font-weight:600;margin-bottom:8px">Confirm your email</h2>
+          <h2 style="font-size:20px;font-weight:600;margin-bottom:8px">Confirm your account</h2>
           <p style="color:#888;font-size:14px;line-height:1.6;margin-bottom:28px">
-            Please click the button below to confirm your email address and activate your account.
+            Click the button below to confirm your email and sign in to your account.
           </p>
           <a href="${confirmUrl}" style="display:inline-block;padding:13px 28px;background:#7c6ef7;color:white;border-radius:9px;text-decoration:none;font-weight:600;font-size:14px">
-            Confirm my account
+            Confirm &amp; Sign In
           </a>
           <p style="color:#555;font-size:12px;margin-top:32px;line-height:1.6">
             If you didn't create an account, you can safely ignore this email.<br>
-            This link expires in 24 hours.
+            This link expires in 1 hour.
           </p>
         </div>
       `,
