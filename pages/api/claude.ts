@@ -11,6 +11,7 @@ const supabase = createClient(
 
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
+  maxDuration: 60,
 }
 
 // Central log helper — writes to platform_logs and fires email alert if configured
@@ -209,8 +210,11 @@ RULES:
 - Persist data to localStorage
 - Keep ALL existing features when updating
 - When generating images, make the prompt extremely detailed and cinematic
-- Keep your total output under 28,000 tokens. Use concise Tailwind classes; avoid verbose inline comments in the HTML.
-- If the page is very complex, prioritise working functionality over decorative extras`
+- CRITICAL: Keep your total HTML output under 12,000 tokens. This is a hard limit — do not exceed it.
+- Write concise, clean HTML. No inline comments, no verbose spacing, no decorative placeholder text blocks.
+- Build focused pages. If the request is large, build the core functionality — skip decorative extras.
+- Do NOT repeat boilerplate (sidebar, topbar) more than once. Use Alpine.js x-show for multiple sections.
+- Avoid long placeholder lorem ipsum text — use 1–2 word labels only.`
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -230,7 +234,7 @@ RULES:
 
     const response = await client.messages.create({
       model: settings.chatModel,
-      max_tokens: 32000,  // Increased from 16000 — complex full-page HTML with multiple sections needs more room
+      max_tokens: 16000,  // SDK requires streaming above ~30K tokens; 16K is safe and sufficient with concise prompting
       system,
       messages: apiMessages,
     })
