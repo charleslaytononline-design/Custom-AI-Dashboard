@@ -8,6 +8,7 @@ const supabase = createClient(
 
 const COST_PER_IMAGE = 0.003  // what Replicate charges you
 const MARKUP_PER_IMAGE = 0.01 // what you charge the user
+const FALLBACK_MODEL = 'black-forest-labs/flux-1.1-pro'
 
 async function logEvent(
   event_type: string,
@@ -22,7 +23,6 @@ async function logEvent(
       email: null,
       metadata: { userId, ...metadata },
     })
-    // Fire email alert if configured
     const { data: setting } = await supabase
       .from('log_alert_settings').select('send_email').eq('event_type', event_type).single()
     if (setting?.send_email && process.env.RESEND_API_KEY) {
@@ -40,10 +40,89 @@ async function logEvent(
   } catch { /* never let logging break the response */ }
 }
 
-const FALLBACK_IMAGE_MODEL = 'black-forest-labs/flux-1.1-pro'
-
 function isSSLError(msg: string) {
-  return /ssl|certificate|cert/i.test(msg)
+  return /ssl|certificate|cert/i.test(msg || '')
+}
+
+// Runs a full prediction: start + poll. Returns imageUrl on success, or throws with { message, isSSL }.
+async function runPrediction(model: string, prompt: string): Promise<string> {
+  // ── Start prediction ────────────────────────────────────────────────────
+  let startRes: Response
+  try {
+    startRes = await fetch(`https://api.replicate.com/v1/models/${model}/predictions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'wait=60',
+      },
+      body: JSON.stringify({
+        input: {
+          prompt,
+          width: 1024,
+          height: 768,
+          output_format: 'webp',
+          output_quality: 90,
+          safety_tolerance: 2,
+          prompt_upsampling: true,
+        },
+      }),
+    })
+  } catch (err: any) {
+    const e = new Error(err.message) as any
+    e.isSSL = isSSLError(err.message)
+    throw e
+  }
+
+  const prediction = await startRes.json()
+
+  if (!startRes.ok) {
+    const msg = prediction?.detail || prediction?.error || `HTTP ${startRes.status}`
+    const e = new Error(msg) as any
+    e.isSSL = isSSLError(msg)
+    throw e
+  }
+
+  // ── Poll for result ─────────────────────────────────────────────────────
+  let imageUrl = prediction.output
+
+  if (!imageUrl && prediction.id) {
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000))
+      let pollData: any
+      try {
+        const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+          headers: { Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}` },
+        })
+        pollData = await pollRes.json()
+      } catch (pollErr: any) {
+        const e = new Error(pollErr.message) as any
+        e.isSSL = isSSLError(pollErr.message)
+        throw e
+      }
+
+      if (pollData.status === 'succeeded') {
+        imageUrl = Array.isArray(pollData.output) ? pollData.output[0] : pollData.output
+        break
+      }
+      if (pollData.status === 'failed') {
+        const msg = pollData.error || 'Replicate prediction failed'
+        const e = new Error(msg) as any
+        e.isSSL = isSSLError(msg)
+        throw e
+      }
+    }
+  }
+
+  if (Array.isArray(imageUrl)) imageUrl = imageUrl[0]
+
+  if (!imageUrl) {
+    const e = new Error('No image URL returned — prediction may have timed out') as any
+    e.isSSL = false
+    throw e
+  }
+
+  return imageUrl
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -66,128 +145,50 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const primaryModel = modelSetting?.value || 'black-forest-labs/flux-2-pro'
 
-  // ── Step 1: Start the Replicate prediction (with SSL-error fallback) ─────
-  let startRes!: Response
-  let prediction: any
+  // ── Step 1: Generate image (with automatic fallback on SSL errors) ───────
+  let imageUrl: string
   let usedModel = primaryModel
 
-  async function callReplicate(model: string) {
-    return fetch(`https://api.replicate.com/v1/models/${model}/predictions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'wait=60',
-      },
-      body: JSON.stringify({
-        input: {
-          prompt,
-          width: 1024,
-          height: 768,
-          output_format: 'webp',
-          output_quality: 90,
-          safety_tolerance: 2,
-          prompt_upsampling: true,
-        },
-      }),
-    })
-  }
-
   try {
-    startRes = await callReplicate(primaryModel)
-    prediction = await startRes.json()
-
-    // If primary model failed with SSL/cert error, retry with fallback model
-    if (!startRes.ok && primaryModel !== FALLBACK_IMAGE_MODEL) {
-      const detail = prediction?.detail || prediction?.error || ''
-      if (isSSLError(detail)) {
-        await logEvent('builder_error', 'warn', `${primaryModel} SSL error — retrying with ${FALLBACK_IMAGE_MODEL}`, userId, {
-          prompt: prompt?.slice(0, 200), originalError: detail,
-        })
-        usedModel = FALLBACK_IMAGE_MODEL
-        startRes = await callReplicate(FALLBACK_IMAGE_MODEL)
-        prediction = await startRes.json()
-      }
-    }
-  } catch (fetchErr: any) {
-    // Network-level failure on primary — try fallback if different model
-    if (primaryModel !== FALLBACK_IMAGE_MODEL && isSSLError(fetchErr.message)) {
-      await logEvent('builder_error', 'warn', `${primaryModel} network SSL error — retrying with ${FALLBACK_IMAGE_MODEL}`, userId, {
-        prompt: prompt?.slice(0, 200), error: fetchErr.message,
-      })
+    imageUrl = await runPrediction(primaryModel, prompt)
+  } catch (primaryErr: any) {
+    if (primaryErr.isSSL && primaryModel !== FALLBACK_MODEL) {
+      // SSL cert failure inside Replicate's infrastructure — retry with flux-1.1-pro
+      await logEvent('builder_error', 'warn',
+        `${primaryModel} SSL cert error — auto-retrying with ${FALLBACK_MODEL}`,
+        userId, { prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
+      )
       try {
-        usedModel = FALLBACK_IMAGE_MODEL
-        startRes = await callReplicate(FALLBACK_IMAGE_MODEL)
-        prediction = await startRes.json()
+        usedModel = FALLBACK_MODEL
+        imageUrl = await runPrediction(FALLBACK_MODEL, prompt)
       } catch (fallbackErr: any) {
-        await logEvent('builder_error', 'error', `Fallback ${FALLBACK_IMAGE_MODEL} also failed: ${fallbackErr.message}`, userId, {
-          prompt: prompt?.slice(0, 200), error: fallbackErr.message,
-        })
+        await logEvent('builder_error', 'error',
+          `Fallback ${FALLBACK_MODEL} also failed: ${fallbackErr.message}`,
+          userId, { prompt: prompt?.slice(0, 200), error: fallbackErr.message }
+        )
         return res.status(500).json({ error: 'Image generation failed', detail: fallbackErr.message })
       }
     } else {
-      await logEvent('builder_error', 'error', `Replicate fetch failed: ${fetchErr.message}`, userId, {
-        prompt: prompt?.slice(0, 200), error: fetchErr.message,
-      })
-      return res.status(500).json({ error: 'Image generation failed', detail: fetchErr.message })
+      await logEvent('builder_error', 'error',
+        `Image generation failed [${primaryModel}]: ${primaryErr.message}`,
+        userId, { prompt: prompt?.slice(0, 200), model: primaryModel, error: primaryErr.message }
+      )
+      return res.status(500).json({ error: 'Image generation failed', detail: primaryErr.message })
     }
   }
 
-  if (!startRes!.ok) {
-    const detail = prediction?.detail || prediction?.error || JSON.stringify(prediction)
-    await logEvent('builder_error', 'error', `Replicate API rejected request (HTTP ${startRes!.status}) [${usedModel}]: ${detail}`, userId, {
-      prompt: prompt?.slice(0, 200), model: usedModel, status: startRes!.status, replicateResponse: prediction,
-    })
-    return res.status(500).json({ error: 'Image generation failed', detail })
+  if (usedModel !== primaryModel) {
+    await logEvent('builder_error', 'warn',
+      `Image generated with fallback model ${usedModel} (primary ${primaryModel} had SSL error)`,
+      userId, { prompt: prompt?.slice(0, 200) }
+    )
   }
 
-  // ── Step 2: Poll for result if not immediately ready ────────────────────
-  let imageUrl = prediction.output
-
-  if (!imageUrl && prediction.id) {
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000))
-      let pollData: any
-      try {
-        const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-          headers: { Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}` },
-        })
-        pollData = await pollRes.json()
-      } catch (pollErr: any) {
-        await logEvent('builder_error', 'error', `Replicate poll fetch failed: ${pollErr.message}`, userId, {
-          predictionId: prediction.id, attempt: i, error: pollErr.message,
-        })
-        return res.status(500).json({ error: 'Image generation failed', detail: pollErr.message })
-      }
-
-      if (pollData.status === 'succeeded') {
-        imageUrl = Array.isArray(pollData.output) ? pollData.output[0] : pollData.output
-        break
-      }
-      if (pollData.status === 'failed') {
-        const detail = pollData.error || 'Replicate prediction failed'
-        await logEvent('builder_error', 'error', `Replicate prediction failed: ${detail}`, userId, {
-          predictionId: prediction.id, prompt: prompt?.slice(0, 200), replicateError: pollData.error,
-        })
-        return res.status(500).json({ error: 'Image generation failed', detail })
-      }
-    }
-  }
-
-  if (Array.isArray(imageUrl)) imageUrl = imageUrl[0]
-
-  if (!imageUrl) {
-    await logEvent('builder_error', 'error', 'Replicate returned no image URL (timed out after 60s)', userId, {
-      predictionId: prediction.id, prompt: prompt?.slice(0, 200),
-    })
-    return res.status(500).json({ error: 'Image generation failed', detail: 'No image URL returned — prediction may have timed out' })
-  }
-
-  // ── Step 3: Download and upload to Supabase Storage for permanent URL ───
-  let permanentUrl = imageUrl
+  // ── Step 2: Download and upload to Supabase Storage for permanent URL ───
+  let permanentUrl = imageUrl!
   try {
-    const imgRes = await fetch(imageUrl)
-    if (!imgRes.ok) throw new Error(`Failed to download image from Replicate: HTTP ${imgRes.status}`)
+    const imgRes = await fetch(imageUrl!)
+    if (!imgRes.ok) throw new Error(`Failed to download image: HTTP ${imgRes.status}`)
     const imgBuffer = await imgRes.arrayBuffer()
     const fileName = `generated/${userId}/${Date.now()}.webp`
 
@@ -196,7 +197,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .upload(fileName, imgBuffer, { contentType: 'image/webp', cacheControl: '31536000' })
 
     if (uploadError) {
-      // Log storage failure but fall back to Replicate URL
       await logEvent('builder_error', 'warn', `Supabase storage upload failed — using temporary Replicate URL`, userId, {
         storageError: uploadError.message, fileName,
       })
@@ -205,13 +205,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       permanentUrl = urlData.publicUrl
     }
   } catch (storageErr: any) {
-    await logEvent('builder_error', 'warn', `Storage step threw: ${storageErr.message} — using Replicate URL as fallback`, userId, {
+    await logEvent('builder_error', 'warn', `Storage step threw: ${storageErr.message} — using Replicate URL`, userId, {
       error: storageErr.message,
     })
-    // permanentUrl stays as the Replicate URL
   }
 
-  // ── Step 4: Deduct credits ───────────────────────────────────────────────
+  // ── Step 3: Deduct credits ───────────────────────────────────────────────
   await supabase.rpc('deduct_credits', {
     p_user_id: userId,
     p_amount: MARKUP_PER_IMAGE,
@@ -225,6 +224,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   res.status(200).json({
     url: permanentUrl,
+    usedModel,
     newBalance: updatedProfile?.credit_balance || 0,
   })
 }
