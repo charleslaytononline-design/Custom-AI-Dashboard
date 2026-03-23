@@ -165,17 +165,26 @@ GOOD: "Photorealistic glowing cyan AI humanoid robot, transparent body showing c
 
 DATABASE CAPABILITY:
 You can create real persistent database tables when users need data that persists across sessions.
-To create a table, output this tag BEFORE the CODE block:
+You can create MULTIPLE tables in a single build — output one <CREATE_TABLE> tag per table, all BEFORE the CODE block.
 
 <CREATE_TABLE>
 {"name":"table_name","columns":[
   {"name":"id","type":"uuid","primaryKey":true},
   {"name":"field_name","type":"text"},
+  {"name":"tags","type":"text[]"},
   {"name":"created_at","type":"timestamptz","default":"now()"}
 ]}
 </CREATE_TABLE>
 
-Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb
+Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
+
+IMPORTANT RULES FOR TABLES:
+- Always include an "id" column with "primaryKey":true and type "uuid" — it auto-generates
+- Always include "created_at" with type "timestamptz" and default "now()"
+- For arrays (e.g. interested_products, tagged_user_ids), use "text[]"
+- For complex/nested data or metadata, use "jsonb"
+- Table names must be lowercase with underscores only
+- Create ALL tables needed for the feature in one build — you can output multiple <CREATE_TABLE> tags
 
 Then in your CODE, use fetch('/api/db') with PROJECT_ID:
 <script>
@@ -186,7 +195,7 @@ async function dbQuery(table, action, data) {
   return r.json()
 }
 // select: await dbQuery('leads', 'select')  → {data:[...]}
-// insert: await dbQuery('leads', 'insert', {name:'John', email:'j@j.com'})
+// insert: await dbQuery('leads', 'insert', {name:'John', email:'j@j.com', tags:['hot','new']})
 // update: await dbQuery('leads', 'update', {id:'uuid', status:'done'})
 // delete: await dbQuery('leads', 'delete', {id:'uuid'})
 </script>
@@ -336,34 +345,44 @@ RULES:
       }
     }
 
-    // Handle <CREATE_TABLE> tag — create real table in Clients DB
-    const createTableMatch = raw.match(/<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/i)
-    if (createTableMatch && clientsDb && projectId && !planOnly) {
-      try {
-        const tableDef = JSON.parse(createTableMatch[1].trim())
-        const schemaName = `proj_${projectId}`
-        const planId = profile.plan_id || null
-        const { data: plan } = planId
-          ? await supabase.from('plans').select('max_tables_per_project').eq('id', planId).single()
-          : await supabase.from('plans').select('max_tables_per_project').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
-        const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
-        const currentCount = usageRow?.table_count || 0
-        const tableLimit = plan?.max_tables_per_project ?? 5
+    // Handle <CREATE_TABLE> tags — create real tables in Clients DB (supports multiple per build)
+    const createTableMatches = raw.matchAll(/<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/gi)
+    const tableDefsFound = [...createTableMatches]
+    if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
+      const schemaName = `proj_${projectId}`
+      const planId = profile.plan_id || null
+      const { data: plan } = planId
+        ? await supabase.from('plans').select('max_tables_per_project').eq('id', planId).single()
+        : await supabase.from('plans').select('max_tables_per_project').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+      const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
+      let currentCount = usageRow?.table_count || 0
+      const tableLimit = plan?.max_tables_per_project ?? 5
+      let tablesCreated = 0
+
+      for (const match of tableDefsFound) {
         if (currentCount >= tableLimit) {
-          await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit})`, userEmail, { userId, projectId })
-        } else {
-          await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
-          await clientsDb.from('schema_registry').upsert(
-            { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
-            { onConflict: 'project_id' }
-          )
-          await clientsDb.from('schema_usage').upsert(
-            { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: currentCount + 1, sampled_at: new Date().toISOString() },
-            { onConflict: 'project_id' }
-          )
+          await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit}), skipping remaining tables`, userEmail, { userId, projectId })
+          break
         }
-      } catch (tableErr: any) {
-        await log('builder_error', 'warn', `CREATE_TABLE failed: ${tableErr.message}`, userEmail, { userId, projectId })
+        try {
+          const tableDef = JSON.parse(match[1].trim())
+          await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
+          currentCount++
+          tablesCreated++
+        } catch (tableErr: any) {
+          await log('builder_error', 'warn', `CREATE_TABLE failed: ${tableErr.message}`, userEmail, { userId, projectId })
+        }
+      }
+
+      if (tablesCreated > 0) {
+        await clientsDb.from('schema_registry').upsert(
+          { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
+          { onConflict: 'project_id' }
+        )
+        await clientsDb.from('schema_usage').upsert(
+          { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: currentCount, sampled_at: new Date().toISOString() },
+          { onConflict: 'project_id' }
+        )
       }
     }
 
