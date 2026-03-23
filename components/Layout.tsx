@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
+import { useMobile } from '../hooks/useMobile'
 
 const CREDIT_PACKS = [
   { id: 'pack_5',  amount: 5,  label: '$5',  desc: '~50 builds' },
@@ -11,10 +12,12 @@ const CREDIT_PACKS = [
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const isMobile = useMobile()
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [showBuy, setShowBuy] = useState(false)
   const [buyingPack, setBuyingPack] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   async function refreshProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
@@ -39,6 +42,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (user) refreshProfile(user.id)
   }, [router.asPath])
 
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [router.asPath])
+
   async function buyCredits(packId: string) {
     if (!user) return
     setBuyingPack(packId)
@@ -59,10 +67,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const balance = profile?.credit_balance || 0
   const path = router.pathname
 
+  const sidebarStyle: React.CSSProperties = isMobile
+    ? {
+        ...s.sidebar,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        height: '100vh',
+        zIndex: 100,
+        transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s ease',
+      }
+    : s.sidebar
+
   return (
     <div style={s.root}>
       {/* SIDEBAR */}
-      <div style={s.sidebar}>
+      <div style={sidebarStyle}>
         <div style={s.sideTop}>
           <div style={s.brand}>
             <div style={s.brandIcon}>AI</div>
@@ -115,13 +136,36 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
+      {/* MOBILE OVERLAY — closes sidebar when tapped */}
+      {isMobile && sidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* PAGE CONTENT */}
-      <div style={s.content}>{children}</div>
+      <div style={{ ...s.content, ...(isMobile ? { width: '100%', minWidth: 0 } : {}) }}>
+        {/* Mobile top bar with hamburger */}
+        {isMobile && (
+          <div style={s.mobileHeader}>
+            <button
+              className="hamburger-btn"
+              onClick={() => setSidebarOpen(o => !o)}
+              aria-label="Open menu"
+            >
+              ☰
+            </button>
+            <div style={s.brand}>
+              <div style={s.brandIcon}>AI</div>
+              <span style={s.brandName}>Custom AI</span>
+            </div>
+          </div>
+        )}
+        {children}
+      </div>
 
       {/* BUY CREDITS MODAL */}
       {showBuy && (
         <div style={s.overlay}>
-          <div style={{ ...s.modal, maxWidth: 480 }}>
+          <div style={{ ...s.modal, maxWidth: isMobile ? 'calc(100% - 32px)' : 480 }}>
             <h2 style={s.modalTitle}>Buy Credits</h2>
             <p style={{ color: '#888', fontSize: 13, marginBottom: 20 }}>
               Credits power AI builds. Each build costs ~$0.02–$0.10 depending on complexity.
@@ -155,7 +199,7 @@ const s: Record<string, React.CSSProperties> = {
   sidebar: { width: 240, minWidth: 240, background: '#0f0f0f', borderRight: '1px solid rgba(255,255,255,0.07)', display: 'flex', flexDirection: 'column' },
   sideTop: { padding: 20 },
   brand: { display: 'flex', alignItems: 'center', gap: 10 },
-  brandIcon: { width: 32, height: 32, background: '#7c6ef7', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'white' },
+  brandIcon: { width: 32, height: 32, background: '#7c6ef7', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0 },
   brandName: { fontSize: 15, fontWeight: 600, color: '#f0f0f0' },
   nav: { flex: 1, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 2 },
   navItem: { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8, fontSize: 13, color: '#666', cursor: 'pointer' },
@@ -171,8 +215,9 @@ const s: Record<string, React.CSSProperties> = {
   userEmail: { fontSize: 11, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   userRole: { fontSize: 10, color: '#555', marginTop: 1 },
   signOut: { padding: '6px 10px', background: 'none', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 6, color: '#555', fontSize: 11, cursor: 'pointer', textAlign: 'center' as const },
-  content: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
+  content: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  mobileHeader: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)', background: '#0f0f0f', flexShrink: 0 },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '16px' },
   modal: { background: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 28, width: '100%', display: 'flex', flexDirection: 'column', gap: 16 },
   modalTitle: { fontSize: 16, fontWeight: 600, color: '#f0f0f0' },
   cancelBtn: { padding: '8px 16px', background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#888', fontSize: 13, cursor: 'pointer' },

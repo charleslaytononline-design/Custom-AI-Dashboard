@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
 import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../lib/welcomeConfig'
+import { useMobile } from '../hooks/useMobile'
 
 interface Project {
   id: string; name: string; description: string; created_at: string; updated_at: string
@@ -14,6 +15,7 @@ function openBuyModal() {
 
 export default function Dashboard() {
   const router = useRouter()
+  const isMobile = useMobile()
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [projects, setProjects] = useState<Project[]>([])
@@ -111,7 +113,12 @@ export default function Dashboard() {
         <div style={s.loadingInner}>Loading...</div>
       ) : (
         <>
-          <div style={s.topbar}>
+          <div style={{
+            ...s.topbar,
+            padding: isMobile ? '20px 16px 0' : '28px 32px 0',
+            flexWrap: 'wrap' as const,
+            gap: 12,
+          }}>
             <div>
               <h1 style={s.pageTitle}>My Projects</h1>
               <p style={s.pageSub}>Build and manage your AI-powered apps</p>
@@ -122,9 +129,14 @@ export default function Dashboard() {
           </div>
 
           {!hasCredits && (
-            <div style={s.noCreditsBanner}>
+            <div style={{
+              ...s.noCreditsBanner,
+              margin: isMobile ? '16px 16px 0' : '20px 32px 0',
+              flexWrap: 'wrap' as const,
+              gap: 10,
+            }}>
               <span>⚡</span>
-              <div>
+              <div style={{ flex: 1, minWidth: 180 }}>
                 <strong style={{ color: '#f0f0f0' }}>You need credits to build</strong>
                 <p style={{ color: '#888', fontSize: 12, marginTop: 2 }}>Purchase credits to create projects and use the AI builder.</p>
               </div>
@@ -142,7 +154,13 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <div style={s.grid}>
+            <div style={{
+              ...s.grid,
+              padding: isMobile ? 16 : 32,
+              gridTemplateColumns: isMobile
+                ? 'repeat(auto-fill, minmax(150px, 1fr))'
+                : 'repeat(auto-fill, minmax(240px, 1fr))',
+            }}>
               <div style={s.newCard} onClick={() => hasCredits ? setShowNew(true) : openBuyModal()}>
                 <div style={s.newCardIcon}>+</div>
                 <span style={s.newCardLabel}>New Project</span>
@@ -173,7 +191,7 @@ export default function Dashboard() {
       {/* NEW PROJECT MODAL */}
       {showNew && (
         <div style={s.overlay}>
-          <div style={s.modal}>
+          <div style={{ ...s.modal, maxWidth: isMobile ? 'calc(100% - 32px)' : 400 }}>
             <h2 style={s.modalTitle}>New project</h2>
             <div style={s.field}>
               <label style={s.label}>Project name</label>
@@ -214,7 +232,7 @@ const s: Record<string, React.CSSProperties> = {
   topbar: { padding: '28px 32px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' },
   pageTitle: { fontSize: 22, fontWeight: 600, color: '#f0f0f0' },
   pageSub: { fontSize: 13, color: '#555', marginTop: 2 },
-  newBtn: { padding: '9px 18px', background: '#7c6ef7', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  newBtn: { padding: '9px 18px', background: '#7c6ef7', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', flexShrink: 0 },
   noCreditsBanner: { margin: '20px 32px 0', padding: '16px 20px', background: 'rgba(186,117,23,0.1)', border: '1px solid rgba(186,117,23,0.25)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 14, fontSize: 20 },
   buyNowBtn: { marginLeft: 'auto', padding: '8px 16px', background: '#BA7517', border: 'none', borderRadius: 7, color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   grid: { padding: 32, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 },
@@ -232,9 +250,9 @@ const s: Record<string, React.CSSProperties> = {
   deleteBtn: { padding: '7px 12px', background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#666', fontSize: 12, cursor: 'pointer' },
   empty: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 40 },
   emptyTitle: { fontSize: 18, fontWeight: 600, color: '#f0f0f0' },
-  emptyText: { fontSize: 13, color: '#555' },
+  emptyText: { fontSize: 13, color: '#555', textAlign: 'center' as const },
   emptyBtn: { padding: '10px 22px', background: '#7c6ef7', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', marginTop: 8 },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 },
   modal: { background: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: 16 },
   modalTitle: { fontSize: 16, fontWeight: 600, color: '#f0f0f0' },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },

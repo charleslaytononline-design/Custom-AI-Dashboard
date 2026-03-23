@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
+import { useMobile } from '../hooks/useMobile'
 
 export default function Profile() {
   const router = useRouter()
+  const isMobile = useMobile()
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -35,7 +37,7 @@ export default function Profile() {
         <div style={s.loadingInner}>Loading...</div>
       ) : (
         <>
-          <div style={s.topbar}>
+          <div style={{ ...s.topbar, padding: isMobile ? '20px 16px 0' : '28px 32px 0' }}>
             <div>
               <h1 style={s.title}>My Profile</h1>
               <p style={s.sub}>Account details and usage</p>
@@ -43,15 +45,19 @@ export default function Profile() {
           </div>
 
           {/* ACCOUNT + BALANCE ROW */}
-          <div style={s.twoCol}>
+          <div style={{
+            ...s.twoCol,
+            gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+            padding: isMobile ? '16px 16px 0' : '24px 32px 0',
+          }}>
             {/* Account Info */}
             <div style={s.card}>
               <div style={s.cardTitle}>Account</div>
               <div style={s.avatarRow}>
                 <div style={s.bigAvatar}>{user?.email?.[0]?.toUpperCase()}</div>
-                <div>
-                  <div style={s.emailText}>{user?.email}</div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ ...s.emailText, wordBreak: 'break-all' as const }}>{user?.email}</div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' as const }}>
                     <span style={{ ...s.badge, ...(isAdmin ? s.badgePurple : s.badgeGray) }}>
                       {isAdmin ? '👑 Admin' : 'Member'}
                     </span>
@@ -65,7 +71,7 @@ export default function Profile() {
             {/* Credit Balance */}
             <div style={{ ...s.card, border: '1px solid rgba(124,110,247,0.2)', background: 'rgba(124,110,247,0.04)' }}>
               <div style={{ ...s.cardTitle, color: '#9d92f5' }}>Credit Balance</div>
-              <div style={{ fontSize: 40, fontWeight: 700, color: balance > 0 ? '#5DCAA5' : '#f09595', marginBottom: 6 }}>
+              <div style={{ fontSize: isMobile ? 32 : 40, fontWeight: 700, color: balance > 0 ? '#5DCAA5' : '#f09595', marginBottom: 6 }}>
                 ${balance.toFixed(2)}
               </div>
               <div style={{ fontSize: 12, color: '#555', marginBottom: 20 }}>
@@ -112,7 +118,7 @@ const s: Record<string, React.CSSProperties> = {
   section: { padding: '24px 32px 32px' },
   sectionTitle: { fontSize: 15, fontWeight: 500, color: '#f0f0f0', marginBottom: 14 },
   empty: { color: '#555', fontSize: 13, padding: '24px 0' },
-  tableWrap: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflow: 'hidden' },
+  tableWrap: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflowX: 'auto' as const },
   table: { width: '100%', borderCollapse: 'collapse' as const },
   thead: { background: '#1a1a1a' },
   th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: 10, fontWeight: 500, color: '#555', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },

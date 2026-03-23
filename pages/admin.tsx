@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
+import { useMobile } from '../hooks/useMobile'
 import { createServerSupabaseClient } from '@supabase/auth-helpers-nextjs'
 import type { GetServerSidePropsContext } from 'next'
 import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../lib/welcomeConfig'
@@ -559,6 +560,7 @@ export default function Admin() {
     return plans.find(p => p.id === planId)?.name || 'Free'
   }
 
+  const isMobile = useMobile()
   const margin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
@@ -566,7 +568,7 @@ export default function Admin() {
 
   return (
     <div style={s.main}>
-      <div style={s.topbar}>
+      <div style={{ ...s.topbar, padding: isMobile ? '16px 16px 0' : '24px 28px 0' }}>
         <div>
           <h1 style={s.title}>Admin Panel</h1>
           <p style={s.sub}>{users.length} users · {users.reduce((a, u) => a + u.projectCount!, 0)} projects</p>
@@ -574,7 +576,7 @@ export default function Admin() {
       </div>
 
       {/* REVENUE STATS */}
-      <div style={{ ...s.statsGrid, gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 12 }}>
+      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', marginBottom: 12 }}>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Revenue</div>
           <div style={s.statVal}>${totalRevenue.toFixed(2)}</div>
@@ -596,7 +598,7 @@ export default function Admin() {
           <div style={s.statSub}>across all users</div>
         </div>
       </div>
-      <div style={{ ...s.statsGrid, gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
         <div style={{ ...s.statCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#818cf8' }}>Anthropic (Claude)</div>
           <div style={{ ...s.statVal, color: '#f09595', fontSize: 18 }}>${anthropicCostTotal.toFixed(4)}</div>
@@ -620,7 +622,7 @@ export default function Admin() {
       </div>
 
       {/* TABS */}
-      <div style={s.tabRow}>
+      <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
         {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'welcome', 'ai_connections', 'actions'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab === 'ai_connections' ? 'AI Connections' : tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -630,10 +632,10 @@ export default function Admin() {
 
       {/* USERS TAB */}
       {activeTab === 'users' && (
-        <div style={s.section}>
-          <div style={s.tableTop}>
+        <div style={{ ...s.section, padding: isMobile ? '12px 16px 24px' : '16px 28px 28px' }}>
+          <div style={{ ...s.tableTop, flexDirection: isMobile ? 'column' : 'row' as const, alignItems: isMobile ? 'flex-start' : 'center', gap: 10 }}>
             <h2 style={s.sectionTitle}>All Users</h2>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by email..." style={s.searchInput} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by email..." style={{ ...s.searchInput, width: isMobile ? '100%' : 220 }} />
           </div>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -722,7 +724,7 @@ export default function Admin() {
           <h2 style={s.sectionTitle}>Gift Credits</h2>
           <div style={s.giftCard}>
             <p style={{ color: '#888', fontSize: 13, marginBottom: 16 }}>Give a user free credits. This appears as a "gift" transaction in their history.</p>
-            <div style={s.giftRow}>
+            <div style={{ ...s.giftRow, flexDirection: isMobile ? 'column' : 'row' as const }}>
               <div style={s.field}>
                 <label style={s.label}>User</label>
                 <select value={giftUserId} onChange={e => setGiftUserId(e.target.value)} style={s.select}>
@@ -748,7 +750,7 @@ export default function Admin() {
         <div style={s.section}>
           <h2 style={s.sectionTitle}>Pricing Settings</h2>
           <div style={s.settingsCard}>
-            <div style={s.settingsGrid}>
+            <div style={{ ...s.settingsGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)' }}>
               <div style={s.field}>
                 <label style={s.label}>Markup Multiplier</label>
                 <p style={s.fieldDesc}>How much to charge users vs what Anthropic charges you. 3x = 66% margin.</p>
@@ -1593,15 +1595,15 @@ const s: Record<string, React.CSSProperties> = {
   topbar: { padding: '24px 28px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
   title: { fontSize: 20, fontWeight: 600, color: '#f0f0f0', marginBottom: 4 },
   sub: { fontSize: 12, color: '#555' },
-  statsGrid: { display: 'grid', gap: 12, padding: '20px 28px 0' },
+  statsGrid: { display: 'grid', gap: 12, padding: '16px 16px 0' },
   statCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '14px 16px' },
   statLabel: { fontSize: 11, color: '#555', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   statVal: { fontSize: 20, fontWeight: 600, color: '#f0f0f0', marginBottom: 2 },
   statSub: { fontSize: 10, color: '#444' },
-  tabRow: { display: 'flex', gap: 4, padding: '20px 28px 0' },
+  tabRow: { display: 'flex', gap: 4, padding: '16px 16px 0', flexWrap: 'wrap' as const },
   tabBtn: { padding: '7px 16px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#666', fontSize: 12, cursor: 'pointer' },
   tabBtnOn: { background: 'rgba(124,110,247,0.15)', borderColor: 'rgba(124,110,247,0.3)', color: '#9d92f5' },
-  section: { padding: '16px 28px 28px' },
+  section: { padding: '16px 16px 28px' },
   sectionTitle: { fontSize: 15, fontWeight: 500, color: '#f0f0f0', marginBottom: 14 },
   tableTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   searchInput: { padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none', width: 220 },

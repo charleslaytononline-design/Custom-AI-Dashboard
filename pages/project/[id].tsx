@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../../lib/supabase'
+import { useMobile } from '../../hooks/useMobile'
 
 interface Page { id: string; name: string; code: string; updated_at: string }
 interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
@@ -8,6 +9,7 @@ type AppMode = 'build' | 'plan'
 
 export default function ProjectBuilder() {
   const router = useRouter()
+  const isMobile = useMobile()
   const { id: projectId } = router.query
   const [user, setUser] = useState<any>(null)
   const [project, setProject] = useState<any>(null)
@@ -26,6 +28,8 @@ export default function ProjectBuilder() {
   const [lastError, setLastError] = useState<string | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
+  // Mobile: which panel is visible ('chat' or 'preview')
+  const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('preview')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -101,9 +105,9 @@ export default function ProjectBuilder() {
 
   async function loadProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
-if (data) {
-  setCreditBalance(data.credit_balance || 0)
-}
+    if (data) {
+      setCreditBalance(data.credit_balance || 0)
+    }
   }
 
   async function loadChatHistory(pageId: string) {
@@ -292,6 +296,8 @@ if (data) {
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
+        // On mobile, switch to preview after a successful build
+        if (isMobile) setMobilePanel('preview')
       } else {
         // No code returned — the server already logged this, but also log client-side for full trace
         logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
@@ -325,6 +331,8 @@ if (data) {
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
+        // On mobile, switch to preview after a successful build
+        if (isMobile) setMobilePanel('preview')
       } else {
         logEvent('builder_error', 'error', `sendMessage build returned no code: ${data.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
       }
@@ -357,36 +365,76 @@ if (data) {
   const balanceDisplay = `$${creditBalance.toFixed(2)}`
   const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
 
+  // Mobile panel visibility
+  const showLeft = !isMobile || mobilePanel === 'chat'
+  const showRight = !isMobile || mobilePanel === 'preview'
+
   return (
     <div style={s.root}>
       {/* TOPBAR */}
       <div style={s.topbar}>
         <div style={s.topLeft}>
-          <button onClick={() => router.push('/home')} style={s.backBtn}>← Projects</button>
-          <span style={s.sep}>/</span>
-          <span style={s.projectName}>{project.name}</span>
+          <button onClick={() => router.push('/home')} style={s.backBtn}>← {isMobile ? '' : 'Projects'}</button>
+          {!isMobile && <span style={s.sep}>/</span>}
+          <span style={{ ...s.projectName, maxWidth: isMobile ? 120 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+            {project.name}
+          </span>
         </div>
-        <div style={s.topRight}>
-          {activePage && (
-            <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnOn : {}) }}>
-              {'</>'} {showCode ? 'Hide Code' : 'View Code'}
+
+        {/* Mobile panel toggle */}
+        {isMobile ? (
+          <div style={s.mobilePanelToggle}>
+            <button
+              onClick={() => setMobilePanel('chat')}
+              style={{ ...s.mobilePanelBtn, ...(mobilePanel === 'chat' ? s.mobilePanelBtnOn : {}) }}
+            >
+              💬 Chat
             </button>
-          )}
-          <div style={s.balancePill}>
-            <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
-            <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>
+            <button
+              onClick={() => setMobilePanel('preview')}
+              style={{ ...s.mobilePanelBtn, ...(mobilePanel === 'preview' ? s.mobilePanelBtnOn : {}) }}
+            >
+              👁 Preview
+            </button>
           </div>
-          <span style={s.email}>{user.email}</span>
-        </div>
+        ) : (
+          <div style={s.topRight}>
+            {activePage && (
+              <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnOn : {}) }}>
+                {'</>'} {showCode ? 'Hide Code' : 'View Code'}
+              </button>
+            )}
+            <div style={s.balancePill}>
+              <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
+              <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>
+            </div>
+            <span style={s.email}>{user.email}</span>
+          </div>
+        )}
       </div>
 
       {/* MAIN */}
       <div style={s.main}>
         {/* LEFT PANEL */}
-        <div style={s.left}>
+        <div style={{
+          ...s.left,
+          ...(isMobile ? {
+            width: '100%',
+            minWidth: 0,
+            display: showLeft ? 'flex' : 'none',
+            borderRight: 'none',
+          } : {}),
+        }}>
           <div style={s.tabs}>
             <button style={{ ...s.tab, ...(sidebarTab==='chat' ? s.tabOn : {}) }} onClick={() => setSidebarTab('chat')}>Chat</button>
             <button style={{ ...s.tab, ...(sidebarTab==='pages' ? s.tabOn : {}) }} onClick={() => setSidebarTab('pages')}>Pages ({pages.length})</button>
+            {/* Balance pill on mobile chat panel */}
+            {isMobile && (
+              <div style={{ ...s.balancePill, marginLeft: 'auto', marginRight: 8, alignSelf: 'center' }}>
+                <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
+                <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>cr</span>
+              </div>
+            )}
           </div>
 
           {sidebarTab === 'chat' && (
@@ -492,7 +540,11 @@ if (data) {
               <div style={{ flex:1, overflowY:'auto' }}>
                 {pages.map(page => (
                   <div key={page.id} style={{ ...s.pageItem, ...(activePage?.id===page.id ? s.pageItemOn : {}) }}>
-                    <div style={{ flex:1, cursor:'pointer' }} onClick={() => { setActivePage(page); setSidebarTab('chat') }}>
+                    <div style={{ flex:1, cursor:'pointer' }} onClick={() => {
+                      setActivePage(page);
+                      setSidebarTab('chat');
+                      if (isMobile) setMobilePanel('chat');
+                    }}>
                       <div style={{ fontSize:13, fontWeight:500, color:'#f0f0f0' }}>{page.name}</div>
                       <div style={{ fontSize:11, color:'#444', marginTop:2 }}>{new Date(page.updated_at).toLocaleDateString()}</div>
                     </div>
@@ -505,7 +557,10 @@ if (data) {
         </div>
 
         {/* RIGHT PANEL */}
-        <div style={s.right}>
+        <div style={{
+          ...s.right,
+          ...(isMobile && !showRight ? { display: 'none' } : {}),
+        }}>
           <div style={s.previewBar}>
             {/* Page selector */}
             <div style={s.pageSelector}>
@@ -521,13 +576,21 @@ if (data) {
                 {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            {/* URL bar showing preview link */}
-            <div style={s.urlBar}>
-              <span style={{ color: '#333', userSelect: 'none' as const }}>customaidashboard.com / preview /</span>
-              <span style={{ color: '#666', marginLeft: 6 }}>
-                {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
-              </span>
-            </div>
+            {/* URL bar — hidden on mobile to save space */}
+            {!isMobile && (
+              <div style={s.urlBar}>
+                <span style={{ color: '#333', userSelect: 'none' as const }}>customaidashboard.com / preview /</span>
+                <span style={{ color: '#666', marginLeft: 6 }}>
+                  {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
+                </span>
+              </div>
+            )}
+            {/* Code toggle on mobile (replaces top-right) */}
+            {isMobile && activePage && (
+              <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnOn : {}), marginLeft: 'auto' }}>
+                {'</>'}
+              </button>
+            )}
             {/* Open in new tab */}
             {activePage && (
               <button
@@ -557,7 +620,7 @@ if (data) {
       {/* Buy Credits Modal */}
       {showBuyCredits && (
         <div style={s.overlay}>
-          <div style={s.modal}>
+          <div style={{ ...s.modal, maxWidth: isMobile ? 'calc(100% - 32px)' : 400 }}>
             <h2 style={s.modalTitle}>Out of credits</h2>
             <p style={{ color:'#888', fontSize:13, marginBottom:20 }}>Purchase credits to continue building.</p>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
@@ -586,19 +649,22 @@ function getStarterCode() {
 const s: Record<string, React.CSSProperties> = {
   loading: { display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0a0a0a', color:'#555', fontFamily:'sans-serif' },
   root: { display:'flex', flexDirection:'column', height:'100vh', background:'#0a0a0a', overflow:'hidden', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' },
-  topbar: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 16px', height:50, borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
-  topLeft: { display:'flex', alignItems:'center', gap:10 },
-  backBtn: { padding:'5px 10px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#888', fontSize:12, cursor:'pointer' },
-  sep: { color:'#333' },
+  topbar: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 12px', height:50, borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
+  topLeft: { display:'flex', alignItems:'center', gap:8, minWidth:0, flex:1, overflow:'hidden' },
+  backBtn: { padding:'5px 10px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#888', fontSize:12, cursor:'pointer', flexShrink:0 },
+  sep: { color:'#333', flexShrink:0 },
   projectName: { fontSize:14, fontWeight:500, color:'#f0f0f0' },
-  topRight: { display:'flex', alignItems:'center', gap:12 },
+  topRight: { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
+  mobilePanelToggle: { display:'flex', gap:4, flexShrink:0 },
+  mobilePanelBtn: { padding:'5px 12px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20, color:'#666', fontSize:12, cursor:'pointer', fontWeight:500 },
+  mobilePanelBtnOn: { background:'rgba(124,110,247,0.15)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
   codeBtn: { padding:'5px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#666', fontSize:12, cursor:'pointer', fontFamily:'monospace' },
   codeBtnOn: { background:'rgba(124,110,247,0.1)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
   balancePill: { display:'flex', alignItems:'center', padding:'4px 10px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20 },
   email: { fontSize:11, color:'#444' },
   main: { display:'flex', flex:1, overflow:'hidden' },
   left: { width:300, minWidth:300, display:'flex', flexDirection:'column', borderRight:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', overflow:'hidden' },
-  tabs: { display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 },
+  tabs: { display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0, alignItems:'center' },
   tab: { flex:1, padding:10, background:'none', border:'none', color:'#444', fontSize:12, cursor:'pointer', fontWeight:500, borderBottom:'2px solid transparent' },
   tabOn: { color:'#f0f0f0', borderBottom:'2px solid #7c6ef7' },
   msgs: { flex:1, overflowY:'auto', padding:12, display:'flex', flexDirection:'column', gap:10 },
@@ -640,7 +706,7 @@ const s: Record<string, React.CSSProperties> = {
   pageSelector: { display:'flex', alignItems:'center', gap:6, padding:'3px 8px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:7, flexShrink:0 },
   pageSelectorIcon: { fontSize:12, color:'#555' },
   pageSelectorSelect: { background:'none', border:'none', color:'#aaa', fontSize:12, outline:'none', cursor:'pointer', maxWidth:120 },
-  urlBar: { flex:1, display:'flex', alignItems:'center', padding:'4px 12px', background:'#141414', border:'1px solid rgba(255,255,255,0.06)', borderRadius:7, fontSize:12 },
+  urlBar: { flex:1, display:'flex', alignItems:'center', padding:'4px 12px', background:'#141414', border:'1px solid rgba(255,255,255,0.06)', borderRadius:7, fontSize:12, overflow:'hidden' },
   openBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
   refreshBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
   iframe: { flex:1, border:'none', background:'#0a0a0a', width:'100%', height:'100%' },
@@ -648,7 +714,7 @@ const s: Record<string, React.CSSProperties> = {
   codeHeader: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
   copyBtn: { padding:'4px 12px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, color:'#666', fontSize:12, cursor:'pointer' },
   codeContent: { flex:1, overflow:'auto', padding:16, fontSize:11.5, lineHeight:1.6, color:'#9d92f5', background:'#0a0a0a', fontFamily:'monospace', whiteSpace:'pre-wrap', wordBreak:'break-all' as const },
-  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:50 },
+  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:50, padding:16 },
   modal: { background:'#111', border:'1px solid rgba(255,255,255,0.1)', borderRadius:16, padding:28, width:'100%', maxWidth:400, display:'flex', flexDirection:'column', gap:12 },
   modalTitle: { fontSize:16, fontWeight:600, color:'#f0f0f0' },
 }
