@@ -1,6 +1,14 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
+
+function log(event_type: string, severity: string, message: string, email?: string, metadata?: object) {
+  fetch('/api/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_type, severity, message, email, metadata }),
+  }).catch(() => {})
+}
 
 export default function Login() {
   const router = useRouter()
@@ -11,17 +19,45 @@ export default function Login() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  // Debounce ref for form_typing events
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleEmailChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = e.target.value
+    setEmail(val)
+    // Debounce: log typing activity 800ms after the user stops
+    if (typingTimer.current) clearTimeout(typingTimer.current)
+    typingTimer.current = setTimeout(() => {
+      if (val.length > 0) {
+        log('form_typing', 'info', `Email field activity on ${mode} form`, val, { mode, partial_email: val })
+      }
+    }, 800)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true); setError(''); setSuccess('')
+
     if (mode === 'signup') {
-      const { error } = await supabase.auth.signUp({ email, password })
-      if (error) setError(error.message)
-      else setSuccess('Account created! Check your email to confirm, then sign in.')
+      log('signup_attempt', 'info', `Signup attempted`, email, { email })
+      const { error: signupError } = await supabase.auth.signUp({ email, password })
+      if (signupError) {
+        setError(signupError.message)
+        log('signup_failure', 'warn', `Signup failed: ${signupError.message}`, email, { email, error: signupError.message })
+      } else {
+        setSuccess('Account created! Check your email to confirm, then sign in.')
+        log('signup_success', 'info', `New signup: ${email}`, email, { email })
+      }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) setError(error.message)
-      else router.push('/home')
+      log('login_attempt', 'info', `Login attempted`, email, { email })
+      const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
+      if (loginError) {
+        setError(loginError.message)
+        log('login_failure', 'warn', `Login failed: ${loginError.message}`, email, { email, error: loginError.message })
+      } else {
+        log('login_success', 'info', `Login successful`, email, { email })
+        router.push('/home')
+      }
     }
     setLoading(false)
   }
@@ -39,7 +75,7 @@ export default function Login() {
         <form onSubmit={handleSubmit} style={s.form}>
           <div style={s.field}>
             <label style={s.label}>Email</label>
-            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" required style={s.input} />
+            <input type="email" value={email} onChange={handleEmailChange} placeholder="you@example.com" required style={s.input} />
           </div>
           <div style={s.field}>
             <label style={s.label}>Password</label>

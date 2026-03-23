@@ -66,6 +66,18 @@ export default function Dashboard() {
       await supabase.from('pages').insert({
         project_id: data.id, user_id: user.id, name: 'Home', code: getStarterCode(),
       })
+      // Log project creation
+      fetch('/api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: 'project_created',
+          severity: 'info',
+          message: `New project created: "${data.name}"`,
+          email: user.email,
+          metadata: { project_id: data.id, project_name: data.name, user_id: user.id },
+        }),
+      }).catch(() => {})
       router.push(`/project/${data.id}`)
     }
     setCreating(false)

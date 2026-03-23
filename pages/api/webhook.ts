@@ -51,6 +51,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (error) {
       return res.status(500).json({ error: 'Failed to add credits' })
     }
+
+    // Log the payment event
+    await supabase.from('platform_logs').insert({
+      event_type: 'payment_success',
+      severity: 'info',
+      message: `Payment of $${creditsNum} credits completed`,
+      email: session.customer_email || null,
+      metadata: { userId, credits: creditsNum, payment_intent: session.payment_intent, amount_total: session.amount_total },
+    })
   }
 
   res.status(200).json({ received: true })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
@@ -78,6 +78,21 @@ interface Role {
   is_system: boolean
 }
 
+interface PlatformLog {
+  id: string
+  event_type: string
+  severity: string
+  message: string
+  email: string | null
+  metadata: Record<string, unknown> | null
+  created_at: string
+}
+
+interface AlertSetting {
+  event_type: string
+  send_email: boolean
+}
+
 const BLANK_PLAN: Omit<Plan, 'id'> = {
   name: '',
   price_monthly: 0,
@@ -101,7 +116,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -131,6 +146,16 @@ export default function Admin() {
   const [roleMsg, setRoleMsg] = useState('')
   const OWNER_EMAIL = 'charleslayton.online@gmail.com'
 
+  // Logs state
+  const [logs, setLogs] = useState<PlatformLog[]>([])
+  const [alertSettings, setAlertSettings] = useState<AlertSetting[]>([])
+  const [logTypeFilter, setLogTypeFilter] = useState('all')
+  const [logSeverityFilter, setLogSeverityFilter] = useState('all')
+  const [logSearch, setLogSearch] = useState('')
+  const [alertSaving, setAlertSaving] = useState(false)
+  const [alertMsg, setAlertMsg] = useState('')
+  const [expandedLog, setExpandedLog] = useState<string | null>(null)
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
@@ -147,13 +172,44 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadAlertSettings()])
     setLoading(false)
   }
 
   async function loadRoles() {
     const { data } = await supabase.from('roles').select('*').order('created_at')
     if (data) setRoles(data)
+  }
+
+  async function loadLogs() {
+    const { data } = await supabase
+      .from('platform_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    if (data) setLogs(data)
+  }
+
+  async function loadAlertSettings() {
+    const { data } = await supabase.from('log_alert_settings').select('*').order('event_type')
+    if (data) setAlertSettings(data)
+  }
+
+  async function saveAlertSettings() {
+    setAlertSaving(true)
+    for (const s of alertSettings) {
+      await supabase
+        .from('log_alert_settings')
+        .update({ send_email: s.send_email, updated_at: new Date().toISOString() })
+        .eq('event_type', s.event_type)
+    }
+    setAlertSaving(false)
+    setAlertMsg('Settings saved!')
+    setTimeout(() => setAlertMsg(''), 3000)
+  }
+
+  function toggleAlertSetting(event_type: string) {
+    setAlertSettings(prev => prev.map(s => s.event_type === event_type ? { ...s, send_email: !s.send_email } : s))
   }
 
   async function loadPlans() {
@@ -437,7 +493,7 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={s.tabRow}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
@@ -942,6 +998,152 @@ export default function Admin() {
           </div>
         </div>
       )}
+
+      {/* LOGS TAB */}
+      {activeTab === 'logs' && (() => {
+        const EVENT_LABELS: Record<string, string> = {
+          login_attempt:   'Login Attempt',
+          login_success:   'Login Success',
+          login_failure:   'Login Failure',
+          signup_attempt:  'Signup Attempt',
+          signup_success:  'Signup Success',
+          signup_failure:  'Signup Failure',
+          form_typing:     'Form Typing',
+          payment_success: 'Payment Success',
+          project_created: 'Project Created',
+          console_error:   'Console Error/Warn',
+          unhandled_error: 'Unhandled Error',
+        }
+
+        const filteredLogs = logs.filter(l => {
+          if (logTypeFilter !== 'all' && l.event_type !== logTypeFilter) return false
+          if (logSeverityFilter !== 'all' && l.severity !== logSeverityFilter) return false
+          if (logSearch && !l.message.toLowerCase().includes(logSearch.toLowerCase()) && !(l.email || '').toLowerCase().includes(logSearch.toLowerCase())) return false
+          return true
+        })
+
+        const severityColor: Record<string, string> = { error: '#f09595', warn: '#f0a952', info: '#5DCAA5' }
+        const severityBg: Record<string, string> = { error: 'rgba(163,45,45,0.12)', warn: 'rgba(186,117,23,0.12)', info: 'rgba(29,158,117,0.12)' }
+
+        const typeColor: Record<string, string> = {
+          login_attempt: '#9d92f5', login_success: '#5DCAA5', login_failure: '#f09595',
+          signup_attempt: '#9d92f5', signup_success: '#5DCAA5', signup_failure: '#f09595',
+          form_typing: '#888', payment_success: '#f0a952', project_created: '#2dd4bf',
+          console_error: '#f09595', unhandled_error: '#f09595',
+        }
+
+        return (
+          <div style={s.section}>
+            {/* Alert Settings */}
+            <div style={{ ...s.settingsCard, marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Email Alerts</h3>
+                  <p style={{ fontSize: 11, color: '#555' }}>Choose which events send you an email. Requires <code style={{ color: '#9d92f5' }}>RESEND_API_KEY</code> and <code style={{ color: '#9d92f5' }}>ALERT_TO_EMAIL</code> env vars.</p>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {alertMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{alertMsg}</span>}
+                  <button onClick={saveAlertSettings} disabled={alertSaving} style={s.saveBtn}>
+                    {alertSaving ? 'Saving...' : 'Save Alerts'}
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                {alertSettings.map(setting => (
+                  <label key={setting.event_type} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#0a0a0a', borderRadius: 8, border: `1px solid ${setting.send_email ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.05)'}`, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={setting.send_email}
+                      onChange={() => toggleAlertSetting(setting.event_type)}
+                      style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, color: typeColor[setting.event_type] || '#888', fontWeight: 500 }}>
+                        {EVENT_LABELS[setting.event_type] || setting.event_type}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Log viewer */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
+              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Recent Logs <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h2>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={logSearch} onChange={e => setLogSearch(e.target.value)} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
+                <select value={logTypeFilter} onChange={e => setLogTypeFilter(e.target.value)} style={s.planSelect}>
+                  <option value="all">All types</option>
+                  {Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <select value={logSeverityFilter} onChange={e => setLogSeverityFilter(e.target.value)} style={s.planSelect}>
+                  <option value="all">All severity</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                </select>
+                <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+              </div>
+            </div>
+
+            <div style={s.tableWrap}>
+              {filteredLogs.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
+              ) : (
+                <table style={s.table}>
+                  <thead>
+                    <tr style={s.thead}>
+                      <th style={s.th}>Time</th>
+                      <th style={s.th}>Event</th>
+                      <th style={s.th}>Severity</th>
+                      <th style={s.th}>Email</th>
+                      <th style={s.th}>Message</th>
+                      <th style={s.th}>Meta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredLogs.map(log => (
+                      <React.Fragment key={log.id}>
+                        <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
+                          <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                            {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                          <td style={s.td}>
+                            <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
+                              {EVENT_LABELS[log.event_type] || log.event_type}
+                            </span>
+                          </td>
+                          <td style={s.td}>
+                            <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                              {log.severity}
+                            </span>
+                          </td>
+                          <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                          <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                          </td>
+                          <td style={s.td}>
+                            {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
+                          </td>
+                        </tr>
+                        {expandedLog === log.id && log.metadata && (
+                          <tr style={{ background: '#0d0d0d' }}>
+                            <td colSpan={6} style={{ padding: '10px 14px' }}>
+                              <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                {JSON.stringify(log.metadata, null, 2)}
+                              </pre>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
