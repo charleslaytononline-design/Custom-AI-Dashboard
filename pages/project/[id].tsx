@@ -89,6 +89,11 @@ export default function ProjectBuilder() {
 
   useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage])
 
+  // Re-render iframe when project loads — the iframe isn't in the DOM during the
+  // initial "Loading..." state, so if activePage was set before project arrived the
+  // first renderIframe call silently did nothing (iframeRef.current was null).
+  useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project])
+
   // Load chat history when page changes
   useEffect(() => {
     if (activePage && user) loadChatHistory(activePage.id)
