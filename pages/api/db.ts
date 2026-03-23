@@ -49,15 +49,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (action === 'insert') {
       if (!data || typeof data !== 'object') return res.status(400).json({ error: 'data object required for insert' })
 
-      // Enforce max_rows_per_table plan limit
+      // Enforce max_rows_per_table plan limit (resolves Free plan for null plan_id)
       const { data: projectUser } = await appDb.from('profiles').select('plan_id').eq('id', project.user_id).single()
-      if (projectUser?.plan_id) {
-        const { data: plan } = await appDb.from('plans').select('max_rows_per_table').eq('id', projectUser.plan_id).single()
-        if (plan?.max_rows_per_table) {
-          const { count } = await clientsDb.from(qualifiedTable).select('*', { count: 'exact', head: true })
-          if (count !== null && count >= plan.max_rows_per_table) {
-            return res.status(200).json({ error: 'row_limit_reached', message: `Row limit of ${plan.max_rows_per_table} reached for this table. Upgrade your plan.` })
-          }
+      const userPlanId = projectUser?.plan_id || null
+      const { data: plan } = userPlanId
+        ? await appDb.from('plans').select('max_rows_per_table').eq('id', userPlanId).single()
+        : await appDb.from('plans').select('max_rows_per_table').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+      if (plan?.max_rows_per_table) {
+        const { count } = await clientsDb.from(qualifiedTable).select('*', { count: 'exact', head: true })
+        if (count !== null && count >= plan.max_rows_per_table) {
+          return res.status(200).json({ error: 'row_limit_reached', message: `Row limit of ${plan.max_rows_per_table} reached for this table. Upgrade your plan.` })
         }
       }
 

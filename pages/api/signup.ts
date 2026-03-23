@@ -25,6 +25,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const userId = data.user.id
 
+  // Assign the Free plan to the new user
+  const { data: freePlan } = await adminSupabase
+    .from('plans')
+    .select('id')
+    .eq('price_monthly', 0)
+    .order('sort_order', { ascending: true })
+    .limit(1)
+    .single()
+
+  if (freePlan) {
+    await adminSupabase.from('profiles').update({ plan_id: freePlan.id }).eq('id', userId)
+  }
+
   // Generate a magic link (confirms email AND signs in when clicked)
   // type 'signup' requires a password; 'magiclink' only needs email
   const { data: linkData, error: linkError } = await adminSupabase.auth.admin.generateLink({

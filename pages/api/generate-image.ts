@@ -133,7 +133,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
   const [{ data: profile }, { data: modelSetting }] = await Promise.all([
-    supabase.from('profiles').select('credit_balance, role').eq('id', userId).single(),
+    supabase.from('profiles').select('credit_balance, role, plan_id').eq('id', userId).single(),
     supabase.from('settings').select('value').eq('key', 'ai_image_model').single(),
   ])
 
@@ -141,6 +141,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (profile.credit_balance < MARKUP_PER_IMAGE) {
     return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits to generate an image.' })
+  }
+
+  // ── Storage limit check ────────────────────────────────────────────────
+  if (profile.role !== 'admin') {
+    const userPlanId = (profile as any).plan_id || null
+    const { data: plan } = userPlanId
+      ? await supabase.from('plans').select('max_storage_mb').eq('id', userPlanId).single()
+      : await supabase.from('plans').select('max_storage_mb').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+    if (plan?.max_storage_mb) {
+      try {
+        const { data: files } = await supabase.storage.from('images').list(`generated/${userId}`, { limit: 10000 })
+        const totalBytes = (files || []).reduce((sum, f) => sum + (f.metadata?.size || 0), 0)
+        const totalMb = totalBytes / (1024 * 1024)
+        if (totalMb >= plan.max_storage_mb) {
+          return res.status(200).json({
+            error: 'storage_limit_reached',
+            message: `Storage limit of ${plan.max_storage_mb} MB reached. Upgrade your plan for more storage.`,
+          })
+        }
+      } catch { /* don't block on storage check errors */ }
+    }
   }
 
   const primaryModel = modelSetting?.value || 'black-forest-labs/flux-2-pro'

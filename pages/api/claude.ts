@@ -81,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Look up user profile
   const { data: profile, error: profileError } = await supabase
-    .from('profiles').select('credit_balance, role, email').eq('id', userId).single()
+    .from('profiles').select('credit_balance, role, email, plan_id').eq('id', userId).single()
 
   if (!profile) {
     await log('api_error', 'error', `Profile not found for userId: ${userId}`, null, { userId, profileError })
@@ -102,22 +102,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })
   }
 
-  // Plan build-limit check
-  if (userId && !planOnly) {
-    const { data: planProfile } = await supabase.from('profiles').select('plan_id, role').eq('id', userId).single()
-    if (planProfile?.plan_id && planProfile.role !== 'admin') {
-      const { data: plan } = await supabase.from('plans').select('name, max_builds_per_month').eq('id', planProfile.plan_id).single()
-      if (plan?.max_builds_per_month) {
-        const monthStart = new Date()
-        monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
-        const { count } = await supabase.from('usage').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', monthStart.toISOString())
-        if (count !== null && count >= plan.max_builds_per_month) {
-          return res.status(200).json({
-            error: 'build_limit_reached',
-            message: `You've used all ${plan.max_builds_per_month} builds this month on the ${plan.name} plan. Upgrade to build more.`,
-            planName: plan.name,
-          })
-        }
+  // Plan build-limit check (resolves Free plan for null plan_id)
+  if (userId && !planOnly && profile.role !== 'admin') {
+    const planId = profile.plan_id || null
+    const { data: plan } = planId
+      ? await supabase.from('plans').select('name, max_builds_per_month').eq('id', planId).single()
+      : await supabase.from('plans').select('name, max_builds_per_month').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+    if (plan?.max_builds_per_month && plan.max_builds_per_month !== -1) {
+      const monthStart = new Date()
+      monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
+      const { count } = await supabase.from('usage').select('*', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', monthStart.toISOString())
+      if (count !== null && count >= plan.max_builds_per_month) {
+        return res.status(200).json({
+          error: 'build_limit_reached',
+          message: `You've used all ${plan.max_builds_per_month} builds this month on the ${plan.name} plan. Upgrade to build more.`,
+          planName: plan.name,
+        })
       }
     }
   }
@@ -342,13 +342,13 @@ RULES:
       try {
         const tableDef = JSON.parse(createTableMatch[1].trim())
         const schemaName = `proj_${projectId}`
-        const { data: planProfile } = await supabase.from('profiles').select('plan_id').eq('id', userId).single()
-        const { data: plan } = planProfile?.plan_id
-          ? await supabase.from('plans').select('max_tables_per_project').eq('id', planProfile.plan_id).single()
-          : { data: null }
+        const planId = profile.plan_id || null
+        const { data: plan } = planId
+          ? await supabase.from('plans').select('max_tables_per_project').eq('id', planId).single()
+          : await supabase.from('plans').select('max_tables_per_project').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
         const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
         const currentCount = usageRow?.table_count || 0
-        const tableLimit = plan?.max_tables_per_project ?? 999
+        const tableLimit = plan?.max_tables_per_project ?? 5
         if (currentCount >= tableLimit) {
           await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit})`, userEmail, { userId, projectId })
         } else {

@@ -60,9 +60,12 @@ export default function Dashboard() {
       return
     }
 
-    // Check max_projects plan limit
-    if (profile?.plan_id && profile.role !== 'admin') {
-      const { data: plan } = await supabase.from('plans').select('name, max_projects').eq('id', profile.plan_id).single()
+    // Check max_projects plan limit (resolves Free plan for null plan_id)
+    if (profile?.role !== 'admin') {
+      const planId = profile?.plan_id
+      const { data: plan } = planId
+        ? await supabase.from('plans').select('name, max_projects').eq('id', planId).single()
+        : await supabase.from('plans').select('name, max_projects').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
       if (plan?.max_projects) {
         const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
         if (count !== null && count >= plan.max_projects) {

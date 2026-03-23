@@ -823,7 +823,28 @@ export default function Admin() {
         <div style={s.section}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h2 style={s.sectionTitle}>Subscription Plans</h2>
-            <button onClick={() => { setShowNewPlan(true); setEditingPlan(null) }} style={s.saveBtn}>+ New Plan</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {users.some(u => !u.plan_id) && (
+                <button
+                  onClick={async () => {
+                    if (!confirm(`Assign the Free plan to ${users.filter(u => !u.plan_id).length} users with no plan?`)) return
+                    const r = await fetch('/api/admin/backfill-free-plan', { method: 'POST' })
+                    const d = await r.json()
+                    if (d.ok) {
+                      setPlanMsg(`Assigned Free plan to ${d.usersUpdated} users`)
+                      loadUsers()
+                    } else {
+                      setPlanMsg('Error: ' + (d.error || 'Unknown'))
+                    }
+                    setTimeout(() => setPlanMsg(''), 4000)
+                  }}
+                  style={{ ...s.saveBtn, background: '#c97a2a' }}
+                >
+                  Assign Free Plan to {users.filter(u => !u.plan_id).length} unassigned users
+                </button>
+              )}
+              <button onClick={() => { setShowNewPlan(true); setEditingPlan(null) }} style={s.saveBtn}>+ New Plan</button>
+            </div>
           </div>
           {planMsg && <div style={{ marginBottom: 12, fontSize: 13, color: '#5DCAA5' }}>{planMsg}</div>}
 
@@ -863,7 +884,7 @@ export default function Admin() {
                           <input type="checkbox" checked={editingPlan.can_connect_own_supabase} onChange={e => setEditingPlan(p => p ? { ...p, can_connect_own_supabase: e.target.checked } : p)} />
                         </td>
                         <td style={s.td}><input type="number" value={editingPlan.max_builds_per_month} onChange={e => setEditingPlan(p => p ? { ...p, max_builds_per_month: parseInt(e.target.value) || 0 } : p)} style={{ ...s.inlineInput, width: 50 }} /></td>
-                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id).length}</span></td>
+                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id || (plan.price_monthly === 0 && !u.plan_id)).length}</span></td>
                         <td style={s.td}>
                           <input type="checkbox" checked={editingPlan.is_active} onChange={e => setEditingPlan(p => p ? { ...p, is_active: e.target.checked } : p)} />
                         </td>
@@ -886,7 +907,7 @@ export default function Admin() {
                         <td style={s.td}><span style={s.num}>{plan.max_storage_mb} MB</span></td>
                         <td style={s.td}><span style={{ ...s.badge, ...(plan.can_connect_own_supabase ? s.badgeGreen : s.badgeGray) }}>{plan.can_connect_own_supabase ? 'Yes' : 'No'}</span></td>
                         <td style={s.td}><span style={s.num}>{plan.max_builds_per_month === -1 ? '∞' : plan.max_builds_per_month}</span></td>
-                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id).length}</span></td>
+                        <td style={s.td}><span style={s.num}>{users.filter(u => u.plan_id === plan.id || (plan.price_monthly === 0 && !u.plan_id)).length}</span></td>
                         <td style={s.td}><span style={{ ...s.badge, ...(plan.is_active ? s.badgeGreen : s.badgeRed) }}>{plan.is_active ? 'Active' : 'Hidden'}</span></td>
                         <td style={s.td}>
                           <div style={{ display: 'flex', gap: 6 }}>

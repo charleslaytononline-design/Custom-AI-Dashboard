@@ -98,12 +98,22 @@ create policy "admin views all usage" on usage for select using (
 -- ============================================
 create or replace function handle_new_user()
 returns trigger as $$
+declare
+  free_plan_id uuid;
 begin
-  insert into profiles (id, email, role)
+  -- Find the Free plan (lowest price, first by sort_order)
+  select id into free_plan_id
+  from plans
+  where price_monthly = 0
+  order by sort_order asc
+  limit 1;
+
+  insert into profiles (id, email, role, plan_id)
   values (
     new.id,
     new.email,
-    case when new.email = 'charleslayton.online@gmail.com' then 'admin' else 'user' end
+    case when new.email = 'charleslayton.online@gmail.com' then 'admin' else 'user' end,
+    free_plan_id
   );
   return new;
 end;
