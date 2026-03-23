@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__list_projects",
-      "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__execute_sql"
+      "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__execute_sql",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__list_teams",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__list_projects",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__get_project"
     ]
   }
 }
