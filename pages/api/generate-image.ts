@@ -153,11 +153,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     imageUrl = await runPrediction(primaryModel, prompt)
   } catch (primaryErr: any) {
     if (primaryErr.isSSL && primaryModel !== FALLBACK_MODEL) {
-      // SSL cert failure inside Replicate's infrastructure — retry with flux-1.1-pro
+      // SSL cert failure inside Replicate's infrastructure — wait briefly then retry with flux-1.1-pro
+      // The brief pause avoids hitting Replicate's burst rate limit from rapid sequential requests
       await logEvent('builder_error', 'warn',
         `${primaryModel} SSL cert error — auto-retrying with ${FALLBACK_MODEL}`,
         userId, { prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
       )
+      await new Promise(r => setTimeout(r, 8000)) // wait 8s to clear burst limit
       try {
         usedModel = FALLBACK_MODEL
         imageUrl = await runPrediction(FALLBACK_MODEL, prompt)
