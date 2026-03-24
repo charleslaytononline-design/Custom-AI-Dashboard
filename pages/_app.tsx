@@ -1,6 +1,7 @@
 import type { AppProps } from 'next/app'
 import { useEffect } from 'react'
 import '../styles/globals.css'
+import { useSessionTimeout } from '../hooks/useSessionTimeout'
 
 function sendLog(event_type: string, severity: string, message: string, metadata?: object) {
   // Fire-and-forget — don't await, don't block the UI
@@ -12,6 +13,8 @@ function sendLog(event_type: string, severity: string, message: string, metadata
 }
 
 export default function App({ Component, pageProps }: AppProps) {
+  useSessionTimeout()
+
   useEffect(() => {
     if (typeof window === 'undefined') return
 

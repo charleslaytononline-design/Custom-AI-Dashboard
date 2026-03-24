@@ -71,6 +71,7 @@ export default function Login() {
         log('login_success', 'info', `Login successful`, email, { email })
         const { data: { user } } = await supabase.auth.getUser()
         if (user) await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id)
+        localStorage.setItem('session_started_at', Date.now().toString())
         router.push('/home')
       }
     }
@@ -96,6 +97,9 @@ export default function Login() {
             <label style={s.label}>Password</label>
             <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={s.input} />
           </div>
+          {router.query.reason === 'timeout' && !error && !success && (
+            <div style={s.timeout}>Your session expired. Please sign in again.</div>
+          )}
           {error && <div style={s.err}>{error}</div>}
           {success && <div style={s.ok}>{success}</div>}
           <button type="submit" disabled={loading} style={s.btn}>
@@ -123,6 +127,7 @@ const s: Record<string,React.CSSProperties> = {
   input: { padding:'10px 12px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, color:'#f0f0f0', fontSize:14, outline:'none' },
   err: { background:'rgba(163,45,45,0.15)', border:'1px solid rgba(163,45,45,0.3)', borderRadius:8, padding:'10px 12px', fontSize:13, color:'#f09595' },
   ok: { background:'rgba(29,158,117,0.15)', border:'1px solid rgba(29,158,117,0.3)', borderRadius:8, padding:'10px 12px', fontSize:13, color:'#5DCAA5' },
+  timeout: { background:'rgba(200,150,50,0.15)', border:'1px solid rgba(200,150,50,0.3)', borderRadius:8, padding:'10px 12px', fontSize:13, color:'#e0c060' },
   btn: { padding:11, background:'#7c6ef7', border:'none', borderRadius:8, color:'white', fontSize:14, fontWeight:500, cursor:'pointer', marginTop:4 },
   toggle: { marginTop:24, textAlign:'center', fontSize:13, color:'#555' },
   link: { background:'none', border:'none', color:'#7c6ef7', cursor:'pointer', fontSize:13, padding:0 },

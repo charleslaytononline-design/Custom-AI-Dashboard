@@ -170,7 +170,7 @@ export default function Dashboard() {
     setLoading(false)
   }
 
-  async function signOut() { await supabase.auth.signOut(); router.push('/') }
+  async function signOut() { localStorage.removeItem('session_started_at'); await supabase.auth.signOut(); router.push('/') }
 
   if (!user) return <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'#555',background:'#0a0a0a',fontFamily:'sans-serif' }}>Loading...</div>
 

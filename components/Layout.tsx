@@ -128,7 +128,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           <button
-            onClick={() => { supabase.auth.signOut(); router.push('/') }}
+            onClick={() => { localStorage.removeItem('session_started_at'); supabase.auth.signOut(); router.push('/') }}
             style={s.signOut}
           >
             Sign out

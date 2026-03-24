@@ -15,7 +15,10 @@
       "Bash(node_modules/.bin/next build:*)",
       "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__list_tables",
       "Bash(npm run:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(where node:*)",
+      "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")"
     ]
   }
 }
