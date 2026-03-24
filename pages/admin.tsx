@@ -648,7 +648,9 @@ export default function Admin() {
   }
 
   const isMobile = useMobile()
-  const actualProfit = totalProfit - totalGiftUsed
+  const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
+  const giftApiCost = totalGiftUsed > 0 ? totalGiftUsed / parseFloat(settings.markup_multiplier || '3') : 0
+  const actualProfit = totalProfit - giftApiCost
   const margin = totalRevenue > 0 ? ((actualProfit / totalRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
@@ -673,7 +675,7 @@ export default function Admin() {
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
           <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{totalGiftUsed > 0 ? ` · -$${totalGiftUsed.toFixed(2)} gift loss` : ''}</div>
+          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -687,8 +689,8 @@ export default function Admin() {
         </div>
         <div style={{ ...s.statCard, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fbbf24' }}>Gifted Credits</div>
-          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 20 }}>${totalGifted.toFixed(2)} <span style={{ color: '#888', fontSize: 14 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
-          <div style={s.statSub}>gifted / used</div>
+          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 18 }}>${totalGifted.toFixed(2)} <span style={{ color: '#888', fontSize: 13 }}>/</span> <span style={{ color: '#5DCAA5' }}>${giftRemaining.toFixed(2)}</span> <span style={{ color: '#888', fontSize: 13 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
+          <div style={s.statSub}>gifted / remaining / used</div>
         </div>
       </div>
       <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
