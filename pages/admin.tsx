@@ -488,7 +488,7 @@ export default function Admin() {
       replicateCost: replicateCosts[p.id] || 0,
       lastActive: lastActive[p.id] || null,
       lastLogin: p.last_login || null,
-      giftedCredits: giftedAmounts[p.id] || 0,
+      giftedCredits: p.gift_balance || 0,
       giftUsed: Math.min(tokenSpend[p.id] || 0, giftedAmounts[p.id] || 0),
     })))
   }

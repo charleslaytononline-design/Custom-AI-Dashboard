@@ -123,9 +123,9 @@ export default function ProjectBuilder() {
   }, [activePage?.id])
 
   async function loadProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
+    const { data } = await supabase.from('profiles').select('credit_balance, gift_balance, role').eq('id', userId).single()
     if (data) {
-      setCreditBalance(data.credit_balance || 0)
+      setCreditBalance((data.credit_balance || 0) + (data.gift_balance || 0))
     }
   }
 

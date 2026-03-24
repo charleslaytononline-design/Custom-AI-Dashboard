@@ -111,7 +111,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Look up user profile
   const { data: profile, error: profileError } = await supabase
-    .from('profiles').select('credit_balance, role, email, plan_id').eq('id', userId).single()
+    .from('profiles').select('credit_balance, gift_balance, role, email, plan_id').eq('id', userId).single()
 
   if (!profile) {
     await log('api_error', 'error', `Profile not found for userId: ${userId}`, null, { userId, profileError })
@@ -120,10 +120,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const userEmail = profile.email || null
 
-  // Credit check
-  if (profile.credit_balance <= 0) {
+  // Credit check (purchased + gift combined)
+  const totalBalance = (profile.credit_balance || 0) + (profile.gift_balance || 0)
+  if (totalBalance <= 0) {
     await log('credits_error', 'warn', `Build blocked — insufficient credits`, userEmail, {
-      userId, balance: profile.credit_balance, pageName,
+      userId, balance: profile.credit_balance, giftBalance: profile.gift_balance, pageName,
     })
     return res.status(402).json({
       error: 'insufficient_credits',
@@ -612,7 +613,7 @@ RULES:
     }
 
     const { data: updatedProfile } = await supabase
-      .from('profiles').select('credit_balance').eq('id', userId).single()
+      .from('profiles').select('credit_balance, gift_balance').eq('id', userId).single()
 
     // Send the final done event with all metadata
     sendSSE({
@@ -623,7 +624,7 @@ RULES:
       apiCost,
       userCharge,
       imageGenerated: !!generatedImageUrl,
-      newBalance: updatedProfile?.credit_balance || 0,
+      newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
       layoutUpdated: !!layoutMatch,
       pagesCreated: newPages,
     })

@@ -133,13 +133,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
   const [{ data: profile }, { data: modelSetting }] = await Promise.all([
-    supabase.from('profiles').select('credit_balance, role, plan_id').eq('id', userId).single(),
+    supabase.from('profiles').select('credit_balance, gift_balance, role, plan_id').eq('id', userId).single(),
     supabase.from('settings').select('value').eq('key', 'ai_image_model').single(),
   ])
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
-  if (profile.credit_balance < MARKUP_PER_IMAGE) {
+  if ((profile.credit_balance + (profile.gift_balance || 0)) < MARKUP_PER_IMAGE) {
     return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits to generate an image.' })
   }
 
@@ -243,11 +243,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   })
 
   const { data: updatedProfile } = await supabase
-    .from('profiles').select('credit_balance').eq('id', userId).single()
+    .from('profiles').select('credit_balance, gift_balance').eq('id', userId).single()
 
   res.status(200).json({
     url: permanentUrl,
     usedModel,
-    newBalance: updatedProfile?.credit_balance || 0,
+    newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
   })
 }
