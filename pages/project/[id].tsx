@@ -250,7 +250,7 @@ export default function ProjectBuilder() {
     }).catch(() => {})
   }
 
-  async function callAPI(msgs: any[], planOnly = false) {
+  async function callAPI(msgs: any[], planOnly = false, image?: { base64: string, mediaType: string } | null) {
     const payload: any = {
       messages: msgs,
       pageCode: activePage?.code,
@@ -261,9 +261,9 @@ export default function ProjectBuilder() {
       projectId,
     }
 
-    if (pendingImage && !planOnly) {
-      payload.imageBase64 = pendingImage.base64
-      payload.imageMediaType = pendingImage.mediaType
+    if (image) {
+      payload.imageBase64 = image.base64
+      payload.imageMediaType = image.mediaType
     }
 
     let res: Response
@@ -304,13 +304,14 @@ export default function ProjectBuilder() {
   }
 
   async function getPlan() {
-    if (!input.trim() || loading) return
-    const userMsg: Message = { role: 'user', content: input }
+    if (!input.trim() && !pendingImage || loading) return
+    const userMsg: Message = { role: 'user', content: input || '(sent an image)', imageUrl: pendingImage?.preview }
     setMessages(prev => [...prev, userMsg])
-    await saveChatMessage('user', input)
+    await saveChatMessage('user', input || '(sent an image)')
+    const imgToSend = pendingImage
     setInput(''); setPendingImage(null); setLoading(true); setLastError(null)
     try {
-      const data = await callAPI([{ role: 'user', content: input }], true)
+      const data = await callAPI([{ role: 'user', content: input || 'See the image above.' }], true, imgToSend)
       const aiMsg: Message = { role: 'assistant', content: data.message, isPlan: true }
       setMessages(prev => [...prev, aiMsg])
       await saveChatMessage('assistant', data.message, true)
@@ -369,7 +370,7 @@ export default function ProjectBuilder() {
 
     try {
       const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }))
-      const data = await callAPI(apiMsgs)
+      const data = await callAPI(apiMsgs, false, imgToSend)
       const aiMsg: Message = { role: 'assistant', content: data.message }
       setMessages(prev => [...prev, aiMsg])
       await saveChatMessage('assistant', data.message)
