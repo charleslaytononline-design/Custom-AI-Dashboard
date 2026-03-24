@@ -378,7 +378,7 @@ export default function ProjectBuilder() {
       }
     }
 
-    if (!result) throw new Error('Stream ended without a result')
+    if (!result) throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
     if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
     return result
   }
@@ -474,14 +474,16 @@ export default function ProjectBuilder() {
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
-      setLastError(err.message)
+      const phase = streamingMsg.content || 'starting'
+      const errDetail = `${err.message} (failed during: ${phase})`
+      setLastError(errDetail)
       setMessages(prev => {
         const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
         return updated
       })
-      await saveChatMessage('assistant', 'Error: ' + err.message)
-      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, stack: err.stack?.slice(0, 300) })
+      await saveChatMessage('assistant', 'Error: ' + errDetail)
+      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, phase, stack: err.stack?.slice(0, 300) })
     }
     setLoading(false)
   }
@@ -554,14 +556,16 @@ export default function ProjectBuilder() {
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
-      setLastError(err.message)
+      const phase = streamingMsg.content || 'starting'
+      const errDetail = `${err.message} (failed during: ${phase})`
+      setLastError(errDetail)
       setMessages(prev => {
         const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
         return updated
       })
-      await saveChatMessage('assistant', 'Error: ' + err.message)
-      logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
+      await saveChatMessage('assistant', 'Error: ' + errDetail)
+      logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase })
     }
     setLoading(false)
   }

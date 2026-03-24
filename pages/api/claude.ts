@@ -345,6 +345,11 @@ RULES:
     res.setHeader('X-Accel-Buffering', 'no')
     res.status(200)
 
+    // Send immediate status to prevent early idle timeout
+    sendSSE({ type: 'status', text: 'Starting build...' })
+
+    let heartbeat: ReturnType<typeof setInterval> | null = null
+
     // Use streaming API
     const stream = client.messages.stream({
       model: settings.chatModel,
@@ -363,6 +368,12 @@ RULES:
 
     // Wait for the stream to complete
     const finalMessage = await stream.finalMessage()
+
+    // Start heartbeat to keep connection alive during post-processing (image gen, table creation, etc.)
+    heartbeat = setInterval(() => {
+      try { res.write(': heartbeat\n\n') } catch (_) { /* connection already closed */ }
+    }, 5000)
+
     const inputTokens = finalMessage.usage.input_tokens
     const outputTokens = finalMessage.usage.output_tokens
     const totalTokens = inputTokens + outputTokens
@@ -493,6 +504,7 @@ RULES:
         userId, pageName, userCharge, totalTokens,
       })
       sendSSE({ type: 'error', error: 'insufficient_credits', message: 'Not enough credits.' })
+      clearInterval(heartbeat)
       res.end()
       return
     }
@@ -607,20 +619,38 @@ RULES:
       layoutUpdated: !!layoutMatch,
       pagesCreated: newPages,
     })
+    clearInterval(heartbeat)
     res.end()
   } catch (err: any) {
-    await log('api_error', 'error', `Builder API exception: ${err.message}`, null, {
+    // Clean up heartbeat if it was started
+    if (heartbeat) clearInterval(heartbeat)
+
+    const errMsg = err.message || 'Unknown error'
+    let userMessage = errMsg
+
+    // Map technical errors to user-friendly messages
+    if (errMsg.includes('terminated') || errMsg.includes('aborted') || errMsg.includes('ECONNRESET')) {
+      userMessage = 'The build timed out. Try a simpler request or break it into smaller steps.'
+    } else if (errMsg.includes('rate_limit') || errMsg.includes('429')) {
+      userMessage = 'AI rate limit reached. Please wait a moment and try again.'
+    } else if (errMsg.includes('overloaded') || errMsg.includes('529')) {
+      userMessage = 'The AI service is temporarily overloaded. Please try again in a minute.'
+    } else if (errMsg.includes('invalid_api_key') || errMsg.includes('authentication')) {
+      userMessage = 'AI service authentication error. Please contact support.'
+    }
+
+    await log('api_error', 'error', `Builder API exception: ${errMsg}`, null, {
       userId,
       pageName,
-      error: err.message,
+      error: errMsg,
       stack: err.stack?.slice(0, 500),
     })
     // If headers already sent (streaming started), send error as SSE event
     if (res.headersSent) {
-      sendSSE({ type: 'error', error: err.message })
+      sendSSE({ type: 'error', error: userMessage })
       res.end()
     } else {
-      res.status(500).json({ error: err.message })
+      res.status(500).json({ error: userMessage })
     }
   }
 }
