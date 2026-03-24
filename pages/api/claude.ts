@@ -233,9 +233,17 @@ LAYOUT RULES:
 
 IMAGE GENERATION CAPABILITY:
 Generate real AI images using Flux. Output BEFORE the CODE block:
-<GENERATE_IMAGE>detailed prompt — be specific about style, content, colors, mood, cinematic quality</GENERATE_IMAGE>
-<IMAGE_PLACEHOLDER><!-- IMAGE_WILL_BE_INSERTED_HERE --></IMAGE_PLACEHOLDER>
+<GENERATE_IMAGE>your detailed image prompt here</GENERATE_IMAGE>
 In CODE: <img src="__GENERATED_IMAGE_URL__" alt="description" class="..." />
+
+CRITICAL IMAGE PROMPT RULES:
+- The image prompt MUST describe exactly what the user asked for. If they say "a fluffy dog", the prompt MUST be about a fluffy dog — never something else.
+- Be extremely specific and literal: subject, setting, lighting, style, colors, mood, camera angle.
+- Always include quality modifiers: "high quality, professional, detailed, 8k, sharp focus"
+- For photos: add "professional photography, studio lighting, shallow depth of field"
+- For illustrations: add "digital illustration, vibrant colors, clean lines"
+- NEVER creatively reinterpret the user's request into a different subject. Match their description exactly.
+- Example: User says "a cute fluffy golden retriever puppy" → <GENERATE_IMAGE>A cute fluffy golden retriever puppy, adorable face, soft golden fur, warm studio lighting, professional pet photography, shallow depth of field, 8k, high quality</GENERATE_IMAGE>
 
 DATABASE CAPABILITY:
 Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the CODE block:
