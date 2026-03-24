@@ -332,8 +332,10 @@ RULES:
     }
 
     // Handle <CREATE_TABLE> tags — create real tables in Clients DB (supports multiple per build)
-    const createTableMatches = raw.matchAll(/<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/gi)
-    const tableDefsFound = [...createTableMatches]
+    const tableDefsFound: RegExpExecArray[] = []
+    const tableRegex = /<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/gi
+    let tableMatch: RegExpExecArray | null
+    while ((tableMatch = tableRegex.exec(raw)) !== null) tableDefsFound.push(tableMatch)
     if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
       const schemaName = `proj_${projectId}`
       const planId = profile.plan_id || null
@@ -380,9 +382,11 @@ RULES:
     }
 
     // Handle <CREATE_PAGE> tags — create new pages in the project
-    const createPageMatches = raw.matchAll(/<CREATE_PAGE>([\s\S]*?)<\/CREATE_PAGE>/gi)
+    const pageRegex = /<CREATE_PAGE>([\s\S]*?)<\/CREATE_PAGE>/gi
     const newPages: string[] = []
-    for (const match of [...createPageMatches]) {
+    let pageMatch: RegExpExecArray | null
+    while ((pageMatch = pageRegex.exec(raw)) !== null) {
+      const match = pageMatch
       const newPageName = match[1].trim()
       if (!newPageName) continue
       // Check if page already exists
