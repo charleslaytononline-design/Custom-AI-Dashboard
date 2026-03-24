@@ -432,22 +432,28 @@ export default function ProjectBuilder() {
     await saveChatMessage('user', approveMsg.content)
     setPendingPlan(null); setLoading(true); setLastError(null)
 
-    const streamingMsg: Message = { role: 'assistant', content: '' }
+    const streamingMsg: Message = { role: 'assistant', content: '🤔 Thinking...' }
     setMessages(prev => [...prev, streamingMsg])
+    let rawAccumulator = ''
 
     try {
       const allMsgs = [...messages, approveMsg].map(m => ({ role: m.role, content: m.content }))
       const data = await callAPI(allMsgs, false, null, (delta) => {
-        streamingMsg.content += delta
+        rawAccumulator += delta
+        const status = getBuildStatus(rawAccumulator)
+        if (status !== streamingMsg.content) {
+          streamingMsg.content = status
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { ...streamingMsg }
+            return updated
+          })
+        }
+      }, (status) => {
+        streamingMsg.content = `⏳ ${status}`
         setMessages(prev => {
           const updated = [...prev]
           updated[updated.length - 1] = { ...streamingMsg }
-          return updated
-        })
-      }, (status) => {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...streamingMsg, content: streamingMsg.content + `\n\n⏳ ${status}` }
           return updated
         })
       })
@@ -480,6 +486,17 @@ export default function ProjectBuilder() {
     setLoading(false)
   }
 
+  // Detect build phase from accumulated raw AI output and return a friendly status
+  function getBuildStatus(raw: string): string {
+    if (raw.includes('<CODE>')) return '✨ Writing code...'
+    if (raw.includes('<MESSAGE>')) return '✨ Almost done...'
+    if (raw.includes('<CREATE_TABLE>')) return '🗄️ Setting up database...'
+    if (raw.includes('<GENERATE_IMAGE>')) return '🖼️ Preparing image...'
+    if (raw.includes('<LAYOUT>')) return '📐 Building layout...'
+    if (raw.includes('<CREATE_PAGE>')) return '📄 Creating pages...'
+    return '🤔 Thinking...'
+  }
+
   async function sendMessage() {
     if ((!input.trim() && !pendingImage) || loading || !activePage) return
     if (mode === 'plan') { getPlan(); return }
@@ -493,23 +510,29 @@ export default function ProjectBuilder() {
     const imgToSend = pendingImage
     setPendingImage(null)
 
-    // Add a placeholder assistant message for streaming
-    const streamingMsg: Message = { role: 'assistant', content: '' }
+    // Add a placeholder assistant message for build status
+    const streamingMsg: Message = { role: 'assistant', content: '🤔 Thinking...' }
     setMessages(prev => [...prev, streamingMsg])
+    let rawAccumulator = ''
 
     try {
       const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }))
       const data = await callAPI(apiMsgs, false, imgToSend, (delta) => {
-        streamingMsg.content += delta
+        rawAccumulator += delta
+        const status = getBuildStatus(rawAccumulator)
+        if (status !== streamingMsg.content) {
+          streamingMsg.content = status
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { ...streamingMsg }
+            return updated
+          })
+        }
+      }, (status) => {
+        streamingMsg.content = `⏳ ${status}`
         setMessages(prev => {
           const updated = [...prev]
           updated[updated.length - 1] = { ...streamingMsg }
-          return updated
-        })
-      }, (status) => {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...streamingMsg, content: streamingMsg.content + `\n\n⏳ ${status}` }
           return updated
         })
       })
