@@ -47,6 +47,7 @@ interface UserRow {
   replicateCost?: number
   lastActive?: string
   lastLogin?: string
+  giftedCredits?: number
 }
 
 interface Plan {
@@ -439,6 +440,7 @@ export default function Admin() {
     const anthropicCosts: Record<string, number> = {}
     const replicateCosts: Record<string, number> = {}
     const lastActive: Record<string, string> = {}
+    const giftedAmounts: Record<string, number> = {}
 
     projects?.forEach((p: any) => { projectCounts[p.user_id] = (projectCounts[p.user_id] || 0) + 1 })
     pages?.forEach((p: any) => { pageCounts[p.user_id] = (pageCounts[p.user_id] || 0) + 1 })
@@ -460,6 +462,9 @@ export default function Admin() {
           lastActive[t.user_id] = t.created_at
         }
       }
+      if (t.type === 'gift') {
+        giftedAmounts[t.user_id] = (giftedAmounts[t.user_id] || 0) + Math.abs(t.amount)
+      }
     })
 
     setUsers(profiles.map((p: any) => ({
@@ -474,6 +479,7 @@ export default function Admin() {
       replicateCost: replicateCosts[p.id] || 0,
       lastActive: lastActive[p.id] || null,
       lastLogin: p.last_login || null,
+      giftedCredits: giftedAmounts[p.id] || 0,
     })))
   }
 
@@ -721,6 +727,7 @@ export default function Admin() {
                   <th style={s.th}>Role</th>
                   <th style={s.th}>Plan</th>
                   <th style={s.th}>Credits</th>
+                  <th style={{ ...s.th, color: '#fbbf24' }}>Gift Credits</th>
                   <th style={s.th}>Projects</th>
                   <th style={s.th}>Pages</th>
                   <th style={s.th}>Messages</th>
@@ -764,6 +771,7 @@ export default function Admin() {
                       </select>
                     </td>
                     <td style={s.td}><span style={{ fontSize: 13, color: '#5DCAA5', fontWeight: 500 }}>${(u.credit_balance || 0).toFixed(2)}</span></td>
+                    <td style={s.td}><span style={{ fontSize: 13, color: '#fbbf24', fontWeight: 500 }}>${(u.giftedCredits || 0).toFixed(2)}</span></td>
                     <td style={s.td}><span style={s.num}>{u.projectCount}</span></td>
                     <td style={s.td}><span style={s.num}>{u.pageCount}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.messageCount || 0).toLocaleString()}</span></td>
