@@ -184,3 +184,80 @@ create policy "admin views all chat history" on chat_history
 
 create index if not exists chat_history_page_id_idx on chat_history(page_id);
 create index if not exists chat_history_user_id_idx on chat_history(user_id);
+
+-- ============================================
+-- page_versions table (version history / undo)
+-- Run this block if the table doesn't exist yet
+-- ============================================
+create table if not exists page_versions (
+  id uuid default gen_random_uuid() primary key,
+  page_id uuid references pages(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  code text not null,
+  source text not null default 'ai_build',  -- 'ai_build', 'manual_edit', 'restore'
+  created_at timestamptz default now()
+);
+
+alter table page_versions enable row level security;
+
+create policy "users manage own page versions" on page_versions
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "admin views all page versions" on page_versions
+  for select using (
+    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  );
+
+create index if not exists page_versions_page_id_idx on page_versions(page_id);
+create index if not exists page_versions_created_at_idx on page_versions(created_at);
+
+-- ============================================
+-- project_files table (virtual file system per project)
+-- Run this block if the table doesn't exist yet
+-- ============================================
+create table if not exists project_files (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references projects(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  path text not null,                      -- e.g., 'pages/dashboard.html', 'styles/custom.css'
+  content text,
+  file_type text not null default 'html',  -- html, css, js, json, image, config
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(project_id, path)
+);
+
+alter table project_files enable row level security;
+
+create policy "users manage own project files" on project_files
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "admin views all project files" on project_files
+  for select using (
+    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  );
+
+create index if not exists project_files_project_id_idx on project_files(project_id);
+create index if not exists project_files_path_idx on project_files(project_id, path);
+
+-- ============================================
+-- deployments table (deployment history)
+-- Run this block if the table doesn't exist yet
+-- ============================================
+create table if not exists deployments (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references projects(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  url text not null,
+  status text not null default 'success',  -- success, failed
+  provider text not null default 'vercel', -- vercel, netlify
+  metadata jsonb,
+  created_at timestamptz default now()
+);
+
+alter table deployments enable row level security;
+
+create policy "users manage own deployments" on deployments
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index if not exists deployments_project_id_idx on deployments(project_id);

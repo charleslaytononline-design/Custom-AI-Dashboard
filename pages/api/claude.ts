@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
+import { buildPageContext, compactHistory } from '../../lib/contextManager'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -16,6 +17,8 @@ const clientsDb = process.env.CLIENTS_SUPABASE_URL && process.env.CLIENTS_SUPABA
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
   maxDuration: 120,
+  // SSE streaming requires no response size limit
+  responseLimit: false,
 }
 
 // Central log helper — writes to platform_logs and fires email alert if configured
@@ -75,7 +78,7 @@ async function getSettings() {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0 } = req.body
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
@@ -123,6 +126,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const settings = await getSettings()
+  const lastUserMsg = messages[messages.length - 1]?.content || ''
+  const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
+  const pageContext = buildPageContext(
+    { name: pageName || 'Page', code: pageCode || '' },
+    (allPages || []).map((p: any) => ({ name: p.name, code: p.code || '' })),
+    userPrompt,
+  )
   const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
 
@@ -142,8 +152,7 @@ If the request involves multiple pages, list which pages you'll create and what 
 Respond in plain text only.`
     : `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
 
-PROJECT PAGES: ${pageList}
-CURRENT PAGE: "${pageName || 'My Page'}"
+${pageContext}
 ${hasLayout ? `PROJECT HAS SHARED LAYOUT: Yes (sidebar + topbar are provided automatically)` : `PROJECT HAS SHARED LAYOUT: No (this is a new project or legacy project)`}
 
 CURRENT PAGE CODE:
@@ -266,6 +275,11 @@ RULES:
 - Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
 - Build core functionality first — skip decorative extras on large requests.`
 
+  // Helper to send an SSE event
+  function sendSSE(data: object) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`)
+  }
+
   try {
     const lastMessage = messages[messages.length - 1]
 
@@ -278,36 +292,61 @@ RULES:
     }
 
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
-    // Cap to last 8 history messages to prevent context overflow (fixes 116-token parse failures)
-    const cappedHistory = rawHistory.length > 8 ? rawHistory.slice(-8) : rawHistory
-    const firstUserIdx = cappedHistory.findIndex((m: any) => m.role === 'user')
-    const safeHistory = firstUserIdx > 0 ? cappedHistory.slice(firstUserIdx) : cappedHistory
+    const { summary, recentMessages } = compactHistory(rawHistory, 4)
+    const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
+    const safeHistory = firstUserIdx > 0 ? recentMessages.slice(firstUserIdx) : recentMessages
+
+    // If we have a summary of older messages, prepend it as a system-level context
+    const contextualSystem = summary
+      ? system + `\n\nCONVERSATION CONTEXT:\n${summary}`
+      : system
 
     const apiMessages = [
       ...safeHistory,
       { role: lastMessage?.role || 'user', content: lastContent },
     ]
 
-    const response = await client.messages.create({
+    // Set up SSE headers
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache, no-transform')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.status(200)
+
+    // Use streaming API
+    const stream = client.messages.stream({
       model: settings.chatModel,
-      max_tokens: 16000,  // SDK requires streaming above ~30K tokens; 16K is safe and sufficient with concise prompting
-      system,
+      max_tokens: 16000,
+      system: contextualSystem,
       messages: apiMessages,
     })
 
-    const raw = response.content.map((b: any) => b.text || '').join('')
-    const inputTokens = response.usage.input_tokens
-    const outputTokens = response.usage.output_tokens
+    let raw = ''
+
+    // Stream text deltas to the client
+    stream.on('text', (text) => {
+      raw += text
+      sendSSE({ type: 'delta', text })
+    })
+
+    // Wait for the stream to complete
+    const finalMessage = await stream.finalMessage()
+    const inputTokens = finalMessage.usage.input_tokens
+    const outputTokens = finalMessage.usage.output_tokens
     const totalTokens = inputTokens + outputTokens
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
     const userCharge = apiCost * settings.markupMultiplier
-    const stopReason = response.stop_reason
+    const stopReason = finalMessage.stop_reason
+
+    // Send processing status
+    sendSSE({ type: 'status', text: 'Processing build...' })
 
     // Check if image generation is needed
     const imagePromptMatch = raw.match(/<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/i)
     let generatedImageUrl: string | null = null
 
     if (imagePromptMatch) {
+      sendSSE({ type: 'status', text: 'Generating image...' })
       const imagePrompt = imagePromptMatch[1].trim()
       try {
         const imgRes = await fetch(`${appUrl}/api/generate-image`, {
@@ -319,7 +358,6 @@ RULES:
         if (imgData.url) {
           generatedImageUrl = imgData.url
         } else {
-          // generate-image already logged the specific Replicate error — add a build-level log too
           await log('builder_error', 'warn', `Image generation failed during build: ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
             userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.detail || imgData.error,
           })
@@ -337,6 +375,7 @@ RULES:
     let tableMatch: RegExpExecArray | null
     while ((tableMatch = tableRegex.exec(raw)) !== null) tableDefsFound.push(tableMatch)
     if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
+      sendSSE({ type: 'status', text: 'Creating database tables...' })
       const schemaName = `proj_${projectId}`
       const planId = profile.plan_id || null
       const { data: plan } = planId
@@ -389,10 +428,8 @@ RULES:
       const match = pageMatch
       const newPageName = match[1].trim()
       if (!newPageName) continue
-      // Check if page already exists
       const existingNames = (allPages || []).map((p: any) => p.name.toLowerCase())
       if (existingNames.includes(newPageName.toLowerCase())) continue
-      // Don't create a page with the same name as the current page
       if (newPageName.toLowerCase() === (pageName || '').toLowerCase()) continue
       newPages.push(newPageName)
     }
@@ -407,8 +444,6 @@ RULES:
       }
     }
 
-    // If image generation failed, replace the placeholder with a dark grey fallback
-    // so the page renders cleanly instead of showing a broken image icon
     const imageFallback = generatedImageUrl
       ? generatedImageUrl
       : 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
@@ -425,7 +460,9 @@ RULES:
       await log('credits_error', 'warn', `deduct_credits failed after build`, userEmail, {
         userId, pageName, userCharge, totalTokens,
       })
-      return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits.' })
+      sendSSE({ type: 'error', error: 'insufficient_credits', message: 'Not enough credits.' })
+      res.end()
+      return
     }
 
     // Parse response
@@ -448,12 +485,10 @@ RULES:
           code = code.replace(/__PROJECT_ID__/g, projectId)
         }
       } else {
-        // Fallback 1: raw <!DOCTYPE html> block
         const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
         if (htmlMatch) {
           code = htmlMatch[0]
         } else {
-          // Fallback 2: markdown ```html ... ``` block
           const mdMatch = raw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
           if (mdMatch) code = mdMatch[1]
         }
@@ -465,21 +500,59 @@ RULES:
         }
 
         if (!code) {
-          // Log the failure with the raw Claude response for debugging
-          await log('builder_error', 'error',
-            `Claude response could not be parsed into HTML (stop_reason: ${stopReason})`,
-            userEmail, {
-              userId,
-              pageName,
-              stop_reason: stopReason,
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              raw_preview: raw.slice(0, 800),  // first 800 chars of Claude's response for debugging
+          // Auto-retry once on max_tokens truncation
+          if (stopReason === 'max_tokens' && retryCount < 1 && !planOnly) {
+            sendSSE({ type: 'status', text: 'Response was truncated. Retrying with simpler output...' })
+            await log('builder_retry', 'info', `Auto-retrying after max_tokens truncation`, userEmail, { userId, pageName, retryCount })
+
+            const retryStream = client.messages.stream({
+              model: settings.chatModel,
+              max_tokens: 16000,
+              system: system + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 8000 tokens. Focus on core functionality only.',
+              messages: apiMessages,
+            })
+
+            let retryRaw = ''
+            retryStream.on('text', (text) => {
+              retryRaw += text
+              sendSSE({ type: 'delta', text })
+            })
+
+            await retryStream.finalMessage()
+            const retryCodeMatch = retryRaw.match(/<CODE>([\s\S]*?)<\/CODE>/)
+            const retryHtmlMatch = retryRaw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
+            if (retryCodeMatch) {
+              code = retryCodeMatch[1].trim()
+              const retryMsgMatch = retryRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
+              message = retryMsgMatch ? retryMsgMatch[1].trim() : 'Done! (simplified version)'
+            } else if (retryHtmlMatch) {
+              code = retryHtmlMatch[0]
+              message = 'Done! Your page has been updated (simplified version).'
             }
-          )
-          message = stopReason === 'max_tokens'
-            ? 'The page was too complex to generate in one shot. Try asking for fewer sections at once, or break it into multiple builds.'
-            : 'Something went wrong generating the page. Please try again.'
+            if (generatedImageUrl && code) {
+              code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
+            }
+            if (code && projectId) {
+              code = code.replace(/__PROJECT_ID__/g, projectId)
+            }
+          }
+
+          if (!code) {
+            await log('builder_error', 'error',
+              `Claude response could not be parsed into HTML (stop_reason: ${stopReason})`,
+              userEmail, {
+                userId,
+                pageName,
+                stop_reason: stopReason,
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+                raw_preview: raw.slice(0, 800),
+              }
+            )
+            message = stopReason === 'max_tokens'
+              ? 'The page was too complex to generate in one shot. Try asking for fewer sections at once, or break it into multiple builds.'
+              : 'Something went wrong generating the page. Please try again.'
+          }
         } else {
           message = code ? 'Done! Your page has been updated.' : message
         }
@@ -489,7 +562,9 @@ RULES:
     const { data: updatedProfile } = await supabase
       .from('profiles').select('credit_balance').eq('id', userId).single()
 
-    res.status(200).json({
+    // Send the final done event with all metadata
+    sendSSE({
+      type: 'done',
       message: generatedImageUrl ? message + ' (AI image generated ✓)' : message,
       code,
       tokensUsed: totalTokens,
@@ -500,14 +575,20 @@ RULES:
       layoutUpdated: !!layoutMatch,
       pagesCreated: newPages,
     })
+    res.end()
   } catch (err: any) {
-    // Log the exception with full details
     await log('api_error', 'error', `Builder API exception: ${err.message}`, null, {
       userId,
       pageName,
       error: err.message,
       stack: err.stack?.slice(0, 500),
     })
-    res.status(500).json({ error: err.message })
+    // If headers already sent (streaming started), send error as SSE event
+    if (res.headersSent) {
+      sendSSE({ type: 'error', error: err.message })
+      res.end()
+    } else {
+      res.status(500).json({ error: err.message })
+    }
   }
 }

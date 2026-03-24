@@ -1,8 +1,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/router'
+import dynamic from 'next/dynamic'
 import { supabase } from '../../lib/supabase'
 import { useMobile } from '../../hooks/useMobile'
 import { composePage } from '../../lib/composePage'
+
+const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
+import VersionHistory from '../../components/VersionHistory'
+import DeployButton from '../../components/DeployButton'
+import GitHubConnect from '../../components/GitHubConnect'
 
 interface Page { id: string; name: string; code: string; updated_at: string }
 interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
@@ -25,10 +31,11 @@ export default function ProjectBuilder() {
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'pages'>('chat')
   const [mode, setMode] = useState<AppMode>('build')
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
-  const [showCode, setShowCode] = useState(false)
+  const [viewMode, setViewMode] = useState<'preview' | 'code' | 'split'>('preview')
   const [lastError, setLastError] = useState<string | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   // Mobile: which panel is visible ('chat' or 'preview')
   const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('preview')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -96,7 +103,7 @@ export default function ProjectBuilder() {
   useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project, activePage, renderIframe])
 
   // Re-render iframe when code view is closed (iframe remounts empty)
-  useEffect(() => { if (!showCode && activePage) renderIframe(activePage.code) }, [showCode])
+  useEffect(() => { if (viewMode !== 'code' && activePage) renderIframe(activePage.code) }, [viewMode])
 
   // Listen for page navigation messages from the iframe
   useEffect(() => {
@@ -184,8 +191,30 @@ export default function ProjectBuilder() {
     }
   }
 
-  async function savePage(code: string) {
-    if (!activePage) return
+  async function savePage(code: string, source: 'ai_build' | 'manual_edit' | 'restore' = 'ai_build') {
+    if (!activePage || !user) return
+    // Save current code as a version snapshot before overwriting
+    if (activePage.code && activePage.code !== code) {
+      supabase.from('page_versions').insert({
+        page_id: activePage.id,
+        user_id: user.id,
+        code: activePage.code,
+        source,
+      }).then(() => {
+        // Cleanup: keep only last 30 versions per page
+        supabase.from('page_versions')
+          .select('id')
+          .eq('page_id', activePage.id)
+          .order('created_at', { ascending: false })
+          .range(30, 999)
+          .then(({ data: old }) => {
+            if (old && old.length > 0) {
+              supabase.from('page_versions').delete().in('id', old.map(v => v.id)).then(() => {})
+            }
+          })
+      })
+    }
+
     const { data } = await supabase.from('pages')
       .update({ code, updated_at: new Date().toISOString() })
       .eq('id', activePage.id).select().single()
@@ -250,7 +279,13 @@ export default function ProjectBuilder() {
     }).catch(() => {})
   }
 
-  async function callAPI(msgs: any[], planOnly = false, image?: { base64: string, mediaType: string } | null) {
+  async function callAPI(
+    msgs: any[],
+    planOnly = false,
+    image?: { base64: string, mediaType: string } | null,
+    onDelta?: (text: string) => void,
+    onStatus?: (text: string) => void,
+  ) {
     const payload: any = {
       messages: msgs,
       pageCode: activePage?.code,
@@ -266,9 +301,9 @@ export default function ProjectBuilder() {
       payload.imageMediaType = image.mediaType
     }
 
-    let res: Response
+    let fetchRes: Response
     try {
-      res = await fetch('/api/claude', {
+      fetchRes = await fetch('/api/claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -276,31 +311,76 @@ export default function ProjectBuilder() {
     } catch (networkErr: any) {
       throw new Error('The builder timed out. Try a simpler request or try again.')
     }
-    // Vercel returns plain text (not JSON) on function timeouts/crashes
-    const contentType = res.headers.get('content-type') || ''
-    if (!contentType.includes('application/json')) {
+
+    const contentType = fetchRes.headers.get('content-type') || ''
+
+    // Non-streaming error responses (pre-flight checks return JSON)
+    if (contentType.includes('application/json')) {
+      const data = await fetchRes.json()
+      if (data.error === 'insufficient_credits') {
+        setShowBuyCredits(true)
+        logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
+        throw new Error(data.message || 'Insufficient credits')
+      }
+      if (data.error === 'build_limit_reached') {
+        setShowBuyCredits(true)
+        logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
+        throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
+      }
+      if (data.error) {
+        logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
+        throw new Error(data.error)
+      }
+      if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
+      return data
+    }
+
+    // SSE streaming response
+    if (!contentType.includes('text/event-stream')) {
       throw new Error('The build timed out or the server encountered an error. Try a simpler request or try again.')
     }
-    const data = await res.json()
-    if (data.error === 'insufficient_credits') {
-      setShowBuyCredits(true)
-      logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
-      throw new Error(data.message || 'Insufficient credits')
+
+    const reader = fetchRes.body?.getReader()
+    if (!reader) throw new Error('Failed to read stream')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let result: any = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6))
+          if (event.type === 'delta' && onDelta) {
+            onDelta(event.text)
+          } else if (event.type === 'status' && onStatus) {
+            onStatus(event.text)
+          } else if (event.type === 'done') {
+            result = event
+          } else if (event.type === 'error') {
+            if (event.error === 'insufficient_credits') {
+              setShowBuyCredits(true)
+              throw new Error(event.message || 'Insufficient credits')
+            }
+            throw new Error(event.error || event.message || 'Build failed')
+          }
+        } catch (parseErr: any) {
+          if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
+        }
+      }
     }
-    if (data.error === 'build_limit_reached') {
-      setShowBuyCredits(true)
-      logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
-      throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
-    }
-    if (data.error) {
-      logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
-      const msg = (data.error.includes('pattern') || data.error.includes('unexpected'))
-        ? 'Something went wrong generating the page. Please try again.'
-        : data.error
-      throw new Error(msg)
-    }
-    if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
-    return data
+
+    if (!result) throw new Error('Stream ended without a result')
+    if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
+    return result
   }
 
   async function getPlan() {
@@ -308,17 +388,37 @@ export default function ProjectBuilder() {
     const userMsg: Message = { role: 'user', content: input || '(sent an image)', imageUrl: pendingImage?.preview }
     setMessages(prev => [...prev, userMsg])
     await saveChatMessage('user', input || '(sent an image)')
+    const savedInput = input
     const imgToSend = pendingImage
     setInput(''); setPendingImage(null); setLoading(true); setLastError(null)
+
+    const streamingMsg: Message = { role: 'assistant', content: '', isPlan: true }
+    setMessages(prev => [...prev, streamingMsg])
+
     try {
-      const data = await callAPI([{ role: 'user', content: input || 'See the image above.' }], true, imgToSend)
+      const data = await callAPI([{ role: 'user', content: savedInput || 'See the image above.' }], true, imgToSend, (delta) => {
+        streamingMsg.content += delta
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...streamingMsg }
+          return updated
+        })
+      })
       const aiMsg: Message = { role: 'assistant', content: data.message, isPlan: true }
-      setMessages(prev => [...prev, aiMsg])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = aiMsg
+        return updated
+      })
       await saveChatMessage('assistant', data.message, true)
-      setPendingPlan(input)
+      setPendingPlan(savedInput)
     } catch (err: any) {
       setLastError(err.message)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+        return updated
+      })
       await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
     }
@@ -331,11 +431,33 @@ export default function ProjectBuilder() {
     setMessages(prev => [...prev, approveMsg])
     await saveChatMessage('user', approveMsg.content)
     setPendingPlan(null); setLoading(true); setLastError(null)
+
+    const streamingMsg: Message = { role: 'assistant', content: '' }
+    setMessages(prev => [...prev, streamingMsg])
+
     try {
       const allMsgs = [...messages, approveMsg].map(m => ({ role: m.role, content: m.content }))
-      const data = await callAPI(allMsgs)
+      const data = await callAPI(allMsgs, false, null, (delta) => {
+        streamingMsg.content += delta
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...streamingMsg }
+          return updated
+        })
+      }, (status) => {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...streamingMsg, content: streamingMsg.content + `\n\n⏳ ${status}` }
+          return updated
+        })
+      })
+
       const aiMsg: Message = { role: 'assistant', content: data.message }
-      setMessages(prev => [...prev, aiMsg])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = aiMsg
+        return updated
+      })
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
@@ -343,12 +465,15 @@ export default function ProjectBuilder() {
       } else {
         logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
       }
-      // Refresh project and pages if layout or pages were created
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
       setLastError(err.message)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+        return updated
+      })
       await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, stack: err.stack?.slice(0, 300) })
     }
@@ -368,11 +493,34 @@ export default function ProjectBuilder() {
     const imgToSend = pendingImage
     setPendingImage(null)
 
+    // Add a placeholder assistant message for streaming
+    const streamingMsg: Message = { role: 'assistant', content: '' }
+    setMessages(prev => [...prev, streamingMsg])
+
     try {
       const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }))
-      const data = await callAPI(apiMsgs, false, imgToSend)
+      const data = await callAPI(apiMsgs, false, imgToSend, (delta) => {
+        streamingMsg.content += delta
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...streamingMsg }
+          return updated
+        })
+      }, (status) => {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...streamingMsg, content: streamingMsg.content + `\n\n⏳ ${status}` }
+          return updated
+        })
+      })
+
+      // Replace streaming message with final message
       const aiMsg: Message = { role: 'assistant', content: data.message }
-      setMessages(prev => [...prev, aiMsg])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = aiMsg
+        return updated
+      })
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
@@ -384,7 +532,11 @@ export default function ProjectBuilder() {
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
       setLastError(err.message)
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+        return updated
+      })
       await saveChatMessage('assistant', 'Error: ' + err.message)
       logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
     }
@@ -407,7 +559,7 @@ export default function ProjectBuilder() {
     if (data.url) window.location.href = data.url
   }
 
-  if (!user || !project) return <div style={s.loading}>Loading...</div>
+  if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[#555] font-sans">Loading...</div>
 
   const balanceDisplay = `$${creditBalance.toFixed(2)}`
   const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
@@ -417,105 +569,101 @@ export default function ProjectBuilder() {
   const showRight = !isMobile || mobilePanel === 'preview'
 
   return (
-    <div style={s.root}>
+    <div className="flex flex-col h-screen bg-surface overflow-hidden font-sans">
       {/* TOPBAR */}
-      <div style={s.topbar}>
-        <div style={s.topLeft}>
-          <button onClick={() => router.push('/home')} style={s.backBtn}>← {isMobile ? '' : 'Projects'}</button>
-          {!isMobile && <span style={s.sep}>/</span>}
-          <span style={{ ...s.projectName, maxWidth: isMobile ? 120 : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+      <div className="flex items-center justify-between px-3 h-[50px] border-b border-white/[0.07] bg-surface-1 shrink-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+          <button onClick={() => router.push('/home')} className="px-2.5 py-1 bg-transparent border border-white/[0.08] rounded-md text-[#888] text-xs cursor-pointer shrink-0">← {isMobile ? '' : 'Projects'}</button>
+          {!isMobile && <span className="text-[#333] shrink-0">/</span>}
+          <span className={`text-sm font-medium text-[#f0f0f0] ${isMobile ? 'max-w-[120px]' : ''} overflow-hidden text-ellipsis whitespace-nowrap`}>
             {project.name}
           </span>
         </div>
 
-        {/* Mobile panel toggle */}
         {isMobile ? (
-          <div style={s.mobilePanelToggle}>
-            <button
-              onClick={() => setMobilePanel('chat')}
-              style={{ ...s.mobilePanelBtn, ...(mobilePanel === 'chat' ? s.mobilePanelBtnOn : {}) }}
-            >
-              💬 Chat
+          <div className="flex gap-1 shrink-0">
+            <button onClick={() => setMobilePanel('chat')}
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'chat' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              Chat
             </button>
-            <button
-              onClick={() => setMobilePanel('preview')}
-              style={{ ...s.mobilePanelBtn, ...(mobilePanel === 'preview' ? s.mobilePanelBtnOn : {}) }}
-            >
-              👁 Preview
+            <button onClick={() => setMobilePanel('preview')}
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'preview' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              Preview
             </button>
           </div>
         ) : (
-          <div style={s.topRight}>
+          <div className="flex items-center gap-3 shrink-0">
             {activePage && (
-              <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnOn : {}) }}>
-                {'</>'} {showCode ? 'Hide Code' : 'View Code'}
-              </button>
+              <div className="flex gap-0.5 bg-surface-2 rounded-[7px] border border-white/[0.08] p-0.5">
+                <button onClick={() => setViewMode('preview')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='preview' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Preview</button>
+                <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Code</button>
+                <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Split</button>
+              </div>
             )}
-            <div style={s.balancePill}>
-              <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
-              <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>credits</span>
+            <GitHubConnect projectId={projectId as string} userId={user.id} projectName={project.name} />
+            <DeployButton projectId={projectId as string} userId={user.id} />
+            <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full">
+              <span className="text-[11px] font-semibold" style={{ color: balanceColor }}>{balanceDisplay}</span>
+              <span className="text-[10px] text-[#444] ml-1">credits</span>
             </div>
-            <span style={s.email}>{user.email}</span>
+            <span className="text-[11px] text-[#444]">{user.email}</span>
           </div>
         )}
       </div>
 
       {/* MAIN */}
-      <div style={s.main}>
+      <div className="flex flex-1 overflow-hidden">
         {/* LEFT PANEL */}
-        <div style={{
-          ...s.left,
-          ...(isMobile ? {
-            width: '100%',
-            minWidth: 0,
-            display: showLeft ? 'flex' : 'none',
-            borderRight: 'none',
-          } : {}),
-        }}>
-          <div style={s.tabs}>
-            <button style={{ ...s.tab, ...(sidebarTab==='chat' ? s.tabOn : {}) }} onClick={() => setSidebarTab('chat')}>Chat</button>
-            <button style={{ ...s.tab, ...(sidebarTab==='pages' ? s.tabOn : {}) }} onClick={() => setSidebarTab('pages')}>Pages ({pages.length})</button>
-            {/* Balance pill on mobile chat panel */}
+        <div className={`${isMobile ? 'w-full min-w-0' : 'w-[300px] min-w-[300px] border-r border-white/[0.07]'} flex flex-col bg-surface-1 overflow-hidden ${isMobile && !showLeft ? 'hidden' : ''}`}>
+          <div className="flex border-b border-white/[0.07] shrink-0 items-center">
+            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='chat' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('chat')}>Chat</button>
+            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='pages' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('pages')}>Pages ({pages.length})</button>
             {isMobile && (
-              <div style={{ ...s.balancePill, marginLeft: 'auto', marginRight: 8, alignSelf: 'center' }}>
-                <span style={{ fontSize:11, color: balanceColor, fontWeight:600 }}>{balanceDisplay}</span>
-                <span style={{ fontSize:10, color:'#444', marginLeft:4 }}>cr</span>
+              <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full ml-auto mr-2 self-center">
+                <span className="text-[11px] font-semibold" style={{ color: balanceColor }}>{balanceDisplay}</span>
+                <span className="text-[10px] text-[#444] ml-1">cr</span>
               </div>
             )}
           </div>
 
           {sidebarTab === 'chat' && (
             <>
-              <div style={s.msgs}>
+              <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5">
                 {messages.length === 0 ? (
-                  <div style={s.empty}>
-                    <div style={{ fontSize:28, marginBottom:12 }}>✦</div>
-                    <p style={{ color:'#555', fontSize:13, textAlign:'center', lineHeight:1.6, marginBottom:20 }}>
+                  <div className="flex flex-col items-center justify-center px-2 py-8 flex-1">
+                    <div className="text-[28px] mb-3">✦</div>
+                    <p className="text-[#555] text-[13px] text-center leading-relaxed mb-5">
                       Describe what to build and I'll create it instantly. You can also upload a screenshot for reference.
                     </p>
-                    <div style={s.chips}>
+                    <div className="flex flex-wrap gap-1.5 justify-center">
                       {['Admin dashboard with sidebar', 'Inventory tracker', 'Sales dashboard with charts', 'User management panel'].map(t => (
-                        <button key={t} style={s.chip} onClick={() => setInput(t)}>{t}</button>
+                        <button key={t} className="px-2.5 py-1 bg-surface-3 border border-white/[0.08] rounded-full text-[#666] text-[11px] cursor-pointer" onClick={() => setInput(t)}>{t}</button>
                       ))}
                     </div>
                   </div>
                 ) : (
                   <>
-                    <div style={s.chatActions}>
-                      <button onClick={clearChatHistory} style={s.clearBtn}>Clear history</button>
+                    <div className="flex justify-end mb-1">
+                      <button onClick={clearChatHistory} className="text-[10px] text-[#444] bg-transparent border-none cursor-pointer px-1.5 py-0.5">Clear history</button>
                     </div>
                     {messages.map((msg, i) => (
-                      <div key={i} style={{ ...s.msgRow, ...(msg.role==='user' ? s.msgRight : {}) }}>
-                        <div style={{ ...s.bubble, ...(msg.role==='user' ? s.bubbleUser : msg.isPlan ? s.bubblePlan : s.bubbleAI) }}>
-                          {msg.isPlan && <div style={s.planLabel}>📋 Plan — approve to build</div>}
+                      <div key={i} className={`flex flex-col ${msg.role==='user' ? 'items-end' : ''}`}>
+                        <div className={`max-w-[92%] px-3 py-2 rounded-[10px] ${
+                          msg.role==='user'
+                            ? 'bg-brand text-white'
+                            : msg.isPlan
+                            ? 'bg-brand/[0.07] border border-brand/20 text-[#e0e0e0] max-w-full w-full'
+                            : 'bg-surface-3 border border-white/[0.07] text-[#e0e0e0]'
+                        }`}>
+                          {msg.isPlan && <div className="text-[11px] font-semibold text-[#9d92f5] mb-2 uppercase tracking-wider">Plan — approve to build</div>}
                           {msg.imageUrl && (
-                            <img src={msg.imageUrl} alt="uploaded" style={{ width:'100%', borderRadius:6, marginBottom:8, maxHeight:150, objectFit:'cover' as const }} />
+                            <img src={msg.imageUrl} alt="uploaded" className="w-full rounded-md mb-2 max-h-[150px] object-cover" />
                           )}
-                          <div style={{ whiteSpace:'pre-wrap', fontSize:12.5, lineHeight:1.6 }}>{msg.content}</div>
+                          <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed">{msg.content}</div>
                           {msg.isPlan && pendingPlan && (
-                            <div style={{ display:'flex', gap:8, marginTop:12 }}>
-                              <button onClick={approvePlan} style={s.approveBtn}>✓ Approve & Build</button>
-                              <button onClick={() => setPendingPlan(null)} style={s.reviseBtn}>✕ Revise</button>
+                            <div className="flex gap-2 mt-3">
+                              <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
+                              <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
                             </div>
                           )}
                         </div>
@@ -523,36 +671,40 @@ export default function ProjectBuilder() {
                     ))}
                   </>
                 )}
-                {loading && (
-                  <div style={s.msgRow}>
-                    <div style={{ ...s.bubble, ...s.bubbleAI }}>
-                      <div style={{ display:'flex', gap:5, alignItems:'center' }}>
-                        {[0,1,2].map(i => <span key={i} style={{ ...s.dot, animationDelay:`${i*0.2}s` }} />)}
-                        <span style={{ color:'#555', fontSize:12, marginLeft:4 }}>Building...</span>
+                {loading && messages.length > 0 && messages[messages.length - 1]?.role !== 'assistant' && (
+                  <div className="flex flex-col">
+                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[#e0e0e0]">
+                      <div className="flex gap-1.5 items-center">
+                        {[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-[#444] inline-block animate-bounce" style={{ animationDelay:`${i*0.2}s` }} />)}
+                        <span className="text-[#555] text-xs ml-1">Building...</span>
                       </div>
                     </div>
                   </div>
                 )}
-                {lastError && <div style={s.errBox}><strong>Error:</strong> {lastError}</div>}
+                {lastError && (
+                  <div className="bg-[#a32d2d1f] border border-[#a32d2d40] rounded-lg px-3 py-2 text-xs text-[#f09595]">
+                    <strong>Error:</strong> {lastError}
+                    <button onClick={() => { setLastError(null); sendMessage() }} className="ml-2 px-2 py-0.5 bg-[#a32d2d40] border-none rounded text-[#f09595] text-[11px] cursor-pointer hover:bg-[#a32d2d60]">Retry</button>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Image preview */}
               {pendingImage && (
-                <div style={s.imgPreview}>
-                  <img src={pendingImage.preview} alt="pending" style={{ height:48, width:48, objectFit:'cover' as const, borderRadius:6 }} />
-                  <span style={{ fontSize:11, color:'#888', flex:1 }}>Image attached</span>
-                  <button onClick={() => setPendingImage(null)} style={s.removeImgBtn}>✕</button>
+                <div className="flex items-center gap-2 px-2.5 py-2 bg-surface-3 border-t border-white/[0.06] shrink-0">
+                  <img src={pendingImage.preview} alt="pending" className="h-12 w-12 object-cover rounded-md" />
+                  <span className="text-[11px] text-[#888] flex-1">Image attached</span>
+                  <button onClick={() => setPendingImage(null)} className="bg-transparent border-none text-[#666] cursor-pointer text-xs">✕</button>
                 </div>
               )}
 
-              <div style={s.inputArea}>
-                <div style={s.modeRow}>
-                  <button onClick={() => { setMode('plan'); setPendingPlan(null) }} style={{ ...s.modeBtn, ...(mode==='plan' ? s.modeBtnOn : {}) }}>📋 Plan</button>
-                  <button onClick={() => setMode('build')} style={{ ...s.modeBtn, ...(mode==='build' ? s.modeBtnOn : {}) }}>⚡ Build</button>
-                  <span style={{ flex:1 }} />
-                  <button onClick={() => fileInputRef.current?.click()} style={s.imgBtn} title="Attach image">🖼</button>
-                  <input ref={fileInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handleImageUpload} />
+              <div className="p-2.5 border-t border-white/[0.07] flex flex-col gap-2 shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => { setMode('plan'); setPendingPlan(null) }} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='plan' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Plan</button>
+                  <button onClick={() => setMode('build')} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='build' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Build</button>
+                  <span className="flex-1" />
+                  <button onClick={() => fileInputRef.current?.click()} className="px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-md cursor-pointer text-sm" title="Attach image">🖼</button>
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                 </div>
                 <textarea
                   value={input}
@@ -560,42 +712,42 @@ export default function ProjectBuilder() {
                   onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
                   onPaste={handlePaste}
                   placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
-                  rows={3} style={s.textarea} disabled={loading}
+                  rows={3} className="p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
                 />
-                <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} style={s.sendBtn}>
-                  {loading ? 'Working...' : mode==='plan' ? '📋 Create Plan' : '⚡ Build'}
+                <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
+                  {loading ? 'Working...' : mode==='plan' ? 'Create Plan' : 'Build'}
                 </button>
               </div>
             </>
           )}
 
           {sidebarTab === 'pages' && (
-            <div style={s.pagesPanel}>
-              <div style={{ padding:12 }}>
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-3">
                 {showNewPage ? (
-                  <div style={{ display:'flex', gap:6 }}>
+                  <div className="flex gap-1.5">
                     <input autoFocus value={newPageName} onChange={e => setNewPageName(e.target.value)}
                       onKeyDown={e => { if (e.key==='Enter') createPage(newPageName) }}
-                      placeholder="Page name..." style={s.newInput} />
-                    <button onClick={() => createPage(newPageName)} style={s.addBtn}>Add</button>
-                    <button onClick={() => setShowNewPage(false)} style={s.cancelBtn}>✕</button>
+                      placeholder="Page name..." className="flex-1 px-2.5 py-1.5 bg-surface-3 border border-white/10 rounded-md text-[#f0f0f0] text-[13px] outline-none" />
+                    <button onClick={() => createPage(newPageName)} className="px-3 py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Add</button>
+                    <button onClick={() => setShowNewPage(false)} className="px-2.5 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[#555] text-xs cursor-pointer">✕</button>
                   </div>
                 ) : (
-                  <button onClick={() => setShowNewPage(true)} style={s.newPageBtn}>+ New page</button>
+                  <button onClick={() => setShowNewPage(true)} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#666] text-[13px] cursor-pointer text-left px-3">+ New page</button>
                 )}
               </div>
-              <div style={{ flex:1, overflowY:'auto' }}>
+              <div className="flex-1 overflow-y-auto">
                 {pages.map(page => (
-                  <div key={page.id} style={{ ...s.pageItem, ...(activePage?.id===page.id ? s.pageItemOn : {}) }}>
-                    <div style={{ flex:1, cursor:'pointer' }} onClick={() => {
+                  <div key={page.id} className={`flex items-center px-4 py-2.5 border-b border-white/[0.05] gap-2 ${activePage?.id===page.id ? 'bg-brand/[0.07]' : ''}`}>
+                    <div className="flex-1 cursor-pointer" onClick={() => {
                       setActivePage(page);
                       setSidebarTab('chat');
                       if (isMobile) setMobilePanel('chat');
                     }}>
-                      <div style={{ fontSize:13, fontWeight:500, color:'#f0f0f0' }}>{page.name}</div>
-                      <div style={{ fontSize:11, color:'#444', marginTop:2 }}>{new Date(page.updated_at).toLocaleDateString()}</div>
+                      <div className="text-[13px] font-medium text-[#f0f0f0]">{page.name}</div>
+                      <div className="text-[11px] text-[#444] mt-0.5">{new Date(page.updated_at).toLocaleDateString()}</div>
                     </div>
-                    {pages.length > 1 && <button onClick={() => deletePage(page.id)} style={s.delBtn}>✕</button>}
+                    {pages.length > 1 && <button onClick={() => deletePage(page.id)} className="bg-transparent border-none text-[#333] cursor-pointer text-[11px]">✕</button>}
                   </div>
                 ))}
               </div>
@@ -604,87 +756,101 @@ export default function ProjectBuilder() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div style={{
-          ...s.right,
-          ...(isMobile && !showRight ? { display: 'none' } : {}),
-        }}>
-          <div style={s.previewBar}>
-            {/* Page selector */}
-            <div style={s.pageSelector}>
-              <span style={s.pageSelectorIcon}>⊞</span>
+        <div className={`flex-1 flex flex-col overflow-hidden ${isMobile && !showRight ? 'hidden' : ''}`}>
+          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.07] bg-surface-1 shrink-0">
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-[7px] shrink-0">
+              <span className="text-xs text-[#555]">⊞</span>
               <select
                 value={activePage?.id || ''}
                 onChange={e => {
                   const page = pages.find(p => p.id === e.target.value)
                   if (page) { setActivePage(page); setSidebarTab('chat') }
                 }}
-                style={s.pageSelectorSelect}
+                className="bg-transparent border-none text-[#aaa] text-xs outline-none cursor-pointer max-w-[120px]"
               >
                 {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            {/* URL bar — hidden on mobile to save space */}
             {!isMobile && (
-              <div style={s.urlBar}>
-                <span style={{ color: '#333', userSelect: 'none' as const }}>customaidashboard.com / preview /</span>
-                <span style={{ color: '#666', marginLeft: 6 }}>
+              <div className="flex-1 flex items-center px-3 py-1 bg-surface-2 border border-white/[0.06] rounded-[7px] text-xs overflow-hidden">
+                <span className="text-[#333] select-none">customaidashboard.com / preview /</span>
+                <span className="text-[#666] ml-1.5">
                   {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
                 </span>
               </div>
             )}
-            {/* Code toggle on mobile (replaces top-right) */}
             {isMobile && activePage && (
-              <button onClick={() => setShowCode(!showCode)} style={{ ...s.codeBtn, ...(showCode ? s.codeBtnOn : {}), marginLeft: 'auto' }}>
+              <button onClick={() => setViewMode(viewMode === 'code' ? 'preview' : 'code')} className={`px-3 py-1 rounded-[7px] text-xs cursor-pointer font-mono border ml-auto ${viewMode==='code' ? 'bg-brand/10 border-brand/30 text-[#9d92f5]' : 'bg-transparent border-white/10 text-[#666]'}`}>
                 {'</>'}
               </button>
             )}
-            {/* Open in new tab */}
             {activePage && (
-              <button
-                onClick={() => window.open(`/api/preview/${activePage.id}`, '_blank', 'noopener')}
-                style={s.openBtn}
-                title="Open preview in new tab"
-              >
-                ↗
-              </button>
+              <button onClick={() => window.open(`/api/preview/${activePage.id}`, '_blank', 'noopener')} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Open preview in new tab">↗</button>
             )}
-            <button onClick={() => activePage && renderIframe(activePage.code)} style={s.refreshBtn} title="Refresh preview">↺</button>
+            {activePage && (
+              <button onClick={() => setShowHistory(true)} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Version history">⏱</button>
+            )}
+            <button onClick={() => activePage && renderIframe(activePage.code)} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Refresh preview">↺</button>
           </div>
-          {showCode && activePage ? (
-            <div style={s.codePanel}>
-              <div style={s.codeHeader}>
-                <span style={{ color:'#666', fontSize:12 }}>Source — {activePage.name}</span>
-                <button onClick={() => navigator.clipboard.writeText(activePage.code)} style={s.copyBtn}>Copy</button>
+          {viewMode === 'split' && activePage ? (
+            <div className="flex flex-1 overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.07]">
+                <CodeEditor
+                  code={activePage.code}
+                  pageName={activePage.name}
+                  onChange={(val) => renderIframe(val)}
+                  onSave={(val) => savePage(val, 'manual_edit')}
+                />
               </div>
-              <pre style={s.codeContent}>{activePage.code}</pre>
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+              </div>
             </div>
+          ) : viewMode === 'code' && activePage ? (
+            <CodeEditor
+              code={activePage.code}
+              pageName={activePage.name}
+              onChange={(val) => renderIframe(val)}
+              onSave={(val) => savePage(val, 'manual_edit')}
+            />
           ) : (
-            <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" style={s.iframe} title="preview" />
+            <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
           )}
         </div>
       </div>
 
+      {/* Version History */}
+      {showHistory && activePage && (
+        <VersionHistory
+          pageId={activePage.id}
+          onClose={() => setShowHistory(false)}
+          onPreview={(code) => renderIframe(code)}
+          onRestore={(code) => {
+            savePage(code, 'restore')
+            setShowHistory(false)
+          }}
+        />
+      )}
+
       {/* Buy Credits Modal */}
       {showBuyCredits && (
-        <div style={s.overlay}>
-          <div style={{ ...s.modal, maxWidth: isMobile ? 'calc(100% - 32px)' : 400 }}>
-            <h2 style={s.modalTitle}>Out of credits</h2>
-            <p style={{ color:'#888', fontSize:13, marginBottom:20 }}>Purchase credits to continue building.</p>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
+          <div className={`bg-[#111] border border-white/10 rounded-2xl p-7 w-full flex flex-col gap-3 ${isMobile ? 'max-w-[calc(100%-32px)]' : 'max-w-[400px]'}`}>
+            <h2 className="text-base font-semibold text-[#f0f0f0]">Out of credits</h2>
+            <p className="text-[#888] text-[13px] mb-5">Purchase credits to continue building.</p>
+            <div className="grid grid-cols-2 gap-2.5 mb-4">
               {[{id:'pack_5',label:'$5',desc:'~50 builds'},{id:'pack_10',label:'$10',desc:'~100 builds'},{id:'pack_25',label:'$25',desc:'~250 builds'},{id:'pack_50',label:'$50',desc:'~500 builds'}].map(pack => (
-                <div key={pack.id} style={{ background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:10, padding:14, textAlign:'center' as const }}>
-                  <div style={{ fontSize:20, fontWeight:700, color:'#f0f0f0', marginBottom:4 }}>{pack.label}</div>
-                  <div style={{ fontSize:11, color:'#666', marginBottom:10 }}>{pack.desc}</div>
-                  <button onClick={() => buyCredits(pack.id)} style={{ width:'100%', padding:'7px 0', background:'#7c6ef7', border:'none', borderRadius:6, color:'white', fontSize:12, cursor:'pointer' }}>Buy {pack.label}</button>
+                <div key={pack.id} className="bg-surface-3 border border-white/[0.08] rounded-[10px] p-3.5 text-center">
+                  <div className="text-xl font-bold text-[#f0f0f0] mb-1">{pack.label}</div>
+                  <div className="text-[11px] text-[#666] mb-2.5">{pack.desc}</div>
+                  <button onClick={() => buyCredits(pack.id)} className="w-full py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Buy {pack.label}</button>
                 </div>
               ))}
             </div>
-            <button onClick={() => setShowBuyCredits(false)} style={{ padding:'8px 16px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, color:'#888', fontSize:13, cursor:'pointer' }}>Cancel</button>
+            <button onClick={() => setShowBuyCredits(false)} className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer">Cancel</button>
           </div>
         </div>
       )}
-
-      <style>{`@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}`}</style>
     </div>
   )
 }
@@ -693,75 +859,3 @@ function getStarterCode() {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"><\/script><script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7'}}}}}<\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></head><body class="bg-[#0a0a0a] min-h-screen flex items-center justify-center p-10"><div class="text-center max-w-lg"><div class="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto mb-6"><i class="fa-solid fa-wand-magic-sparkles text-brand text-xl"></i></div><h1 class="text-white text-2xl font-semibold mb-3">Start building</h1><p class="text-white/50 text-sm leading-relaxed mb-8">Use the AI chat on the left to build anything you want.</p><div class="bg-brand/10 border border-brand/20 rounded-xl p-4 text-brand text-sm">Try: "Build an admin dashboard with a sidebar, stats and users table"</div></div></body></html>`
 }
 
-const s: Record<string, React.CSSProperties> = {
-  loading: { display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0a0a0a', color:'#555', fontFamily:'sans-serif' },
-  root: { display:'flex', flexDirection:'column', height:'100vh', background:'#0a0a0a', overflow:'hidden', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' },
-  topbar: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 12px', height:50, borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
-  topLeft: { display:'flex', alignItems:'center', gap:8, minWidth:0, flex:1, overflow:'hidden' },
-  backBtn: { padding:'5px 10px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#888', fontSize:12, cursor:'pointer', flexShrink:0 },
-  sep: { color:'#333', flexShrink:0 },
-  projectName: { fontSize:14, fontWeight:500, color:'#f0f0f0' },
-  topRight: { display:'flex', alignItems:'center', gap:12, flexShrink:0 },
-  mobilePanelToggle: { display:'flex', gap:4, flexShrink:0 },
-  mobilePanelBtn: { padding:'5px 12px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20, color:'#666', fontSize:12, cursor:'pointer', fontWeight:500 },
-  mobilePanelBtnOn: { background:'rgba(124,110,247,0.15)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
-  codeBtn: { padding:'5px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#666', fontSize:12, cursor:'pointer', fontFamily:'monospace' },
-  codeBtnOn: { background:'rgba(124,110,247,0.1)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
-  balancePill: { display:'flex', alignItems:'center', padding:'4px 10px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20 },
-  email: { fontSize:11, color:'#444' },
-  main: { display:'flex', flex:1, overflow:'hidden' },
-  left: { width:300, minWidth:300, display:'flex', flexDirection:'column', borderRight:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', overflow:'hidden' },
-  tabs: { display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0, alignItems:'center' },
-  tab: { flex:1, padding:10, background:'none', border:'none', color:'#444', fontSize:12, cursor:'pointer', fontWeight:500, borderBottom:'2px solid transparent' },
-  tabOn: { color:'#f0f0f0', borderBottom:'2px solid #7c6ef7' },
-  msgs: { flex:1, overflowY:'auto', padding:12, display:'flex', flexDirection:'column', gap:10 },
-  chatActions: { display:'flex', justifyContent:'flex-end', marginBottom:4 },
-  clearBtn: { fontSize:10, color:'#444', background:'none', border:'none', cursor:'pointer', padding:'2px 6px' },
-  empty: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'32px 8px', flex:1 },
-  chips: { display:'flex', flexWrap:'wrap', gap:5, justifyContent:'center' },
-  chip: { padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:20, color:'#666', fontSize:11, cursor:'pointer' },
-  msgRow: { display:'flex', flexDirection:'column' },
-  msgRight: { alignItems:'flex-end' },
-  bubble: { maxWidth:'92%', padding:'9px 12px', borderRadius:10 },
-  bubbleUser: { background:'#7c6ef7', color:'white' },
-  bubbleAI: { background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.07)', color:'#e0e0e0' },
-  bubblePlan: { background:'rgba(124,110,247,0.07)', border:'1px solid rgba(124,110,247,0.2)', color:'#e0e0e0', maxWidth:'100%', width:'100%' },
-  planLabel: { fontSize:11, fontWeight:600, color:'#9d92f5', marginBottom:8, textTransform:'uppercase' as const, letterSpacing:'0.05em' },
-  approveBtn: { padding:'6px 14px', background:'#7c6ef7', border:'none', borderRadius:7, color:'white', fontSize:12, fontWeight:500, cursor:'pointer' },
-  reviseBtn: { padding:'6px 12px', background:'none', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'#666', fontSize:12, cursor:'pointer' },
-  dot: { width:6, height:6, borderRadius:'50%', background:'#444', display:'inline-block', animation:'bounce 1.2s infinite' },
-  errBox: { background:'rgba(163,45,45,0.12)', border:'1px solid rgba(163,45,45,0.25)', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#f09595' },
-  imgPreview: { display:'flex', alignItems:'center', gap:8, padding:'8px 10px', background:'#1a1a1a', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0 },
-  removeImgBtn: { background:'none', border:'none', color:'#666', cursor:'pointer', fontSize:12 },
-  inputArea: { padding:10, borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', flexDirection:'column', gap:8, flexShrink:0 },
-  modeRow: { display:'flex', alignItems:'center', gap:6 },
-  modeBtn: { padding:'4px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#666', fontSize:11, cursor:'pointer', fontWeight:500 },
-  modeBtnOn: { background:'rgba(124,110,247,0.15)', borderColor:'rgba(124,110,247,0.3)', color:'#9d92f5' },
-  imgBtn: { padding:'3px 8px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, cursor:'pointer', fontSize:14 },
-  textarea: { padding:10, background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, color:'#f0f0f0', fontSize:13, resize:'none', outline:'none', lineHeight:1.5 },
-  sendBtn: { padding:9, background:'#7c6ef7', border:'none', borderRadius:8, color:'white', fontSize:13, fontWeight:500, cursor:'pointer' },
-  pagesPanel: { display:'flex', flexDirection:'column', flex:1, overflow:'hidden' },
-  newPageBtn: { width:'100%', padding:8, background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:8, color:'#666', fontSize:13, cursor:'pointer', textAlign:'left' as const },
-  newInput: { flex:1, padding:'7px 10px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, color:'#f0f0f0', fontSize:13, outline:'none' },
-  addBtn: { padding:'7px 12px', background:'#7c6ef7', border:'none', borderRadius:6, color:'white', fontSize:12, cursor:'pointer' },
-  cancelBtn: { padding:'7px 10px', background:'none', border:'1px solid rgba(255,255,255,0.08)', borderRadius:6, color:'#555', fontSize:12, cursor:'pointer' },
-  pageItem: { display:'flex', alignItems:'center', padding:'10px 16px', borderBottom:'1px solid rgba(255,255,255,0.05)', gap:8 },
-  pageItemOn: { background:'rgba(124,110,247,0.07)' },
-  delBtn: { background:'none', border:'none', color:'#333', cursor:'pointer', fontSize:11 },
-  right: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
-  previewBar: { display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
-  pageSelector: { display:'flex', alignItems:'center', gap:6, padding:'3px 8px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.08)', borderRadius:7, flexShrink:0 },
-  pageSelectorIcon: { fontSize:12, color:'#555' },
-  pageSelectorSelect: { background:'none', border:'none', color:'#aaa', fontSize:12, outline:'none', cursor:'pointer', maxWidth:120 },
-  urlBar: { flex:1, display:'flex', alignItems:'center', padding:'4px 12px', background:'#141414', border:'1px solid rgba(255,255,255,0.06)', borderRadius:7, fontSize:12, overflow:'hidden' },
-  openBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
-  refreshBtn: { padding:'4px 10px', background:'none', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#555', cursor:'pointer', fontSize:13, flexShrink:0 },
-  iframe: { flex:1, border:'none', background:'#0a0a0a', width:'100%', height:'100%' },
-  codePanel: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
-  codeHeader: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:'#0f0f0f', flexShrink:0 },
-  copyBtn: { padding:'4px 12px', background:'#1a1a1a', border:'1px solid rgba(255,255,255,0.1)', borderRadius:6, color:'#666', fontSize:12, cursor:'pointer' },
-  codeContent: { flex:1, overflow:'auto', padding:16, fontSize:11.5, lineHeight:1.6, color:'#9d92f5', background:'#0a0a0a', fontFamily:'monospace', whiteSpace:'pre-wrap', wordBreak:'break-all' as const },
-  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:50, padding:16 },
-  modal: { background:'#111', border:'1px solid rgba(255,255,255,0.1)', borderRadius:16, padding:28, width:'100%', maxWidth:400, display:'flex', flexDirection:'column', gap:12 },
-  modalTitle: { fontSize:16, fontWeight:600, color:'#f0f0f0' },
-}
