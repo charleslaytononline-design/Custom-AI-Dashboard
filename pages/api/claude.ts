@@ -320,6 +320,8 @@ RULES:
     res.write(`data: ${JSON.stringify(data)}\n\n`)
   }
 
+  let heartbeat: ReturnType<typeof setInterval> | null = null
+
   try {
     const lastMessage = messages[messages.length - 1]
 
@@ -355,8 +357,6 @@ RULES:
 
     // Send immediate status to prevent early idle timeout
     sendSSE({ type: 'status', text: 'Starting build...' })
-
-    let heartbeat: ReturnType<typeof setInterval> | null = null
 
     // Use streaming API
     const stream = client.messages.stream({
