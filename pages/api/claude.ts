@@ -75,6 +75,33 @@ async function getSettings() {
   }
 }
 
+async function getTrainingRules(userMessage: string) {
+  const { data: rules } = await supabase
+    .from('ai_training_rules')
+    .select('*')
+    .eq('enabled', true)
+    .order('priority', { ascending: false })
+
+  if (!rules || rules.length === 0) return ''
+
+  const matched: string[] = []
+  const msg = userMessage.toLowerCase()
+
+  for (const rule of rules) {
+    if (rule.type === 'global') {
+      matched.push(rule.instructions)
+    } else if (rule.type === 'keyword' && rule.keywords) {
+      const keywords = rule.keywords.split(',').map((k: string) => k.trim().toLowerCase())
+      if (keywords.some((kw: string) => kw && msg.includes(kw))) {
+        matched.push(rule.instructions)
+      }
+    }
+  }
+
+  if (matched.length === 0) return ''
+  return '\n\nAI TRAINING RULES (follow these additional design and behavior instructions carefully):\n' + matched.map((m, i) => `${i + 1}. ${m}`).join('\n')
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
@@ -275,6 +302,11 @@ RULES:
 - Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
 - Build core functionality first — skip decorative extras on large requests.`
 
+  // Inject AI training rules from database
+  const userMsg = messages[messages.length - 1]?.content || ''
+  const trainingRules = await getTrainingRules(typeof userMsg === 'string' ? userMsg : '')
+  const systemWithTraining = system + trainingRules
+
   // Helper to send an SSE event
   function sendSSE(data: object) {
     res.write(`data: ${JSON.stringify(data)}\n\n`)
@@ -298,8 +330,8 @@ RULES:
 
     // If we have a summary of older messages, prepend it as a system-level context
     const contextualSystem = summary
-      ? system + `\n\nCONVERSATION CONTEXT:\n${summary}`
-      : system
+      ? systemWithTraining + `\n\nCONVERSATION CONTEXT:\n${summary}`
+      : systemWithTraining
 
     const apiMessages = [
       ...safeHistory,
@@ -508,7 +540,7 @@ RULES:
             const retryStream = client.messages.stream({
               model: settings.chatModel,
               max_tokens: 16000,
-              system: system + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 8000 tokens. Focus on core functionality only.',
+              system: systemWithTraining + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 8000 tokens. Focus on core functionality only.',
               messages: apiMessages,
             })
 

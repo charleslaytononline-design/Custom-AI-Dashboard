@@ -130,7 +130,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'ai_connections' | 'actions'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'ai_connections' | 'actions' | 'ai_training'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -182,6 +182,15 @@ export default function Admin() {
   const [aiConnectionsSaving, setAiConnectionsSaving] = useState(false)
   const [aiConnectionsMsg, setAiConnectionsMsg] = useState('')
 
+  // AI Training state
+  interface TrainingRule { id: string; type: 'global' | 'keyword'; keywords: string | null; instructions: string; enabled: boolean; priority: number; created_at: string }
+  const [trainingRules, setTrainingRules] = useState<TrainingRule[]>([])
+  const [showNewRule, setShowNewRule] = useState(false)
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
+  const [ruleForm, setRuleForm] = useState({ type: 'global' as 'global' | 'keyword', keywords: '', instructions: '', priority: 0 })
+  const [trainingSaving, setTrainingSaving] = useState(false)
+  const [trainingMsg, setTrainingMsg] = useState('')
+
   // Actions tab state
   const [actionsUserSearch, setActionsUserSearch] = useState('')
   const [actionsAuthData, setActionsAuthData] = useState<Array<{ id: string; email: string; email_confirmed_at: string | null; created_at: string; last_sign_in_at: string | null }>>([])
@@ -198,6 +207,7 @@ export default function Admin() {
 
   useEffect(() => {
     if (activeTab === 'actions') loadActionsData()
+    if (activeTab === 'ai_training') loadTrainingRules()
   }, [activeTab])
 
   useEffect(() => {
@@ -237,6 +247,36 @@ export default function Admin() {
     setAiConnectionsSaving(false)
     setAiConnectionsMsg('Saved! Changes apply to the next build.')
     setTimeout(() => setAiConnectionsMsg(''), 4000)
+  }
+
+  async function loadTrainingRules() {
+    const res = await fetch('/api/admin/ai-training')
+    const data = await res.json()
+    if (data.rules) setTrainingRules(data.rules)
+  }
+
+  async function saveTrainingRule() {
+    setTrainingSaving(true)
+    setTrainingMsg('')
+    const method = editingRuleId ? 'PUT' : 'POST'
+    const body = editingRuleId ? { id: editingRuleId, ...ruleForm } : ruleForm
+    const res = await fetch('/api/admin/ai-training', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const data = await res.json()
+    if (data.error) { setTrainingMsg('Error: ' + data.error) }
+    else { setTrainingMsg(editingRuleId ? '✓ Rule updated' : '✓ Rule created'); setShowNewRule(false); setEditingRuleId(null); setRuleForm({ type: 'global', keywords: '', instructions: '', priority: 0 }); loadTrainingRules() }
+    setTrainingSaving(false)
+    setTimeout(() => setTrainingMsg(''), 4000)
+  }
+
+  async function deleteTrainingRule(id: string) {
+    if (!confirm('Delete this training rule?')) return
+    await fetch('/api/admin/ai-training', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    loadTrainingRules()
+  }
+
+  async function toggleTrainingRule(id: string, enabled: boolean) {
+    await fetch('/api/admin/ai-training', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, enabled }) })
+    loadTrainingRules()
   }
 
   async function loadActionsData() {
@@ -649,9 +689,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_connections', 'actions'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_connections', 'ai_training', 'actions'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_connections' ? 'AI Connections' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_connections' ? 'AI Connections' : tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1677,6 +1717,120 @@ export default function Admin() {
           </div>
         )
       })()}
+      {/* AI TRAINING TAB */}
+      {activeTab === 'ai_training' && (
+        <div style={{ ...s.section, padding: isMobile ? '12px 16px 24px' : '16px 28px 28px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+            <div>
+              <h3 style={s.sectionTitle}>AI Training Rules</h3>
+              <p style={{ fontSize: 12, color: '#666', marginTop: -8, marginBottom: 0 }}>
+                These rules are injected into the AI's system prompt to control how it builds pages.<br/>
+                <strong>Global</strong> rules always apply. <strong>Keyword</strong> rules activate when the user's prompt contains matching words.
+              </p>
+            </div>
+            <button onClick={() => { setShowNewRule(true); setEditingRuleId(null); setRuleForm({ type: 'global', keywords: '', instructions: '', priority: 0 }) }}
+              style={{ padding: '8px 16px', background: '#7c6ef7', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+              + Add Rule
+            </button>
+          </div>
+
+          {trainingMsg && <div style={{ padding: '8px 12px', background: trainingMsg.startsWith('Error') ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${trainingMsg.startsWith('Error') ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}`, borderRadius: 7, color: trainingMsg.startsWith('Error') ? '#f87171' : '#34d399', fontSize: 12, marginBottom: 12 }}>{trainingMsg}</div>}
+
+          {/* New / Edit Rule Form */}
+          {(showNewRule || editingRuleId) && (
+            <div style={{ background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: '0 0 auto' }}>
+                  <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Type</label>
+                  <select value={ruleForm.type} onChange={e => setRuleForm(f => ({ ...f, type: e.target.value as any }))}
+                    style={{ padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12 }}>
+                    <option value="global">Global (always active)</option>
+                    <option value="keyword">Keyword (triggered by words)</option>
+                  </select>
+                </div>
+                {ruleForm.type === 'keyword' && (
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Keywords (comma separated)</label>
+                    <input value={ruleForm.keywords} onChange={e => setRuleForm(f => ({ ...f, keywords: e.target.value }))}
+                      placeholder="landing page, landing, homepage"
+                      style={{ width: '100%', padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none' }} />
+                  </div>
+                )}
+                <div style={{ flex: '0 0 80px' }}>
+                  <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Priority</label>
+                  <input type="number" value={ruleForm.priority} onChange={e => setRuleForm(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))}
+                    style={{ width: '100%', padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none' }} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Instructions (what to tell the AI)</label>
+                <textarea value={ruleForm.instructions} onChange={e => setRuleForm(f => ({ ...f, instructions: e.target.value }))}
+                  rows={5}
+                  placeholder="Example: Always create stunning hero sections with gradient text, animated hover effects, professional imagery, and clear visual hierarchy..."
+                  style={{ width: '100%', padding: '10px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={saveTrainingRule} disabled={trainingSaving || !ruleForm.instructions.trim()}
+                  style={{ padding: '8px 20px', background: trainingSaving ? '#555' : '#7c6ef7', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: trainingSaving ? 'default' : 'pointer', fontWeight: 500 }}>
+                  {trainingSaving ? 'Saving...' : editingRuleId ? 'Update Rule' : 'Create Rule'}
+                </button>
+                <button onClick={() => { setShowNewRule(false); setEditingRuleId(null) }}
+                  style={{ padding: '8px 16px', background: '#1a1a1a', color: '#999', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Rules List */}
+          {trainingRules.length === 0 && !showNewRule && (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#555', fontSize: 13 }}>
+              No training rules yet. Click "Add Rule" to teach the AI how to build better pages.
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {trainingRules.map(rule => (
+              <div key={rule.id} style={{ background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '14px 16px', opacity: rule.enabled ? 1 : 0.5 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, letterSpacing: '0.05em',
+                        background: rule.type === 'global' ? 'rgba(124,110,247,0.15)' : 'rgba(59,130,246,0.15)',
+                        color: rule.type === 'global' ? '#9d92f5' : '#60a5fa' }}>
+                        {rule.type.toUpperCase()}
+                      </span>
+                      {rule.type === 'keyword' && rule.keywords && rule.keywords.split(',').map((kw, i) => (
+                        <span key={i} style={{ padding: '2px 6px', borderRadius: 4, fontSize: 10, background: 'rgba(255,255,255,0.06)', color: '#aaa' }}>
+                          {kw.trim()}
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 10, color: '#444' }}>Priority: {rule.priority}</span>
+                    </div>
+                    <p style={{ fontSize: 12, color: '#ccc', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                      {rule.instructions.length > 200 ? rule.instructions.slice(0, 200) + '...' : rule.instructions}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                    <button onClick={() => toggleTrainingRule(rule.id, !rule.enabled)}
+                      style={{ padding: '4px 10px', background: rule.enabled ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)', border: '1px solid ' + (rule.enabled ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.08)'), borderRadius: 5, fontSize: 10, color: rule.enabled ? '#34d399' : '#666', cursor: 'pointer' }}>
+                      {rule.enabled ? 'ON' : 'OFF'}
+                    </button>
+                    <button onClick={() => { setEditingRuleId(rule.id); setShowNewRule(false); setRuleForm({ type: rule.type, keywords: rule.keywords || '', instructions: rule.instructions, priority: rule.priority }) }}
+                      style={{ padding: '4px 10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, fontSize: 10, color: '#888', cursor: 'pointer' }}>
+                      Edit
+                    </button>
+                    <button onClick={() => deleteTrainingRule(rule.id)}
+                      style={{ padding: '4px 10px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 5, fontSize: 10, color: '#f87171', cursor: 'pointer' }}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ACTIONS TAB */}
       {activeTab === 'actions' && (() => {
         const filtered = actionsAuthData.filter(u =>
