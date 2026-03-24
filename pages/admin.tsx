@@ -35,6 +35,7 @@ interface UserRow {
   role: string
   suspended: boolean
   credit_balance: number
+  gift_balance: number
   created_at: string
   plan_id?: string | null
   projectCount?: number
