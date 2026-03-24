@@ -72,6 +72,9 @@ export default function Dashboard() {
     if (activePage) renderIframe(activePage.code)
   }, [activePage])
 
+  // Re-render iframe when code view is closed (iframe remounts empty)
+  useEffect(() => { if (!showCode && activePage) renderIframe(activePage.code) }, [showCode])
+
   async function loadPages(userId: string) {
     const { data } = await supabase.from('pages').select('*').eq('user_id', userId).order('updated_at', { ascending: false })
     if (data && data.length > 0) { setPages(data); setActivePage(data[0]) }

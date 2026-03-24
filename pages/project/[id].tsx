@@ -95,6 +95,9 @@ export default function ProjectBuilder() {
   // Re-render iframe when project loads or layout changes
   useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project, activePage, renderIframe])
 
+  // Re-render iframe when code view is closed (iframe remounts empty)
+  useEffect(() => { if (!showCode && activePage) renderIframe(activePage.code) }, [showCode])
+
   // Listen for page navigation messages from the iframe
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
