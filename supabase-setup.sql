@@ -23,6 +23,7 @@ create table projects (
   user_id uuid references auth.users(id) on delete cascade not null,
   name text not null default 'My Project',
   description text default '',
+  layout_code text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

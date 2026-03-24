@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../../lib/supabase'
 import { useMobile } from '../../hooks/useMobile'
+import { composePage } from '../../lib/composePage'
 
 interface Page { id: string; name: string; code: string; updated_at: string }
 interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
@@ -52,20 +53,19 @@ export default function ProjectBuilder() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  const renderIframe = useCallback((code: string) => {
+  const renderIframe = useCallback((code: string, pageNameOverride?: string) => {
     if (!iframeRef.current) return
-    // Inject a nav guard so generated <a href="..."> links don't navigate the
-    // iframe to real app routes (which would load the project builder inside the preview).
-    // - Hash links (#section) → smoothly scroll to the element, no navigation
-    // - External http(s) links → open in new tab
-    // - Same-origin path links → blocked entirely
-    // - history.pushState/replaceState → neutralised
-    // allow-same-origin is kept so Alpine.js, localStorage etc. work normally.
+    const layout = project?.layout_code || null
+    const pName = pageNameOverride || activePage?.name || 'Page'
+    const composed = composePage(layout, code, pages, pName, projectId as string)
+
     const guard = `<script>
 (function(){
   document.addEventListener('click', function(e) {
     var a = e.target && e.target.closest ? e.target.closest('a') : null;
     if (!a) return;
+    // data-page links are handled by composePage nav script
+    if (a.hasAttribute('data-page')) return;
     var href = a.getAttribute('href') || '';
     if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
     e.preventDefault();
@@ -77,7 +77,6 @@ export default function ProjectBuilder() {
     } else if (href.startsWith('http://') || href.startsWith('https://')) {
       window.open(href, '_blank', 'noopener,noreferrer');
     }
-    // all other links (same-origin paths) are silently blocked
   }, true);
   try {
     var _push = history.pushState.bind(history);
@@ -87,16 +86,26 @@ export default function ProjectBuilder() {
   } catch(e){}
 })();
 <\/script>`
-    const injected = code.replace(/(<head[^>]*>)/i, '$1' + guard)
-    iframeRef.current.srcdoc = injected || code
-  }, [])
+    const injected = composed.replace(/(<head[^>]*>)/i, '$1' + guard)
+    iframeRef.current.srcdoc = injected || composed
+  }, [project?.layout_code, pages, activePage?.name, projectId])
 
-  useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage])
+  useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage, renderIframe])
 
-  // Re-render iframe when project loads — the iframe isn't in the DOM during the
-  // initial "Loading..." state, so if activePage was set before project arrived the
-  // first renderIframe call silently did nothing (iframeRef.current was null).
-  useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project])
+  // Re-render iframe when project loads or layout changes
+  useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project, activePage, renderIframe])
+
+  // Listen for page navigation messages from the iframe
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === 'navigate' && e.data.page) {
+        const target = pages.find(p => p.name === e.data.page)
+        if (target) setActivePage(target)
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [pages])
 
   // Load chat history when page changes
   useEffect(() => {
@@ -144,7 +153,17 @@ export default function ProjectBuilder() {
 
   async function loadPages() {
     const { data } = await supabase.from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
-    if (data && data.length > 0) { setPages(data); setActivePage(data[0]) }
+    if (data && data.length > 0) {
+      setPages(data)
+      // Keep the current active page if it still exists, otherwise default to first
+      setActivePage(prev => {
+        if (prev) {
+          const updated = data.find(p => p.id === prev.id)
+          if (updated) return updated
+        }
+        return data[0]
+      })
+    }
   }
 
   async function createPage(name: string) {
@@ -316,12 +335,13 @@ export default function ProjectBuilder() {
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
-        // On mobile, switch to preview after a successful build
         if (isMobile) setMobilePanel('preview')
       } else {
-        // No code returned — the server already logged this, but also log client-side for full trace
         logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
       }
+      // Refresh project and pages if layout or pages were created
+      if (data.layoutUpdated) await loadProject()
+      if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])
@@ -352,11 +372,12 @@ export default function ProjectBuilder() {
       await saveChatMessage('assistant', data.message)
       if (data.code) {
         await savePage(data.code)
-        // On mobile, switch to preview after a successful build
         if (isMobile) setMobilePanel('preview')
       } else {
         logEvent('builder_error', 'error', `sendMessage build returned no code: ${data.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
       }
+      if (data.layoutUpdated) await loadProject()
+      if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
       setLastError(err.message)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }])

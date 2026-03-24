@@ -126,47 +126,83 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
 
+  // Fetch project layout_code
+  let layoutCode: string | null = null
+  if (projectId) {
+    const { data: proj } = await supabase.from('projects').select('layout_code').eq('id', projectId).single()
+    layoutCode = proj?.layout_code || null
+  }
+
+  const hasLayout = !!layoutCode
+
   const system = planOnly
     ? `You are an AI app builder. The user wants to build something on a page called "${pageName}".
 Write a clear bullet-point plan of what you will build. No code. Max 12 bullet points.
+If the request involves multiple pages, list which pages you'll create and what each contains.
 Respond in plain text only.`
     : `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
 
-PAGE: "${pageName || 'My Page'}"
-OTHER PAGES: ${pageList}
+PROJECT PAGES: ${pageList}
+CURRENT PAGE: "${pageName || 'My Page'}"
+${hasLayout ? `PROJECT HAS SHARED LAYOUT: Yes (sidebar + topbar are provided automatically)` : `PROJECT HAS SHARED LAYOUT: No (this is a new project or legacy project)`}
 
 CURRENT PAGE CODE:
 \`\`\`html
 ${pageCode || '<!-- empty page -->'}
 \`\`\`
+${hasLayout ? `
+CURRENT LAYOUT:
+\`\`\`html
+${layoutCode}
+\`\`\`` : ''}
+
+MULTI-PAGE APP SYSTEM:
+This builder supports real multi-page apps. Each page in the project is a separate file with its own code.
+A shared LAYOUT (sidebar + topbar) is stored at the project level and automatically wraps every page.
+
+PAGE CREATION — to create new pages, output <CREATE_PAGE> tags BEFORE the CODE block:
+<CREATE_PAGE>Dashboard</CREATE_PAGE>
+<CREATE_PAGE>Leads</CREATE_PAGE>
+<CREATE_PAGE>Settings</CREATE_PAGE>
+Create pages when the user asks for a multi-page app or when features need their own page.
+The current build will apply to the CURRENT PAGE ("${pageName}"). Other new pages start empty.
+
+LAYOUT — to create or update the shared sidebar/topbar, output a <LAYOUT> tag BEFORE the CODE block:
+<LAYOUT>
+<aside class="fixed left-0 top-0 h-screen w-56 bg-[#0f0f0f] border-r border-white/[0.06] flex flex-col z-40">
+  <div class="p-4 border-b border-white/[0.06] flex items-center gap-2.5">
+    <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-xs font-bold">AI</div>
+    <span class="text-white font-semibold text-sm">App Name</span>
+  </div>
+  <nav class="flex-1 p-2 space-y-0.5">
+    <a data-page="Dashboard" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+      <i class="fa-solid fa-gauge w-4 text-center text-xs"></i><span>Dashboard</span>
+    </a>
+    <a data-page="Leads" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+      <i class="fa-solid fa-users w-4 text-center text-xs"></i><span>Leads</span>
+    </a>
+  </nav>
+</aside>
+<header class="fixed top-0 left-56 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.06] flex items-center justify-between px-6 z-30">
+  <h1 class="text-white font-medium text-sm">${pageName}</h1>
+</header>
+</LAYOUT>
+
+LAYOUT RULES:
+- Use data-page="PageName" on nav links — the platform handles page switching automatically
+- Do NOT use href for page links. data-page triggers real page navigation.
+- Include an icon (Font Awesome) + label for each nav item
+- The layout is injected automatically — do NOT include sidebar/topbar in your CODE block
+- ${hasLayout ? 'A layout already exists. Only output <LAYOUT> if the user asks to change navigation or add pages.' : 'This project has no layout yet. Generate a <LAYOUT> tag on this first build.'}
 
 IMAGE GENERATION CAPABILITY:
-You can generate real AI images using Flux when users need images in their pages.
-When you need an image, output a special tag BEFORE the CODE block:
-
-<GENERATE_IMAGE>detailed description of the image needed, be very specific about style, content, colors, mood</GENERATE_IMAGE>
+Generate real AI images using Flux. Output BEFORE the CODE block:
+<GENERATE_IMAGE>detailed prompt — be specific about style, content, colors, mood, cinematic quality</GENERATE_IMAGE>
 <IMAGE_PLACEHOLDER><!-- IMAGE_WILL_BE_INSERTED_HERE --></IMAGE_PLACEHOLDER>
-
-Then in your CODE, use this exact placeholder where the image should appear:
-<img src="__GENERATED_IMAGE_URL__" alt="description" class="..." />
-
-The platform will automatically generate the image with Flux AI and replace __GENERATED_IMAGE_URL__ with the real URL.
-
-When to generate images:
-- Hero sections needing a visual (robots, tech, business, people, landscapes)
-- Product mockups or illustrations
-- Background images
-- Any time the user asks for a specific image or visual
-- When the current code has a boring placeholder div where an image should be
-
-For the image prompt, be extremely detailed and specific:
-BAD: "AI robot"
-GOOD: "Photorealistic glowing cyan AI humanoid robot, transparent body showing circuit patterns, standing in front of multiple holographic screens showing data, dark background with teal ambient lighting, cinematic quality, 8k resolution"
+In CODE: <img src="__GENERATED_IMAGE_URL__" alt="description" class="..." />
 
 DATABASE CAPABILITY:
-You can create real persistent database tables when users need data that persists across sessions.
-You can create MULTIPLE tables in a single build — output one <CREATE_TABLE> tag per table, all BEFORE the CODE block.
-
+Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the CODE block:
 <CREATE_TABLE>
 {"name":"table_name","columns":[
   {"name":"id","type":"uuid","primaryKey":true},
@@ -177,16 +213,9 @@ You can create MULTIPLE tables in a single build — output one <CREATE_TABLE> t
 </CREATE_TABLE>
 
 Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
+Rules: Always include id (uuid, primaryKey) + created_at (timestamptz, default now()). Use text[] for arrays, jsonb for nested data.
 
-IMPORTANT RULES FOR TABLES:
-- Always include an "id" column with "primaryKey":true and type "uuid" — it auto-generates
-- Always include "created_at" with type "timestamptz" and default "now()"
-- For arrays (e.g. interested_products, tagged_user_ids), use "text[]"
-- For complex/nested data or metadata, use "jsonb"
-- Table names must be lowercase with underscores only
-- Create ALL tables needed for the feature in one build — you can output multiple <CREATE_TABLE> tags
-
-Then in your CODE, use fetch('/api/db') with PROJECT_ID:
+In your CODE, use this pattern for database access:
 <script>
 const PROJECT_ID = '__PROJECT_ID__'
 async function dbQuery(table, action, data) {
@@ -194,91 +223,48 @@ async function dbQuery(table, action, data) {
     body: JSON.stringify({projectId: PROJECT_ID, table, action, data})})
   return r.json()
 }
-// select: await dbQuery('leads', 'select')  → {data:[...]}
-// insert: await dbQuery('leads', 'insert', {name:'John', email:'j@j.com', tags:['hot','new']})
-// update: await dbQuery('leads', 'update', {id:'uuid', status:'done'})
-// delete: await dbQuery('leads', 'delete', {id:'uuid'})
 </script>
+Use real DB for: forms, CRM records, orders. Use localStorage for: UI state, config, display preferences.
 
-Use real DB for: forms, CRM records, orders — anything submitted by users that must persist.
-Use localStorage for: UI state, config, read-only display data.
-
-INSTRUCTIONS:
-Return your response in this exact format:
-
-<MESSAGE>Brief description of what you built or changed</MESSAGE>
+RESPONSE FORMAT:
+Output special tags first (<CREATE_PAGE>, <LAYOUT>, <CREATE_TABLE>, <GENERATE_IMAGE>) then:
+<MESSAGE>Brief description of what you built</MESSAGE>
 <CODE>
-<!DOCTYPE html>
-... complete HTML page here ...
-</html>
+${hasLayout ? '<!-- Page content only — layout is automatic -->' : '<!DOCTYPE html>\\n... complete HTML page ...\\n</html>'}
 </CODE>
 
-STACK — always include ALL of these:
+${hasLayout ? `IMPORTANT — CONTENT-ONLY MODE:
+Since this project has a shared layout, your CODE block should contain ONLY the page content.
+Do NOT include <!DOCTYPE html>, <html>, <head>, <body>, sidebar, or topbar.
+The layout wraps your content automatically inside <main class="ml-56 mt-14 min-h-screen">.
+Your CODE starts directly with the page content (divs, sections, etc).
+Include <script> tags for Alpine.js data and dbQuery if needed.` : `FULL PAGE MODE:
+This project has no layout yet. Output a complete <!DOCTYPE html> document.
+Include all CDN scripts in <head>. Include sidebar and topbar in <body>.
+STACK — always include:
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7',dark:'#5b50d6'}}}}}</script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">`}
 
-DESIGN:
-- Page bg: #0a0a0a
-- Cards: bg-[#141414] border border-white/[0.08] rounded-xl p-5
-- Sidebar: fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] z-40
-- Topbar: fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] z-30 flex items-center px-6
-- Main: ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]
-- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors cursor-pointer
-- Inputs: bg-[#1e1e1e] border border-white/[0.1] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-brand/60
-- Table: bg-[#141414] border border-white/[0.08] rounded-xl overflow-hidden
-- Green badge: bg-emerald-500/10 text-emerald-400 text-xs px-2.5 py-0.5 rounded-full font-medium
-- Red badge: bg-red-500/10 text-red-400 text-xs px-2.5 py-0.5 rounded-full font-medium
-- Sidebar nav inactive: text-white/50 hover:text-white hover:bg-white/[0.05]
-- Sidebar nav active: bg-brand/10 text-brand
-
-ALPINE SIDEBAR PATTERN:
-<div x-data="app()" x-init="init()">
-  <aside class="fixed left-0 top-0 h-screen w-60 bg-[#0f0f0f] border-r border-white/[0.08] flex flex-col z-40">
-    <div class="p-4 border-b border-white/[0.08] flex items-center gap-2.5">
-      <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-sm font-bold">A</div>
-      <span class="text-white font-semibold text-sm">My App</span>
-    </div>
-    <nav class="flex-1 p-2 space-y-0.5">
-      <div @click="section='dashboard'" :class="section==='dashboard'?'bg-brand/10 text-brand':'text-white/50 hover:text-white hover:bg-white/[0.05]'" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-all">
-        <i class="fa-solid fa-gauge w-4 text-center"></i><span>Dashboard</span>
-      </div>
-    </nav>
-  </aside>
-  <header class="fixed top-0 left-60 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.08] flex items-center justify-between px-6 z-30">
-    <h1 class="text-white font-medium text-sm" x-text="section.charAt(0).toUpperCase()+section.slice(1)"></h1>
-  </header>
-  <main class="ml-60 pt-14 p-6 min-h-screen bg-[#0a0a0a]">
-    <div x-show="section==='dashboard'">...</div>
-  </main>
-</div>
-<script>
-function app() {
-  return {
-    section: 'dashboard',
-    items: [],
-    init() {
-      this.items = JSON.parse(localStorage.getItem('items') || '[]')
-      this.$watch('items', v => localStorage.setItem('items', JSON.stringify(v)))
-    }
-  }
-}
-</script>
+DESIGN SYSTEM:
+- Page bg: #0a0a0a | Cards: bg-[#141414] border border-white/[0.06] rounded-xl p-5
+- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium
+- Inputs: bg-[#1e1e1e] border border-white/[0.08] rounded-lg px-3 py-2 text-white text-sm
+- Tables: bg-[#141414] border border-white/[0.06] rounded-xl overflow-hidden
+- Badges: bg-emerald-500/10 text-emerald-400 (green) | bg-red-500/10 text-red-400 (red) | bg-amber-500/10 text-amber-400 (yellow)
+- Empty states: centered icon + message + action button
+- Loading: skeleton with animate-pulse bg-white/5
+- Use Alpine.js x-data for page state, Alpine.store for shared app state
 
 RULES:
-- Output ONLY the XML format — nothing before MESSAGE or after CODE closing tag
-- Always output COMPLETE HTML document
-- Use Tailwind classes only
-- Every button must work
-- Persist data to localStorage
+- Output ONLY the XML format — nothing before tags or after CODE closing tag
+- Use Tailwind classes only — no inline styles
+- Every button must be functional
 - Keep ALL existing features when updating
-- When generating images, make the prompt extremely detailed and cinematic
-- CRITICAL: Keep your total HTML output under 12,000 tokens. This is a hard limit — do not exceed it.
-- Write concise, clean HTML. No inline comments, no verbose spacing, no decorative placeholder text blocks.
-- Build focused pages. If the request is large, build the core functionality — skip decorative extras.
-- Do NOT repeat boilerplate (sidebar, topbar) more than once. Use Alpine.js x-show for multiple sections.
-- Avoid long placeholder lorem ipsum text — use 1–2 word labels only.`
+- CRITICAL: Keep HTML output under 12,000 tokens
+- Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
+- Build core functionality first — skip decorative extras on large requests.`
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -386,6 +372,37 @@ RULES:
       }
     }
 
+    // Handle <LAYOUT> tag — save shared layout to project
+    const layoutMatch = raw.match(/<LAYOUT>([\s\S]*?)<\/LAYOUT>/i)
+    if (layoutMatch && projectId && !planOnly) {
+      const newLayout = layoutMatch[1].trim()
+      await supabase.from('projects').update({ layout_code: newLayout }).eq('id', projectId)
+    }
+
+    // Handle <CREATE_PAGE> tags — create new pages in the project
+    const createPageMatches = raw.matchAll(/<CREATE_PAGE>([\s\S]*?)<\/CREATE_PAGE>/gi)
+    const newPages: string[] = []
+    for (const match of [...createPageMatches]) {
+      const newPageName = match[1].trim()
+      if (!newPageName) continue
+      // Check if page already exists
+      const existingNames = (allPages || []).map((p: any) => p.name.toLowerCase())
+      if (existingNames.includes(newPageName.toLowerCase())) continue
+      // Don't create a page with the same name as the current page
+      if (newPageName.toLowerCase() === (pageName || '').toLowerCase()) continue
+      newPages.push(newPageName)
+    }
+    if (newPages.length > 0 && projectId && !planOnly) {
+      for (const name of newPages) {
+        await supabase.from('pages').insert({
+          project_id: projectId,
+          user_id: userId,
+          name,
+          code: `<!-- Page: ${name} — build this page next -->`,
+        })
+      }
+    }
+
     // If image generation failed, replace the placeholder with a dark grey fallback
     // so the page renders cleanly instead of showing a broken image icon
     const imageFallback = generatedImageUrl
@@ -476,6 +493,8 @@ RULES:
       userCharge,
       imageGenerated: !!generatedImageUrl,
       newBalance: updatedProfile?.credit_balance || 0,
+      layoutUpdated: !!layoutMatch,
+      pagesCreated: newPages,
     })
   } catch (err: any) {
     // Log the exception with full details
