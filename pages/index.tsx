@@ -70,7 +70,7 @@ export default function Login() {
       } else {
         log('login_success', 'info', `Login successful`, email, { email })
         const { data: { user } } = await supabase.auth.getUser()
-        if (user) supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id)
+        if (user) await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id)
         router.push('/home')
       }
     }
