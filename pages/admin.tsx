@@ -48,6 +48,7 @@ interface UserRow {
   lastActive?: string
   lastLogin?: string
   giftedCredits?: number
+  giftUsed?: number
 }
 
 interface Plan {
@@ -143,6 +144,7 @@ export default function Admin() {
   const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
   const [totalGifted, setTotalGifted] = useState(0)
+  const [totalGiftUsed, setTotalGiftUsed] = useState(0)
 
   // Clients DB status
   const [clientsDbStatus, setClientsDbStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -467,6 +469,13 @@ export default function Admin() {
       }
     })
 
+    // Calculate how much gifted credit has been used per user
+    let globalGiftUsed = 0
+    Object.keys(giftedAmounts).forEach(uid => {
+      globalGiftUsed += Math.min(tokenSpend[uid] || 0, giftedAmounts[uid] || 0)
+    })
+    setTotalGiftUsed(globalGiftUsed)
+
     setUsers(profiles.map((p: any) => ({
       ...p,
       projectCount: projectCounts[p.id] || 0,
@@ -480,6 +489,7 @@ export default function Admin() {
       lastActive: lastActive[p.id] || null,
       lastLogin: p.last_login || null,
       giftedCredits: giftedAmounts[p.id] || 0,
+      giftUsed: Math.min(tokenSpend[p.id] || 0, giftedAmounts[p.id] || 0),
     })))
   }
 
@@ -508,7 +518,7 @@ export default function Admin() {
     setTotalRevenue(revenue)
     setTotalApiCost(anthropicTotal + replicateTotal)
     setTotalGifted(giftTotal)
-    setTotalProfit(revenue - anthropicTotal - replicateTotal - giftTotal)
+    setTotalProfit(revenue - anthropicTotal - replicateTotal)
     setAnthropicCostTotal(anthropicTotal)
     setReplicateCostTotal(replicateTotal)
   }
@@ -638,7 +648,8 @@ export default function Admin() {
   }
 
   const isMobile = useMobile()
-  const margin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : '0'
+  const actualProfit = totalProfit - totalGiftUsed
+  const margin = totalRevenue > 0 ? ((actualProfit / totalRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
   if (loading) return <div style={s.loadingInner}>Loading...</div>
@@ -661,8 +672,8 @@ export default function Admin() {
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
-          <div style={{ ...s.statVal, color: '#5DCAA5' }}>${totalProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{totalGifted > 0 ? ` · -$${totalGifted.toFixed(2)} gifts` : ''}</div>
+          <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
+          <div style={s.statSub}>{margin}% margin{totalGiftUsed > 0 ? ` · -$${totalGiftUsed.toFixed(2)} gift loss` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -676,8 +687,8 @@ export default function Admin() {
         </div>
         <div style={{ ...s.statCard, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fbbf24' }}>Gifted Credits</div>
-          <div style={{ ...s.statVal, color: '#fbbf24' }}>${totalGifted.toFixed(2)}</div>
-          <div style={s.statSub}>given to users for free</div>
+          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 20 }}>${totalGifted.toFixed(2)} <span style={{ color: '#888', fontSize: 14 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
+          <div style={s.statSub}>gifted / used</div>
         </div>
       </div>
       <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
@@ -780,7 +791,7 @@ export default function Admin() {
                     <td style={s.td}><span style={{ ...s.num, color: '#2dd4bf' }}>${(u.replicateCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.tokenCount || 0).toLocaleString()}</span></td>
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
-                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0)).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastLogin)}</span></td>
                     <td style={s.td}>
