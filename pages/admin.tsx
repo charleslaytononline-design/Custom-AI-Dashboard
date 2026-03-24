@@ -141,6 +141,7 @@ export default function Admin() {
   const [totalProfit, setTotalProfit] = useState(0)
   const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
+  const [totalGifted, setTotalGifted] = useState(0)
 
   // Clients DB status
   const [clientsDbStatus, setClientsDbStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -488,7 +489,7 @@ export default function Admin() {
   async function loadRevenue() {
     const { data } = await supabase.from('transactions').select('amount, api_cost, type, description')
     if (!data) return
-    let revenue = 0, anthropicTotal = 0, replicateTotal = 0
+    let revenue = 0, anthropicTotal = 0, replicateTotal = 0, giftTotal = 0
     data.forEach((t: any) => {
       if (t.type === 'usage') {
         revenue += Math.abs(t.amount)
@@ -496,10 +497,12 @@ export default function Admin() {
         if (isImage) replicateTotal += (t.api_cost || 0)
         else anthropicTotal += (t.api_cost || 0)
       }
+      if (t.type === 'gift') giftTotal += Math.abs(t.amount)
     })
     setTotalRevenue(revenue)
     setTotalApiCost(anthropicTotal + replicateTotal)
-    setTotalProfit(revenue - anthropicTotal - replicateTotal)
+    setTotalGifted(giftTotal)
+    setTotalProfit(revenue - anthropicTotal - replicateTotal - giftTotal)
     setAnthropicCostTotal(anthropicTotal)
     setReplicateCostTotal(replicateTotal)
   }
@@ -644,7 +647,7 @@ export default function Admin() {
       </div>
 
       {/* REVENUE STATS */}
-      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', marginBottom: 12 }}>
+      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', marginBottom: 12 }}>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Revenue</div>
           <div style={s.statVal}>${totalRevenue.toFixed(2)}</div>
@@ -653,7 +656,7 @@ export default function Admin() {
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
           <div style={{ ...s.statVal, color: '#5DCAA5' }}>${totalProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin · {settings.markup_multiplier}x markup</div>
+          <div style={s.statSub}>{margin}% margin{totalGifted > 0 ? ` · -$${totalGifted.toFixed(2)} gifts` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -664,6 +667,11 @@ export default function Admin() {
           <div style={s.statLabel}>Credits Held</div>
           <div style={s.statVal}>${users.reduce((a, u) => a + (u.credit_balance || 0), 0).toFixed(2)}</div>
           <div style={s.statSub}>across all users</div>
+        </div>
+        <div style={{ ...s.statCard, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.05)' }}>
+          <div style={{ ...s.statLabel, color: '#fbbf24' }}>Gifted Credits</div>
+          <div style={{ ...s.statVal, color: '#fbbf24' }}>${totalGifted.toFixed(2)}</div>
+          <div style={s.statSub}>given to users for free</div>
         </div>
       </div>
       <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
