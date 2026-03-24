@@ -69,6 +69,8 @@ export default function Login() {
         log('login_failure', 'warn', `Login failed: ${loginError.message}`, email, { email, error: loginError.message })
       } else {
         log('login_success', 'info', `Login successful`, email, { email })
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id)
         router.push('/home')
       }
     }

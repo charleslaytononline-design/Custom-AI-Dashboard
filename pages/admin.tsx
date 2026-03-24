@@ -46,6 +46,7 @@ interface UserRow {
   anthropicCost?: number
   replicateCost?: number
   lastActive?: string
+  lastLogin?: string
 }
 
 interface Plan {
@@ -471,6 +472,7 @@ export default function Admin() {
       anthropicCost: anthropicCosts[p.id] || 0,
       replicateCost: replicateCosts[p.id] || 0,
       lastActive: lastActive[p.id] || null,
+      lastLogin: p.last_login || null,
     })))
   }
 
@@ -618,7 +620,7 @@ export default function Admin() {
 
   function formatDate(iso: string | null | undefined) {
     if (!iso) return '—'
-    return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   function getPlanName(planId: string | null | undefined) {
@@ -721,6 +723,7 @@ export default function Admin() {
                   <th style={s.th}>Images</th>
                   <th style={s.th}>Profit</th>
                   <th style={s.th}>Last Active</th>
+                  <th style={s.th}>Last Login</th>
                   <th style={s.th}>Status</th>
                   <th style={s.th}>Actions</th>
                 </tr>
@@ -763,6 +766,7 @@ export default function Admin() {
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0)).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
+                    <td style={s.td}><span style={s.num}>{formatDate(u.lastLogin)}</span></td>
                     <td style={s.td}>
                       {u.email === OWNER_EMAIL
                         ? <span style={{ ...s.badge, ...s.badgeGreen }}>Active</span>
