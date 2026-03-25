@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Layout from '../components/Layout'
-import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../lib/welcomeConfig'
 import { useMobile } from '../hooks/useMobile'
 
 interface Project {
@@ -23,7 +22,6 @@ export default function Dashboard() {
   const [showNew, setShowNew] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
-  const [projectType, setProjectType] = useState<'react' | 'html'>('react')
   const [creating, setCreating] = useState(false)
   const [limitMsg, setLimitMsg] = useState<string | null>(null)
 
@@ -78,68 +76,33 @@ export default function Dashboard() {
 
     setCreating(true)
 
-    if (projectType === 'react') {
-      // Use the new scaffolding API for React projects
-      try {
-        const res = await fetch('/api/projects/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.id,
-            name: newName.trim(),
-            description: newDesc.trim(),
-            projectType: 'react',
-          }),
-        })
-        const result = await res.json()
-        if (res.ok && result.project) {
-          fetch('/api/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event_type: 'project_created',
-              severity: 'info',
-              message: `New React project created: "${result.project.name}"`,
-              email: user.email,
-              metadata: { project_id: result.project.id, project_name: result.project.name, user_id: user.id, project_type: 'react' },
-            }),
-          }).catch(() => {})
-          router.push(`/project/${result.project.id}`)
-        }
-      } catch {}
-    } else {
-      // Legacy HTML project creation
-      let starterCode: string
-      try {
-        const { data: cfgRow } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
-        const cfg = cfgRow?.value ? JSON.parse(cfgRow.value) : DEFAULT_WELCOME_CONFIG
-        starterCode = generateWelcomeHtml(cfg)
-      } catch {
-        starterCode = generateWelcomeHtml(DEFAULT_WELCOME_CONFIG)
-      }
-
-      const { data, error } = await supabase.from('projects').insert({
-        user_id: user.id, name: newName.trim(), description: newDesc.trim(), project_type: 'html',
-      }).select().single()
-
-      if (!error && data) {
-        await supabase.from('pages').insert({
-          project_id: data.id, user_id: user.id, name: 'Home', code: starterCode,
-        })
+    try {
+      const res = await fetch('/api/projects/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          name: newName.trim(),
+          description: newDesc.trim(),
+          projectType: 'react',
+        }),
+      })
+      const result = await res.json()
+      if (res.ok && result.project) {
         fetch('/api/log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             event_type: 'project_created',
             severity: 'info',
-            message: `New project created: "${data.name}"`,
+            message: `New project created: "${result.project.name}"`,
             email: user.email,
-            metadata: { project_id: data.id, project_name: data.name, user_id: user.id, project_type: 'html' },
+            metadata: { project_id: result.project.id, project_name: result.project.name, user_id: user.id, project_type: 'react' },
           }),
         }).catch(() => {})
-        router.push(`/project/${data.id}`)
+        router.push(`/project/${result.project.id}`)
       }
-    }
+    } catch {}
     setCreating(false)
   }
 
@@ -258,35 +221,6 @@ export default function Dashboard() {
           <div style={{ ...s.modal, maxWidth: isMobile ? 'calc(100% - 32px)' : 400 }}>
             <h2 style={s.modalTitle}>New project</h2>
             <div style={s.field}>
-              <label style={s.label}>Project type</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={() => setProjectType('react')}
-                  style={{
-                    flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                    border: projectType === 'react' ? '2px solid #7c6ef7' : '1px solid rgba(255,255,255,0.08)',
-                    background: projectType === 'react' ? 'rgba(124,110,247,0.1)' : '#1a1a1a',
-                    color: projectType === 'react' ? '#7c6ef7' : '#888',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>React App</div>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Full-stack with components</div>
-                </button>
-                <button
-                  onClick={() => setProjectType('html')}
-                  style={{
-                    flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: 'pointer',
-                    border: projectType === 'html' ? '2px solid #7c6ef7' : '1px solid rgba(255,255,255,0.08)',
-                    background: projectType === 'html' ? 'rgba(124,110,247,0.1)' : '#1a1a1a',
-                    color: projectType === 'html' ? '#7c6ef7' : '#888',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, marginBottom: 2 }}>HTML Page</div>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Simple single-page tool</div>
-                </button>
-              </div>
-            </div>
-            <div style={s.field}>
               <label style={s.label}>Project name</label>
               <input
                 autoFocus
@@ -302,7 +236,7 @@ export default function Dashboard() {
               <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What will you build?" style={s.input} />
             </div>
             <div style={s.modalActions}>
-              <button onClick={() => { setShowNew(false); setNewName(''); setNewDesc(''); setProjectType('react') }} style={s.cancelBtn}>Cancel</button>
+              <button onClick={() => { setShowNew(false); setNewName(''); setNewDesc('') }} style={s.cancelBtn}>Cancel</button>
               <button onClick={createProject} disabled={creating || !newName.trim()} style={s.createBtn}>
                 {creating ? 'Creating...' : 'Create Project'}
               </button>

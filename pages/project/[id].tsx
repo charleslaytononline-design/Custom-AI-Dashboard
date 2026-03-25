@@ -196,11 +196,9 @@ export default function ProjectBuilder() {
   async function loadProject() {
     const { data } = await supabase.from('projects').select('*').eq('id', projectId).eq('user_id', user.id).single()
     if (!data) { router.push('/home'); return }
-    // Redirect React projects to the React builder
-    if (data.project_type === 'react') {
-      router.replace(`/project/${projectId}/react-builder`)
-      return
-    }
+    // Always use the React builder
+    router.replace(`/project/${projectId}/react-builder`)
+    return
     setProject(data)
     // Load shared code for this project
     const { data: sc } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
