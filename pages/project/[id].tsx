@@ -36,6 +36,9 @@ export default function ProjectBuilder() {
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [autoFixAttempts, setAutoFixAttempts] = useState(0)
+  const [isAutoFixing, setIsAutoFixing] = useState(false)
+  const MAX_AUTO_FIX_ATTEMPTS = 2
   // Mobile: which panel is visible ('chat' or 'preview')
   const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('preview')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -66,6 +69,32 @@ export default function ProjectBuilder() {
     const pName = pageNameOverride || activePage?.name || 'Page'
     const composed = composePage(layout, code, pages, pName, projectId as string)
 
+    const errorCatcher = `<script>
+(function(){
+  var errors = [];
+  var timer = null;
+  function report() {
+    if (errors.length === 0) return;
+    var batch = errors.splice(0, 5);
+    window.parent.postMessage({ type: 'iframe-error', errors: batch }, '*');
+  }
+  function collect(err) {
+    errors.push(err);
+    clearTimeout(timer);
+    timer = setTimeout(report, 1000);
+  }
+  window.onerror = function(msg, source, line, col, error) {
+    collect({ message: String(msg), source: source || '', line: line, col: col, stack: error && error.stack ? error.stack.slice(0, 500) : '' });
+  };
+  window.addEventListener('unhandledrejection', function(e) {
+    var reason = e.reason;
+    var msg = reason instanceof Error ? reason.message : String(reason);
+    var stack = reason instanceof Error && reason.stack ? reason.stack.slice(0, 500) : '';
+    collect({ message: 'Unhandled Promise Rejection: ' + msg, stack: stack });
+  });
+})();
+<\/script>`
+
     const guard = `<script>
 (function(){
   document.addEventListener('click', function(e) {
@@ -93,7 +122,7 @@ export default function ProjectBuilder() {
   } catch(e){}
 })();
 <\/script>`
-    const injected = composed.replace(/(<head[^>]*>)/i, '$1' + guard)
+    const injected = composed.replace(/(<head[^>]*>)/i, '$1' + errorCatcher + guard)
     iframeRef.current.srcdoc = injected || composed
   }, [project?.layout_code, pages, activePage?.name, projectId])
 
@@ -105,12 +134,18 @@ export default function ProjectBuilder() {
   // Re-render iframe when code view is closed (iframe remounts empty)
   useEffect(() => { if (viewMode !== 'code' && activePage) renderIframe(activePage.code) }, [viewMode])
 
-  // Listen for page navigation messages from the iframe
+  // Ref to always access latest handleIframeErrors without re-registering listener
+  const handleIframeErrorsRef = useRef<(errors: any[]) => void>(() => {})
+
+  // Listen for page navigation + iframe error messages
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (e.data?.type === 'navigate' && e.data.page) {
         const target = pages.find(p => p.name === e.data.page)
         if (target) setActivePage(target)
+      }
+      if (e.data?.type === 'iframe-error' && e.data.errors?.length > 0) {
+        handleIframeErrorsRef.current(e.data.errors)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -120,6 +155,7 @@ export default function ProjectBuilder() {
   // Load chat history when page changes
   useEffect(() => {
     if (activePage && user) loadChatHistory(activePage.id)
+    setAutoFixAttempts(0)
   }, [activePage?.id])
 
   async function loadProfile(userId: string) {
@@ -285,6 +321,7 @@ export default function ProjectBuilder() {
     image?: { base64: string, mediaType: string } | null,
     onDelta?: (text: string) => void,
     onStatus?: (text: string) => void,
+    isAutoFix = false,
   ) {
     const payload: any = {
       messages: msgs,
@@ -294,6 +331,7 @@ export default function ProjectBuilder() {
       planOnly,
       userId: user?.id,
       projectId,
+      isAutoFix,
     }
 
     if (image) {
@@ -499,9 +537,89 @@ export default function ProjectBuilder() {
     return '🤔 Thinking...'
   }
 
+  // Auto-fix iframe runtime errors by sending them to Claude
+  async function handleIframeErrors(errors: Array<{message: string, source?: string, line?: number, col?: number, stack?: string}>) {
+    if (loading || isAutoFixing) return
+    if (autoFixAttempts >= MAX_AUTO_FIX_ATTEMPTS) return
+    if (!activePage?.code) return
+
+    // Filter out noise: CDN/framework errors, cross-origin script errors
+    const realErrors = errors.filter(e => {
+      const msg = (e.message || '').toLowerCase()
+      if (msg.includes('script error') && !e.source) return false
+      if (msg.includes('tailwind')) return false
+      if (msg.includes('alpine')) return false
+      if (msg.includes('favicon')) return false
+      return true
+    })
+    if (realErrors.length === 0) return
+
+    const errorSummary = realErrors.map(e => {
+      let s = e.message
+      if (e.line) s += ` (line ${e.line}${e.col ? ':' + e.col : ''})`
+      if (e.stack) s += `\nStack: ${e.stack}`
+      return s
+    }).join('\n---\n')
+
+    const attemptNum = autoFixAttempts + 1
+    setIsAutoFixing(true)
+    setAutoFixAttempts(attemptNum)
+
+    const statusMsg: Message = { role: 'assistant', content: `Auto-fixing error (attempt ${attemptNum}/${MAX_AUTO_FIX_ATTEMPTS})...` }
+    setMessages(prev => [...prev, statusMsg])
+
+    try {
+      const fixPrompt = `The code you generated has runtime JavaScript errors. Fix ONLY the errors — do not change the design or functionality.\n\nErrors:\n${errorSummary}`
+      const apiMsgs = [{ role: 'user' as const, content: fixPrompt }]
+      setLoading(true)
+
+      let rawAccumulator = ''
+      const data = await callAPI(apiMsgs, false, null, (delta) => {
+        rawAccumulator += delta
+        const status = getBuildStatus(rawAccumulator)
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: `Auto-fixing: ${status}` }
+          return updated
+        })
+      }, undefined, true)
+
+      const aiMsg: Message = { role: 'assistant', content: data.message || 'Auto-fix applied.' }
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = aiMsg
+        return updated
+      })
+      await saveChatMessage('assistant', `[Auto-fix] ${data.message || 'Fixed runtime error.'}`)
+
+      if (data.code) {
+        await savePage(data.code)
+        if (isMobile) setMobilePanel('preview')
+      }
+      logEvent('auto_fix', 'info', `Auto-fix attempt ${attemptNum} completed`, {
+        pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300), success: !!data.code,
+      })
+    } catch (err: any) {
+      setMessages(prev => {
+        const updated = [...prev]
+        updated[updated.length - 1] = { role: 'assistant', content: `Auto-fix failed: ${err.message}` }
+        return updated
+      })
+      logEvent('auto_fix_error', 'error', `Auto-fix failed: ${err.message}`, {
+        pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300),
+      })
+    }
+    setLoading(false)
+    setIsAutoFixing(false)
+  }
+
+  // Keep the ref in sync so the postMessage listener always calls the latest version
+  handleIframeErrorsRef.current = handleIframeErrors
+
   async function sendMessage() {
     if ((!input.trim() && !pendingImage) || loading || !activePage) return
     if (mode === 'plan') { getPlan(); return }
+    setAutoFixAttempts(0)
 
     const msgContent = input || (pendingImage ? '(sent an image)' : '')
     const userMsg: Message = { role: 'user', content: msgContent, imageUrl: pendingImage?.preview }

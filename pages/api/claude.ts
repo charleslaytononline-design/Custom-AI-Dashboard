@@ -105,7 +105,7 @@ async function getTrainingRules(userMessage: string) {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0 } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false } = req.body
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
@@ -314,7 +314,10 @@ RULES:
   // Inject AI training rules from database
   const userMsg = messages[messages.length - 1]?.content || ''
   const trainingRules = await getTrainingRules(typeof userMsg === 'string' ? userMsg : '')
-  const systemWithTraining = system + trainingRules
+  const autoFixAddendum = isAutoFix
+    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors in the current page code. Fix ONLY the bug — do not redesign, restructure, or add new features. Return the complete fixed page code in <CODE> tags and a brief description of the fix in <MESSAGE> tags. Keep changes minimal — change as few lines as possible.`
+    : ''
+  const systemWithTraining = system + trainingRules + autoFixAddendum
 
   // Helper to send an SSE event
   function sendSSE(data: object) {

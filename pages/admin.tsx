@@ -1267,6 +1267,8 @@ export default function Admin() {
           builder_error:   'Builder Error',
           api_error:       'API Error',
           credits_error:   'Credits Error',
+          auto_fix:        'Auto-Fix',
+          auto_fix_error:  'Auto-Fix Error',
         }
 
         const filteredLogs = logs.filter(l => {
@@ -1285,6 +1287,7 @@ export default function Admin() {
           form_typing: '#888', payment_success: '#f0a952', project_created: '#2dd4bf',
           console_error: '#f09595', unhandled_error: '#f09595',
           builder_error: '#f09595', api_error: '#f09595', credits_error: '#f0a952',
+          auto_fix: '#60a5fa', auto_fix_error: '#f09595',
         }
 
         return (
@@ -1321,6 +1324,58 @@ export default function Admin() {
                 ))}
               </div>
             </div>
+
+            {/* Auto-Fix Logs */}
+            {(() => {
+              const autoFixLogs = logs.filter(l => l.event_type === 'auto_fix' || l.event_type === 'auto_fix_error')
+              return (
+                <div style={{ ...s.settingsCard, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Auto-Fix Logs</h3>
+                      <p style={{ fontSize: 11, color: '#555' }}>Tracks when the builder auto-detects iframe JS errors and attempts to fix them via Claude.</p>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#444' }}>{autoFixLogs.length} events</span>
+                  </div>
+                  {autoFixLogs.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#444', fontSize: 12, background: '#0a0a0a', borderRadius: 8 }}>No auto-fix events yet</div>
+                  ) : (
+                    <div style={{ maxHeight: 300, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                      <table style={s.table}>
+                        <thead>
+                          <tr style={s.thead}>
+                            <th style={s.th}>Time</th>
+                            <th style={s.th}>Result</th>
+                            <th style={s.th}>Email</th>
+                            <th style={s.th}>Page</th>
+                            <th style={s.th}>Message</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {autoFixLogs.map(log => (
+                            <tr key={log.id} style={s.tr}>
+                              <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </td>
+                              <td style={s.td}>
+                                <span style={{ ...s.badge, background: log.event_type === 'auto_fix' ? 'rgba(96,165,250,0.12)' : 'rgba(163,45,45,0.12)', color: log.event_type === 'auto_fix' ? '#60a5fa' : '#f09595' }}>
+                                  {log.event_type === 'auto_fix' ? 'Fixed' : 'Failed'}
+                                </span>
+                              </td>
+                              <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                              <td style={s.td}><span style={{ fontSize: 12, color: '#9d92f5' }}>{(log.metadata as any)?.pageName || '—'}</span></td>
+                              <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Log viewer */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
