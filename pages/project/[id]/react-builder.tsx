@@ -218,7 +218,7 @@ export default function ReactBuilder() {
               fileOps.push({ action: event.action, path: event.path })
               setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
               // Highlight recently changed files
-              setRecentlyChanged(prev => new Set([...prev, event.path]))
+              setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
               setTimeout(() => {
                 setRecentlyChanged(prev => { const next = new Set(prev); next.delete(event.path); return next })
               }, 3000)
