@@ -175,6 +175,7 @@ export default function Admin() {
   const [continuationTriggered, setContinuationTriggered] = useState(0)
   const [continuationCompleted, setContinuationCompleted] = useState(0)
   const [continuationFailed, setContinuationFailed] = useState(0)
+  const [continuationCommands, setContinuationCommands] = useState(0)
 
   // Clients DB status
   const [clientsDbStatus, setClientsDbStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -577,6 +578,7 @@ export default function Admin() {
     setContinuationTriggered(contTriggered)
     setContinuationCompleted(contCompleted)
     setContinuationFailed(contFailed)
+    setContinuationCommands(contCompleted + contFailed)
   }
 
   async function saveSettings() {
@@ -791,6 +793,8 @@ export default function Admin() {
           <div style={{ ...s.statLabel, color: '#fb923c' }}>Continuations</div>
           <div style={{ ...s.statVal, color: '#fb923c', fontSize: 18 }}>
             {continuationTriggered} <span style={{ color: '#888', fontSize: 13 }}>triggered</span>
+            {' / '}
+            <span style={{ color: '#60a5fa' }}>{continuationCommands}</span> <span style={{ color: '#888', fontSize: 13 }}>commands</span>
             {' / '}
             <span style={{ color: '#f87171' }}>{continuationFailed}</span> <span style={{ color: '#888', fontSize: 13 }}>failed</span>
             {' / '}
