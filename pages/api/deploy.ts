@@ -18,6 +18,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .from('projects').select('*').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
+  const vercelToken = process.env.VERCEL_DEPLOY_TOKEN
+  if (!vercelToken) {
+    return res.status(500).json({ error: 'Deployment not configured. Set VERCEL_DEPLOY_TOKEN in environment.' })
+  }
+
   // --- REACT PROJECT DEPLOYMENT ---
   if (project.project_type === 'react') {
     const { data: files } = await supabase
@@ -85,11 +90,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .single()
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
-  const vercelToken = process.env.VERCEL_DEPLOY_TOKEN
-
-  if (!vercelToken) {
-    return res.status(500).json({ error: 'Deployment not configured. Set VERCEL_DEPLOY_TOKEN in environment.' })
-  }
 
   try {
     // Build the deployment files
