@@ -625,15 +625,16 @@ RULES:
       return
     }
 
-    // Parse response
+    // Parse response — for continuations, prepend prior parts so extraction sees the full output
+    const fullRaw = (isContinuation && partialRaw) ? partialRaw + raw : raw
     let message = 'Done!'
     let code: string | null = null
 
     if (planOnly) {
-      message = raw
+      message = fullRaw
     } else {
-      const messageMatch = raw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
-      const codeMatch = raw.match(/<CODE>([\s\S]*?)<\/CODE>/)
+      const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
+      const codeMatch = fullRaw.match(/<CODE>([\s\S]*?)<\/CODE>/)
 
       if (messageMatch && codeMatch) {
         message = messageMatch[1].trim()
@@ -645,11 +646,11 @@ RULES:
           code = code.replace(/__PROJECT_ID__/g, projectId)
         }
       } else {
-        const htmlMatch = raw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
+        const htmlMatch = fullRaw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
         if (htmlMatch) {
           code = htmlMatch[0]
         } else {
-          const mdMatch = raw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
+          const mdMatch = fullRaw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
           if (mdMatch) code = mdMatch[1]
         }
         if (generatedImageUrl && code) {
