@@ -367,6 +367,22 @@ export default function ProjectBuilder() {
         })
       } catch (networkErr: any) {
         if (networkErr.name === 'AbortError') throw new Error('__USER_STOPPED__')
+        // If this was a continuation, record the accumulated cost as failed
+        if (continuationCount > 0 && accumulatedApiCost > 0) {
+          try {
+            await fetch('/api/record-failed-build', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: basePayload.userId,
+                pageName: basePayload.pageName,
+                errorMessage: 'Network error during continuation',
+                estimatedCost: accumulatedApiCost,
+                continuationCount,
+              }),
+            })
+          } catch (_) {}
+        }
         throw new Error('The builder timed out. Try a simpler request or try again.')
       }
 
@@ -457,7 +473,25 @@ export default function ProjectBuilder() {
         continue // goes back to the while(true) loop for another fetch
       }
 
-      if (!result) throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
+      if (!result) {
+        // Backend didn't send a terminal event — record the failure since the server couldn't
+        if (accumulatedApiCost > 0) {
+          try {
+            await fetch('/api/record-failed-build', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: basePayload.userId,
+                pageName: basePayload.pageName,
+                errorMessage: 'Build interrupted - no terminal event received',
+                estimatedCost: accumulatedApiCost,
+                continuationCount,
+              }),
+            })
+          } catch (_) {}
+        }
+        throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
+      }
       if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
       return result
     }
