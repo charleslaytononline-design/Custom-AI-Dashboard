@@ -417,10 +417,12 @@ RULES:
           userId, pageName, elapsed, partialChars: raw.length, continuationCount, estimatedPartialCost: partialCost,
         })
         // Record continuation event in transactions for tracking
-        await supabase.from('transactions').insert({
-          user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
-          type: 'continuation', description: `Build continuation part ${continuationCount + 1}: ${pageName}`,
-        }).catch(() => {}) // don't let tracking failure block the continuation
+        try {
+          await supabase.from('transactions').insert({
+            user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
+            type: 'continuation', description: `Build continuation part ${continuationCount + 1}: ${pageName}`,
+          })
+        } catch (_) {} // don't let tracking failure block the continuation
 
         sendSSE({ type: 'continue', partialRaw: (partialRaw || '') + raw, continuationCount: continuationCount + 1, accumulatedApiCost: newAccumulatedCost })
         res.end()
