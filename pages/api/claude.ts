@@ -632,7 +632,7 @@ RULES:
     const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
 
     // Replace all image placeholders in code (numbered + legacy)
-    function replaceImagePlaceholders(html: string): string {
+    const replaceImagePlaceholders = (html: string): string => {
       // Replace numbered placeholders: __GENERATED_IMAGE_1__, __GENERATED_IMAGE_2__, etc.
       generatedImageUrls.forEach((url, i) => {
         const placeholder = `__GENERATED_IMAGE_${i + 1}__`
