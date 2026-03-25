@@ -323,7 +323,7 @@ export default function ProjectBuilder() {
     onStatus?: (text: string) => void,
     isAutoFix = false,
   ) {
-    const payload: any = {
+    const basePayload: any = {
       messages: msgs,
       pageCode: activePage?.code,
       pageName: activePage?.name,
@@ -335,90 +335,119 @@ export default function ProjectBuilder() {
     }
 
     if (image) {
-      payload.imageBase64 = image.base64
-      payload.imageMediaType = image.mediaType
+      basePayload.imageBase64 = image.base64
+      basePayload.imageMediaType = image.mediaType
     }
 
-    let fetchRes: Response
-    try {
-      fetchRes = await fetch('/api/claude', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-    } catch (networkErr: any) {
-      throw new Error('The builder timed out. Try a simpler request or try again.')
-    }
-
-    const contentType = fetchRes.headers.get('content-type') || ''
-
-    // Non-streaming error responses (pre-flight checks return JSON)
-    if (contentType.includes('application/json')) {
-      const data = await fetchRes.json()
-      if (data.error === 'insufficient_credits') {
-        setShowBuyCredits(true)
-        logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
-        throw new Error(data.message || 'Insufficient credits')
-      }
-      if (data.error === 'build_limit_reached') {
-        setShowBuyCredits(true)
-        logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
-        throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
-      }
-      if (data.error) {
-        logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
-        throw new Error(data.error)
-      }
-      if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
-      return data
-    }
-
-    // SSE streaming response
-    if (!contentType.includes('text/event-stream')) {
-      throw new Error('The build timed out or the server encountered an error. Try a simpler request or try again.')
-    }
-
-    const reader = fetchRes.body?.getReader()
-    if (!reader) throw new Error('Failed to read stream')
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let result: any = null
+    // Continuation loop — handles automatic re-triggering when the server hits its time limit
+    let continuationCount = 0
+    let accumulatedPartialRaw = ''
+    const MAX_CONTINUATIONS = 3
 
     while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+      const payload = { ...basePayload }
+      if (continuationCount > 0) {
+        payload.isContinuation = true
+        payload.partialRaw = accumulatedPartialRaw
+        payload.continuationCount = continuationCount
+      }
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+      let fetchRes: Response
+      try {
+        fetchRes = await fetch('/api/claude', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      } catch (networkErr: any) {
+        throw new Error('The builder timed out. Try a simpler request or try again.')
+      }
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        try {
-          const event = JSON.parse(line.slice(6))
-          if (event.type === 'delta' && onDelta) {
-            onDelta(event.text)
-          } else if (event.type === 'status' && onStatus) {
-            onStatus(event.text)
-          } else if (event.type === 'done') {
-            result = event
-          } else if (event.type === 'error') {
-            if (event.error === 'insufficient_credits') {
-              setShowBuyCredits(true)
-              throw new Error(event.message || 'Insufficient credits')
+      const contentType = fetchRes.headers.get('content-type') || ''
+
+      // Non-streaming error responses (pre-flight checks return JSON)
+      if (contentType.includes('application/json')) {
+        const data = await fetchRes.json()
+        if (data.error === 'insufficient_credits') {
+          setShowBuyCredits(true)
+          logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
+          throw new Error(data.message || 'Insufficient credits')
+        }
+        if (data.error === 'build_limit_reached') {
+          setShowBuyCredits(true)
+          logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
+          throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
+        }
+        if (data.error) {
+          logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
+          throw new Error(data.error)
+        }
+        if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
+        return data
+      }
+
+      // SSE streaming response
+      if (!contentType.includes('text/event-stream')) {
+        throw new Error('The build timed out or the server encountered an error. Try a simpler request or try again.')
+      }
+
+      const reader = fetchRes.body?.getReader()
+      if (!reader) throw new Error('Failed to read stream')
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let result: any = null
+      let shouldContinue = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6))
+            if (event.type === 'delta' && onDelta) {
+              onDelta(event.text)
+            } else if (event.type === 'status' && onStatus) {
+              onStatus(event.text)
+            } else if (event.type === 'done') {
+              result = event
+            } else if (event.type === 'continue') {
+              // Server hit its time limit — accumulate partial and auto-continue
+              accumulatedPartialRaw = event.partialRaw || ''
+              continuationCount = event.continuationCount || (continuationCount + 1)
+              shouldContinue = true
+              if (onStatus) onStatus(`⏳ Build continuing (part ${continuationCount + 1})...`)
+            } else if (event.type === 'error') {
+              if (event.error === 'insufficient_credits') {
+                setShowBuyCredits(true)
+                throw new Error(event.message || 'Insufficient credits')
+              }
+              throw new Error(event.error || event.message || 'Build failed')
             }
-            throw new Error(event.error || event.message || 'Build failed')
+          } catch (parseErr: any) {
+            if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
           }
-        } catch (parseErr: any) {
-          if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
         }
       }
-    }
 
-    if (!result) throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
-    if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
-    return result
+      // If we received a 'continue' event, loop back for another API call
+      if (shouldContinue) {
+        if (continuationCount >= MAX_CONTINUATIONS) {
+          throw new Error('Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.')
+        }
+        continue // goes back to the while(true) loop for another fetch
+      }
+
+      if (!result) throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
+      if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
+      return result
+    }
   }
 
   async function getPlan() {
@@ -465,6 +494,7 @@ export default function ProjectBuilder() {
 
   async function approvePlan() {
     if (!pendingPlan) return
+    const buildStartTime = Date.now()
     const approveMsg: Message = { role: 'user', content: 'Plan approved. Build it now exactly as planned.' }
     setMessages(prev => [...prev, approveMsg])
     await saveChatMessage('user', approveMsg.content)
@@ -521,7 +551,12 @@ export default function ProjectBuilder() {
         return updated
       })
       await saveChatMessage('assistant', 'Error: ' + errDetail)
-      logEvent('builder_error', 'error', `approvePlan failed: ${err.message}`, { pageName: activePage?.name, projectId, phase, stack: err.stack?.slice(0, 300) })
+      const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
+      logEvent('builder_error', 'error', `approvePlan failed after ${elapsedSec}s: ${err.message}`, {
+        pageName: activePage?.name, projectId, phase, elapsedSeconds: elapsedSec,
+        partialResponseChars: rawAccumulator.length, userPromptPreview: pendingPlan?.slice(0, 200),
+        stack: err.stack?.slice(0, 300),
+      })
     }
     setLoading(false)
   }
@@ -620,6 +655,7 @@ export default function ProjectBuilder() {
     if ((!input.trim() && !pendingImage) || loading || !activePage) return
     if (mode === 'plan') { getPlan(); return }
     setAutoFixAttempts(0)
+    const buildStartTime = Date.now()
 
     const msgContent = input || (pendingImage ? '(sent an image)' : '')
     const userMsg: Message = { role: 'user', content: msgContent, imageUrl: pendingImage?.preview }
@@ -683,7 +719,11 @@ export default function ProjectBuilder() {
         return updated
       })
       await saveChatMessage('assistant', 'Error: ' + errDetail)
-      logEvent('builder_error', 'error', `sendMessage failed: ${err.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase })
+      const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
+      logEvent('builder_error', 'error', `sendMessage failed after ${elapsedSec}s: ${err.message}`, {
+        pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase,
+        elapsedSeconds: elapsedSec, partialResponseChars: rawAccumulator.length,
+      })
     }
     setLoading(false)
   }

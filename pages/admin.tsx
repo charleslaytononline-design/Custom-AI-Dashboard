@@ -1458,7 +1458,7 @@ export default function Admin() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div>
                       <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Auto-Fix Logs</h3>
-                      <p style={{ fontSize: 11, color: '#555' }}>Tracks when the builder auto-detects iframe JS errors and attempts to fix them via Claude.</p>
+                      <p style={{ fontSize: 11, color: '#555' }}>Tracks when the builder auto-detects iframe JS errors (runtime bugs in generated code) and attempts to fix them via Claude. Build timeouts and API errors are logged separately in the table above — Auto-Fix only triggers for code that was successfully generated but has runtime bugs.</p>
                     </div>
                     <span style={{ fontSize: 12, color: '#444' }}>{autoFixLogs.length} events</span>
                   </div>

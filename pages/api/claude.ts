@@ -16,7 +16,7 @@ const clientsDb = process.env.CLIENTS_SUPABASE_URL && process.env.CLIENTS_SUPABA
 
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
-  maxDuration: 120,
+  maxDuration: 60,
   // SSE streaming requires no response size limit
   responseLimit: false,
 }
@@ -106,7 +106,15 @@ async function getTrainingRules(userMessage: string) {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false } = req.body
+  const SAFE_DURATION_MS = 45_000 // 45s safety cutoff, leaving 15s buffer before Vercel's 60s kill
+  const handlerStart = Date.now()
+
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0 } = req.body
+
+  // Reject if too many continuations
+  if (isContinuation && continuationCount > 3) {
+    return res.status(400).json({ error: 'Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.' })
+  }
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
@@ -134,8 +142,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })
   }
 
-  // Plan build-limit check (resolves Free plan for null plan_id)
-  if (userId && !planOnly) {
+  // Plan build-limit check (resolves Free plan for null plan_id) — skip on continuations (same build)
+  if (userId && !planOnly && !isContinuation) {
     const planId = profile.plan_id || null
     const { data: plan } = planId
       ? await supabase.from('plans').select('name, max_builds_per_month').eq('id', planId).single()
@@ -338,6 +346,11 @@ RULES:
       ]
     }
 
+    // For continuations, override the last message to ask Claude to finish where it left off
+    if (isContinuation && partialRaw) {
+      lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. Just output the remaining code to complete the response. Remember to close all open tags and include </CODE> at the end.`
+    }
+
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
     const { summary, recentMessages } = compactHistory(rawHistory, 4)
     const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
@@ -361,7 +374,7 @@ RULES:
     res.status(200)
 
     // Send immediate status to prevent early idle timeout
-    sendSSE({ type: 'status', text: 'Starting build...' })
+    sendSSE({ type: 'status', text: isContinuation ? `Continuing build (part ${continuationCount + 1})...` : 'Starting build...' })
 
     // Use streaming API
     const stream = client.messages.stream({
@@ -372,6 +385,7 @@ RULES:
     })
 
     let raw = ''
+    const streamStart = Date.now()
 
     // Stream text deltas to the client
     stream.on('text', (text) => {
@@ -379,8 +393,29 @@ RULES:
       sendSSE({ type: 'delta', text })
     })
 
-    // Wait for the stream to complete
-    const finalMessage = await stream.finalMessage()
+    // Race: stream completion vs safety timeout before Vercel kills the function
+    const timeRemaining = Math.max(SAFE_DURATION_MS - (Date.now() - handlerStart), 10_000)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('__CONTINUATION__')), timeRemaining)
+    })
+
+    let finalMessage: any
+    try {
+      finalMessage = await Promise.race([stream.finalMessage(), timeoutPromise])
+    } catch (timeoutErr: any) {
+      if (timeoutErr.message === '__CONTINUATION__') {
+        // Gracefully abort the stream and send continuation signal to client
+        try { stream.abort() } catch (_) {}
+        const elapsed = ((Date.now() - handlerStart) / 1000).toFixed(1)
+        await log('builder_continuation', 'info', `Build timed out after ${elapsed}s, sending continuation signal (part ${continuationCount + 1})`, userEmail, {
+          userId, pageName, elapsed, partialChars: raw.length, continuationCount,
+        })
+        sendSSE({ type: 'continue', partialRaw: (partialRaw || '') + raw, continuationCount: continuationCount + 1 })
+        res.end()
+        return
+      }
+      throw timeoutErr
+    }
 
     // Start heartbeat to keep connection alive during post-processing (image gen, table creation, etc.)
     heartbeat = setInterval(() => {
@@ -656,10 +691,12 @@ RULES:
       userMessage = 'AI service authentication error. Please contact support.'
     }
 
-    await log('api_error', 'error', `Builder API exception: ${errMsg}`, null, {
+    const elapsedSec = ((Date.now() - handlerStart) / 1000).toFixed(1)
+    await log('api_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, null, {
       userId,
       pageName,
       error: errMsg,
+      elapsedSeconds: elapsedSec,
       stack: err.stack?.slice(0, 500),
     })
     // If headers already sent (streaming started), send error as SSE event
