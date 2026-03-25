@@ -17,6 +17,29 @@ const SHARED_HEAD = `
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 `
 
+function buildPlatformScript(projectId?: string, sharedCode?: string | null): string {
+  return `
+<script>
+  const PROJECT_ID = '${projectId || ''}';
+  async function dbQuery(table, action, data) {
+    const r = await fetch('/api/db', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({projectId: PROJECT_ID, table, action, data})});
+    return r.json();
+  }
+  async function serverRun(functionName, params) {
+    const r = await fetch('/api/run', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({projectId: PROJECT_ID, functionName, params})});
+    return r.json();
+  }
+  async function sendEmail(to, subject, html) {
+    const r = await fetch('/api/send-email', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({projectId: PROJECT_ID, to, subject, html})});
+    return r.json();
+  }
+  ${sharedCode || ''}
+</script>`
+}
+
 const NAV_SCRIPT = `
 <script>
   // Page navigation handler — communicates with parent builder or handles standalone
@@ -78,6 +101,7 @@ export function composePage(
   pages: PageRef[],
   activePage: string,
   projectId?: string,
+  sharedCode?: string | null,
 ): string {
   // No layout = legacy mode — return page as-is
   if (!layout) return pageCode
@@ -97,6 +121,8 @@ export function composePage(
   });
 </script>`
 
+  const platformScript = buildPlatformScript(projectId, sharedCode)
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -105,6 +131,7 @@ export function composePage(
 </head>
 <body class="bg-[#0a0a0a] text-gray-100">
   ${layout}
+  ${platformScript}
   <main id="page-content" class="ml-56 mt-14 min-h-screen">
     ${content}
   </main>
@@ -124,6 +151,7 @@ export function composePreviewApp(
   pages: PageRef[],
   activePage: string,
   activePageId: string,
+  sharedCode?: string | null,
 ): string {
   if (!layout) return pageCode
 
@@ -180,6 +208,8 @@ export function composePreviewApp(
   });
 </script>`
 
+  const platformScript = buildPlatformScript(undefined, sharedCode)
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -188,6 +218,7 @@ export function composePreviewApp(
 </head>
 <body class="bg-[#0a0a0a] text-gray-100">
   ${layout}
+  ${platformScript}
   <main id="page-content" class="ml-56 mt-14 min-h-screen">
     ${content}
   </main>

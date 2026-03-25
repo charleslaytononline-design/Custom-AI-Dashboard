@@ -23,6 +23,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
   if (!pages || pages.length === 0) return res.status(400).json({ error: 'No pages to deploy' })
 
+  // Load shared code for the project
+  const { data: sharedCodeRow } = await supabase
+    .from('project_shared_code')
+    .select('code')
+    .eq('project_id', projectId)
+    .single()
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
   const vercelToken = process.env.VERCEL_DEPLOY_TOKEN
 
@@ -41,13 +48,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         page.code,
         pages,
         page.name,
-        projectId
+        projectId,
+        sharedCodeRow?.code || null
       )
-      // Replace relative /api/db with absolute URL for deployed apps
-      const deployCode = composed.replace(
-        /fetch\(['"]\/api\/db['"]/g,
-        `fetch('${appUrl}/api/db'`
-      )
+      // Replace relative API paths with absolute URLs for deployed apps
+      const deployCode = composed
+        .replace(/fetch\(['"]\/api\/db['"]/g, `fetch('${appUrl}/api/db'`)
+        .replace(/fetch\(['"]\/api\/run['"]/g, `fetch('${appUrl}/api/run'`)
+        .replace(/fetch\(['"]\/api\/send-email['"]/g, `fetch('${appUrl}/api/send-email'`)
       const safeName = page.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
       files.push({
         file: safeName === pages[0].name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')

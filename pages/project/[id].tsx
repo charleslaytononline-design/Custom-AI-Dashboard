@@ -38,6 +38,7 @@ export default function ProjectBuilder() {
   const [showHistory, setShowHistory] = useState(false)
   const [autoFixAttempts, setAutoFixAttempts] = useState(0)
   const [isAutoFixing, setIsAutoFixing] = useState(false)
+  const [sharedCode, setSharedCode] = useState<string | null>(null)
   const MAX_AUTO_FIX_ATTEMPTS = 2
   // Mobile: which panel is visible ('chat' or 'preview')
   const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('preview')
@@ -68,7 +69,7 @@ export default function ProjectBuilder() {
     if (!iframeRef.current) return
     const layout = project?.layout_code || null
     const pName = pageNameOverride || activePage?.name || 'Page'
-    const composed = composePage(layout, code, pages, pName, projectId as string)
+    const composed = composePage(layout, code, pages, pName, projectId as string, sharedCode)
 
     const errorCatcher = `<script>
 (function(){
@@ -125,7 +126,7 @@ export default function ProjectBuilder() {
 <\/script>`
     const injected = composed.replace(/(<head[^>]*>)/i, '$1' + errorCatcher + guard)
     iframeRef.current.srcdoc = injected || composed
-  }, [project?.layout_code, pages, activePage?.name, projectId])
+  }, [project?.layout_code, pages, activePage?.name, projectId, sharedCode])
 
   useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage, renderIframe])
 
@@ -196,6 +197,9 @@ export default function ProjectBuilder() {
     const { data } = await supabase.from('projects').select('*').eq('id', projectId).eq('user_id', user.id).single()
     if (!data) { router.push('/home'); return }
     setProject(data)
+    // Load shared code for this project
+    const { data: sc } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
+    setSharedCode(sc?.code || null)
   }
 
   async function loadPages() {
@@ -669,6 +673,9 @@ export default function ProjectBuilder() {
       }
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
+      // Reload shared code in case <SHARED_CODE> was output during this build
+      const { data: sc } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
+      setSharedCode(sc?.code || null)
     } catch (err: any) {
       if (err.message === '__USER_STOPPED__') {
         setMessages(prev => {
@@ -859,6 +866,9 @@ export default function ProjectBuilder() {
       }
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
+      // Reload shared code in case <SHARED_CODE> was output during this build
+      const { data: sc2 } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
+      setSharedCode(sc2?.code || null)
     } catch (err: any) {
       if (err.message === '__USER_STOPPED__') {
         setMessages(prev => {

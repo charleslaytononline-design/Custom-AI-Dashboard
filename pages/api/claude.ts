@@ -276,19 +276,34 @@ Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the C
 Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
 Rules: Always include id (uuid, primaryKey) + created_at (timestamptz, default now()). Use text[] for arrays, jsonb for nested data.
 
-In your CODE, use this pattern for database access:
-<script>
-const PROJECT_ID = '__PROJECT_ID__'
-async function dbQuery(table, action, data) {
-  const r = await fetch('/api/db', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({projectId: PROJECT_ID, table, action, data})})
-  return r.json()
-}
-</script>
+PLATFORM HELPERS (auto-included on every page):
+The following functions are automatically available on every page. Do NOT re-declare them in your CODE:
+- dbQuery(table, action, data) — database CRUD (select, insert, update, delete). Returns {data, error}.
+- serverRun(functionName, params) — call server-side functions (future feature)
+- sendEmail(to, subject, html) — send emails (future feature)
+- PROJECT_ID — the current project ID constant (auto-set)
+
+DATABASE USAGE:
+In your CODE, just call dbQuery directly — it is already available, do NOT redeclare it:
+  const {data} = await dbQuery('leads', 'select')
+  await dbQuery('leads', 'insert', {name: 'John', email: 'john@test.com'})
+  await dbQuery('leads', 'update', {id: '...', name: 'Jane'})
+  await dbQuery('leads', 'delete', {id: '...'})
 Use real DB for: forms, CRM records, orders. Use localStorage for: UI state, config, display preferences.
 
+SHARED CODE:
+To define utility functions shared across ALL pages in this project, output a <SHARED_CODE> tag BEFORE CODE:
+<SHARED_CODE>
+function formatCurrency(a){return '$'+Number(a).toFixed(2)}
+function formatDate(d){return new Date(d).toLocaleDateString()}
+</SHARED_CODE>
+These functions are auto-included on every page via a shared script. Only output <SHARED_CODE> when:
+- This is the first build and you need shared utilities
+- The user explicitly asks to add/change shared functions
+Do NOT re-output <SHARED_CODE> on every build — it persists across builds.
+
 RESPONSE FORMAT:
-Output special tags first (<CREATE_PAGE>, <LAYOUT>, <CREATE_TABLE>, <GENERATE_IMAGE>) then:
+Output special tags first (<CREATE_PAGE>, <LAYOUT>, <CREATE_TABLE>, <GENERATE_IMAGE>, <SHARED_CODE>) then:
 <MESSAGE>Brief description of what you built</MESSAGE>
 <CODE>
 ${hasLayout ? '<!-- Page content only — layout is automatic -->' : '<!DOCTYPE html>\\n... complete HTML page ...\\n</html>'}
@@ -588,6 +603,25 @@ RULES:
           name,
           code: `<!-- Page: ${name} — build this page next -->`,
         })
+      }
+    }
+
+    // Handle <SHARED_CODE> tag — save shared utility functions for the project
+    const sharedCodeMatch = raw.match(/<SHARED_CODE>([\s\S]*?)<\/SHARED_CODE>/i)
+    if (sharedCodeMatch && projectId && !planOnly) {
+      const newSharedCode = sharedCodeMatch[1].trim()
+      const { data: existing } = await supabase
+        .from('project_shared_code')
+        .select('id')
+        .eq('project_id', projectId)
+        .single()
+      if (existing) {
+        await supabase.from('project_shared_code')
+          .update({ code: newSharedCode, updated_at: new Date().toISOString() })
+          .eq('project_id', projectId)
+      } else {
+        await supabase.from('project_shared_code')
+          .insert({ project_id: projectId, user_id: userId, code: newSharedCode })
       }
     }
 
