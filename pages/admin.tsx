@@ -504,12 +504,9 @@ export default function Admin() {
       }
     })
 
-    // Calculate how much gifted credit has been used per user
-    let globalGiftUsed = 0
-    Object.keys(giftedAmounts).forEach(uid => {
-      globalGiftUsed += Math.min(tokenSpend[uid] || 0, giftedAmounts[uid] || 0)
-    })
-    setTotalGiftUsed(globalGiftUsed)
+    // Gift used = total gifted - current gift balances remaining
+    const totalGiftBalanceRemaining = profiles.reduce((a: number, p: any) => a + (p.gift_balance || 0), 0)
+    setTotalGiftUsed(Math.max(0, giftTotal - totalGiftBalanceRemaining))
 
     setUsers(profiles.map((p: any) => ({
       ...p,
@@ -524,7 +521,7 @@ export default function Admin() {
       lastActive: lastActive[p.id] || null,
       lastLogin: p.last_login || null,
       giftedCredits: p.gift_balance || 0,
-      giftUsed: Math.min(tokenSpend[p.id] || 0, giftedAmounts[p.id] || 0),
+      giftUsed: Math.max(0, (giftedAmounts[p.id] || 0) - (p.gift_balance || 0)),
       failedRequests: failedCounts[p.id] || 0,
       failedCost: failedCosts[p.id] || 0,
       stopRequests: stopCounts[p.id] || 0,
