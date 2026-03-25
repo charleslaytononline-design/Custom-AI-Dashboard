@@ -18,7 +18,16 @@
       "Bash(npm install:*)",
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(where node:*)",
-      "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")"
+      "Bash(export PATH=\"/c/Program Files/nodejs:$PATH\")",
+      "Bash(grep -r \"\\\\.insert.*projects\\\\|\\\\.from\\(''''projects''''\\).insert\\\\|create.*project\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"\\\\.insert.*pages\\\\|\\\\.from\\(''''pages''''\\).insert\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"storage.*upload\\\\|\\\\.upload\\\\|storage.from\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx)",
+      "Bash(grep -n \"createPage\\\\|pages.*insert\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/pages/project/[id].tsx)",
+      "Bash(grep -r \"max_projects\\\\|max_tables\\\\|max_rows\\\\|max_builds\\\\|max_storage\\\\|own_supabase\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/pages --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"storage\\\\|upload\\\\|blob\\\\|file\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/pages/api --include=*.ts)",
+      "Bash(/tmp/analysis.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(grep -r \"max_pages\\\\|pages_per_project\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx --include=*.sql)"
     ]
   }
 }

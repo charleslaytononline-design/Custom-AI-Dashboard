@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
+  const [limitMsg, setLimitMsg] = useState<string | null>(null)
 
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -54,25 +55,23 @@ export default function Dashboard() {
   async function createProject() {
     if (!newName.trim() || !user) return
 
-    if (profile?.role !== 'admin' && (profile?.credit_balance || 0) <= 0) {
+    if ((profile?.credit_balance || 0) + (profile?.gift_balance || 0) <= 0) {
       setShowNew(false)
       openBuyModal()
       return
     }
 
     // Check max_projects plan limit (resolves Free plan for null plan_id)
-    if (profile?.role !== 'admin') {
-      const planId = profile?.plan_id
-      const { data: plan } = planId
-        ? await supabase.from('plans').select('name, max_projects').eq('id', planId).single()
-        : await supabase.from('plans').select('name, max_projects').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
-      if (plan?.max_projects) {
-        const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
-        if (count !== null && count >= plan.max_projects) {
-          setShowNew(false)
-          openBuyModal()
-          return
-        }
+    const planId = profile?.plan_id
+    const { data: plan } = planId
+      ? await supabase.from('plans').select('name, max_projects').eq('id', planId).single()
+      : await supabase.from('plans').select('name, max_projects').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+    if (plan?.max_projects) {
+      const { count } = await supabase.from('projects').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
+      if (count !== null && count >= plan.max_projects) {
+        setShowNew(false)
+        setLimitMsg(`You've reached the ${plan.max_projects} project limit on the ${plan.name} plan. Upgrade to create more.`)
+        return
       }
     }
 
@@ -120,8 +119,8 @@ export default function Dashboard() {
   }
 
   const isAdmin = profile?.role === 'admin'
-  const balance = profile?.credit_balance || 0
-  const hasCredits = isAdmin || balance > 0
+  const balance = (profile?.credit_balance || 0) + (profile?.gift_balance || 0)
+  const hasCredits = balance > 0
 
   return (
     <div style={s.main}>
@@ -157,6 +156,24 @@ export default function Dashboard() {
                 <p style={{ color: '#888', fontSize: 12, marginTop: 2 }}>Purchase credits to create projects and use the AI builder.</p>
               </div>
               <button onClick={openBuyModal} style={s.buyNowBtn}>Buy Credits →</button>
+            </div>
+          )}
+
+          {limitMsg && (
+            <div style={{
+              ...s.noCreditsBanner,
+              margin: isMobile ? '16px 16px 0' : '20px 32px 0',
+              flexWrap: 'wrap' as const,
+              gap: 10,
+              borderColor: 'rgba(200,150,50,0.3)',
+              background: 'rgba(200,150,50,0.08)',
+            }}>
+              <span>🔒</span>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <strong style={{ color: '#f0f0f0' }}>Plan limit reached</strong>
+                <p style={{ color: '#e0c060', fontSize: 12, marginTop: 2 }}>{limitMsg}</p>
+              </div>
+              <button onClick={() => setLimitMsg(null)} style={{ ...s.buyNowBtn, background: 'rgba(200,150,50,0.2)', color: '#e0c060' }}>Dismiss</button>
             </div>
           )}
 

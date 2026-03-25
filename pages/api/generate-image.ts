@@ -144,24 +144,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // ── Storage limit check ────────────────────────────────────────────────
-  if (profile.role !== 'admin') {
-    const userPlanId = (profile as any).plan_id || null
-    const { data: plan } = userPlanId
-      ? await supabase.from('plans').select('max_storage_mb').eq('id', userPlanId).single()
-      : await supabase.from('plans').select('max_storage_mb').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
-    if (plan?.max_storage_mb) {
-      try {
-        const { data: files } = await supabase.storage.from('images').list(`generated/${userId}`, { limit: 10000 })
-        const totalBytes = (files || []).reduce((sum, f) => sum + (f.metadata?.size || 0), 0)
-        const totalMb = totalBytes / (1024 * 1024)
-        if (totalMb >= plan.max_storage_mb) {
-          return res.status(200).json({
-            error: 'storage_limit_reached',
-            message: `Storage limit of ${plan.max_storage_mb} MB reached. Upgrade your plan for more storage.`,
-          })
-        }
-      } catch { /* don't block on storage check errors */ }
-    }
+  const userPlanId = (profile as any).plan_id || null
+  const { data: storagePlan } = userPlanId
+    ? await supabase.from('plans').select('max_storage_mb').eq('id', userPlanId).single()
+    : await supabase.from('plans').select('max_storage_mb').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+  if (storagePlan?.max_storage_mb) {
+    try {
+      const { data: files } = await supabase.storage.from('images').list(`generated/${userId}`, { limit: 10000 })
+      const totalBytes = (files || []).reduce((sum, f) => sum + (f.metadata?.size || 0), 0)
+      const totalMb = totalBytes / (1024 * 1024)
+      if (totalMb >= storagePlan.max_storage_mb) {
+        return res.status(200).json({
+          error: 'storage_limit_reached',
+          message: `Storage limit of ${storagePlan.max_storage_mb} MB reached. Upgrade your plan for more storage.`,
+        })
+      }
+    } catch { /* don't block on storage check errors */ }
   }
 
   const primaryModel = modelSetting?.value || 'black-forest-labs/flux-2-pro'

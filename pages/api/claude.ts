@@ -134,7 +134,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Plan build-limit check (resolves Free plan for null plan_id)
-  if (userId && !planOnly && profile.role !== 'admin') {
+  if (userId && !planOnly) {
     const planId = profile.plan_id || null
     const { data: plan } = planId
       ? await supabase.from('plans').select('name, max_builds_per_month').eq('id', planId).single()
@@ -412,6 +412,9 @@ RULES:
         const imgData = await imgRes.json()
         if (imgData.url) {
           generatedImageUrl = imgData.url
+        } else if (imgData.error === 'storage_limit_reached') {
+          sendSSE({ type: 'status', text: imgData.message || 'Storage limit reached. Upgrade your plan for more storage.' })
+          await log('builder_error', 'warn', `Storage limit reached during image generation`, userEmail, { userId, pageName })
         } else {
           await log('builder_error', 'warn', `Image generation failed during build: ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
             userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.detail || imgData.error,
@@ -443,6 +446,7 @@ RULES:
 
       for (const match of tableDefsFound) {
         if (currentCount >= tableLimit) {
+          sendSSE({ type: 'status', text: `Table limit reached (${tableLimit} tables). Upgrade your plan for more.` })
           await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit}), skipping remaining tables`, userEmail, { userId, projectId })
           break
         }
