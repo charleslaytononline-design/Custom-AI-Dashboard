@@ -468,6 +468,22 @@ export default function ProjectBuilder() {
       // If we received a 'continue' event, loop back for another API call
       if (shouldContinue) {
         if (continuationCount >= MAX_CONTINUATIONS) {
+          // Record the accumulated cost as a failed build before throwing
+          if (accumulatedApiCost > 0) {
+            try {
+              await fetch('/api/record-failed-build', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: basePayload.userId,
+                  pageName: basePayload.pageName,
+                  errorMessage: 'Max continuations exceeded',
+                  estimatedCost: accumulatedApiCost,
+                  continuationCount,
+                }),
+              })
+            } catch (_) {}
+          }
           throw new Error('Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.')
         }
         continue // goes back to the while(true) loop for another fetch

@@ -184,7 +184,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const system = planOnly
     ? `You are an AI app builder. The user wants to build something on a page called "${pageName}".
-Write a clear bullet-point plan of what you will build. No code. Max 12 bullet points.
+Write a clear bullet-point plan of what you will build. No code. Max 8 bullet points.
+IMPORTANT: Keep plans realistic — the builder can output ~8,000 tokens of HTML per build. Plan 4-6 focused sections maximum, not 10+. Prioritize core content and functionality over decorative extras. A concise, well-built page is better than an ambitious one that times out.
 If the request involves multiple pages, list which pages you'll create and what each contains.
 Respond in plain text only.`
     : `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
@@ -316,9 +317,10 @@ RULES:
 - Use Tailwind classes only — no inline styles
 - Every button must be functional
 - Keep ALL existing features when updating
-- CRITICAL: Keep HTML output under 12,000 tokens
+- CRITICAL: Keep HTML output under 8,000 tokens. You have ~45 seconds of generation time — be concise.
 - Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
-- Build core functionality first — skip decorative extras on large requests.`
+- Build core functionality first — skip decorative extras on large requests.
+- Prioritize finishing over perfection. A complete 5-section page beats an incomplete 10-section page.`
 
   // Inject AI training rules from database
   const userMsg = messages[messages.length - 1]?.content || ''
@@ -352,7 +354,7 @@ RULES:
 
     // For continuations, override the last message to ask Claude to finish where it left off
     if (isContinuation && partialRaw) {
-      lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. Just output the remaining code to complete the response. Remember to close all open tags and include </CODE> at the end.`
+      lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. WRAP UP CONCISELY — close remaining sections with minimal content, close all open HTML tags, and include </CODE> at the end. You must finish within this response. Do not add new sections — just complete what you started.`
     }
 
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
@@ -386,7 +388,7 @@ RULES:
     // Use streaming API
     const stream = client.messages.stream({
       model: settings.chatModel,
-      max_tokens: 16000,
+      max_tokens: 9000,
       system: contextualSystem,
       messages: apiMessages,
     })
@@ -668,8 +670,8 @@ RULES:
 
             const retryStream = client.messages.stream({
               model: settings.chatModel,
-              max_tokens: 16000,
-              system: systemWithTraining + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 8000 tokens. Focus on core functionality only.',
+              max_tokens: 9000,
+              system: systemWithTraining + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 6000 tokens. Focus on core functionality only.',
               messages: apiMessages,
             })
 
