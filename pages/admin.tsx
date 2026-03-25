@@ -50,6 +50,8 @@ interface UserRow {
   lastLogin?: string
   giftedCredits?: number
   giftUsed?: number
+  failedRequests?: number
+  failedCost?: number
 }
 
 interface Plan {
@@ -162,6 +164,11 @@ export default function Admin() {
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
   const [totalGifted, setTotalGifted] = useState(0)
   const [totalGiftUsed, setTotalGiftUsed] = useState(0)
+  const [failedCostTotal, setFailedCostTotal] = useState(0)
+  const [failedCount, setFailedCount] = useState(0)
+  const [continuationTriggered, setContinuationTriggered] = useState(0)
+  const [continuationCompleted, setContinuationCompleted] = useState(0)
+  const [continuationFailed, setContinuationFailed] = useState(0)
 
   // Clients DB status
   const [clientsDbStatus, setClientsDbStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -452,6 +459,8 @@ export default function Admin() {
     const replicateCosts: Record<string, number> = {}
     const lastActive: Record<string, string> = {}
     const giftedAmounts: Record<string, number> = {}
+    const failedCounts: Record<string, number> = {}
+    const failedCosts: Record<string, number> = {}
 
     projects?.forEach((p: any) => { projectCounts[p.user_id] = (projectCounts[p.user_id] || 0) + 1 })
     pages?.forEach((p: any) => { pageCounts[p.user_id] = (pageCounts[p.user_id] || 0) + 1 })
@@ -476,6 +485,10 @@ export default function Admin() {
       if (t.type === 'gift') {
         giftedAmounts[t.user_id] = (giftedAmounts[t.user_id] || 0) + Math.abs(t.amount)
       }
+      if (t.type === 'failed') {
+        failedCounts[t.user_id] = (failedCounts[t.user_id] || 0) + 1
+        failedCosts[t.user_id] = (failedCosts[t.user_id] || 0) + (t.api_cost || 0)
+      }
     })
 
     // Calculate how much gifted credit has been used per user
@@ -499,6 +512,8 @@ export default function Admin() {
       lastLogin: p.last_login || null,
       giftedCredits: p.gift_balance || 0,
       giftUsed: Math.min(tokenSpend[p.id] || 0, giftedAmounts[p.id] || 0),
+      failedRequests: failedCounts[p.id] || 0,
+      failedCost: failedCosts[p.id] || 0,
     })))
   }
 
@@ -516,21 +531,34 @@ export default function Admin() {
     const { data } = await supabase.from('transactions').select('amount, api_cost, type, description')
     if (!data) return
     let revenue = 0, anthropicTotal = 0, replicateTotal = 0, giftTotal = 0
+    let failedTotal = 0, failedCnt = 0
+    let contTriggered = 0, contCompleted = 0, contFailed = 0
     data.forEach((t: any) => {
       if (t.type === 'usage') {
         revenue += Math.abs(t.amount)
         const isImage = (t.description || '').toLowerCase().includes('image')
         if (isImage) replicateTotal += (t.api_cost || 0)
         else anthropicTotal += (t.api_cost || 0)
+        // Count successful builds that used continuations
+        if ((t.description || '').includes('continued')) contCompleted++
       }
       if (t.type === 'gift') giftTotal += Math.abs(t.amount)
+      if (t.type === 'failed') { failedTotal += (t.api_cost || 0); failedCnt++ }
+      if (t.type === 'continuation') contTriggered++
     })
+    // Failed builds that had continuations
+    contFailed = data.filter((t: any) => t.type === 'failed' && (t.description || '').includes('Build failed')).length
     setTotalRevenue(revenue)
     setTotalApiCost(anthropicTotal + replicateTotal)
     setTotalGifted(giftTotal)
     setTotalProfit(revenue - anthropicTotal - replicateTotal)
     setAnthropicCostTotal(anthropicTotal)
     setReplicateCostTotal(replicateTotal)
+    setFailedCostTotal(failedTotal)
+    setFailedCount(failedCnt)
+    setContinuationTriggered(contTriggered)
+    setContinuationCompleted(contCompleted)
+    setContinuationFailed(contFailed)
   }
 
   async function saveSettings() {
@@ -665,7 +693,7 @@ export default function Admin() {
   const isMobile = useMobile()
   const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
   const giftApiCost = totalGiftUsed > 0 ? totalGiftUsed / parseFloat(settings.markup_multiplier || '3') : 0
-  const actualProfit = totalProfit - giftApiCost
+  const actualProfit = totalProfit - giftApiCost - failedCostTotal
   const margin = totalRevenue > 0 ? ((actualProfit / totalRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
@@ -690,7 +718,7 @@ export default function Admin() {
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
           <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}</div>
+          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -730,6 +758,24 @@ export default function Admin() {
           <div style={s.statSub}>you keep ${totalRevenue > 0 ? (1 - totalApiCost / totalRevenue).toFixed(3) : '1.000'} per $1</div>
         </div>
       </div>
+      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)', marginBottom: 0 }}>
+        <div style={{ ...s.statCard, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.05)' }}>
+          <div style={{ ...s.statLabel, color: '#f87171' }}>Failed Requests</div>
+          <div style={{ ...s.statVal, color: '#f87171', fontSize: 18 }}>${failedCostTotal.toFixed(4)}</div>
+          <div style={s.statSub}>{failedCount} failed API calls not charged to users</div>
+        </div>
+        <div style={{ ...s.statCard, border: '1px solid rgba(251,146,60,0.2)', background: 'rgba(251,146,60,0.05)' }}>
+          <div style={{ ...s.statLabel, color: '#fb923c' }}>Continuations</div>
+          <div style={{ ...s.statVal, color: '#fb923c', fontSize: 18 }}>
+            {continuationTriggered} <span style={{ color: '#888', fontSize: 13 }}>triggered</span>
+            {' / '}
+            <span style={{ color: '#f87171' }}>{continuationFailed}</span> <span style={{ color: '#888', fontSize: 13 }}>failed</span>
+            {' / '}
+            <span style={{ color: '#5DCAA5' }}>{continuationCompleted}</span> <span style={{ color: '#888', fontSize: 13 }}>completed</span>
+          </div>
+          <div style={s.statSub}>builds that needed multiple API calls due to time limits</div>
+        </div>
+      </div>
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
@@ -765,6 +811,8 @@ export default function Admin() {
                   <th style={s.th}>Tokens</th>
                   <th style={s.th}>Images</th>
                   <th style={s.th}>Profit</th>
+                  <th style={{ ...s.th, color: '#fb923c' }}>Failed</th>
+                  <th style={{ ...s.th, color: '#f87171' }}>Failed $</th>
                   <th style={s.th}>Last Active</th>
                   <th style={s.th}>Last Login</th>
                   <th style={s.th}>Status</th>
@@ -808,7 +856,9 @@ export default function Admin() {
                     <td style={s.td}><span style={{ ...s.num, color: '#2dd4bf' }}>${(u.replicateCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.tokenCount || 0).toLocaleString()}</span></td>
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
-                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0) - (u.failedCost || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#fb923c' }}>{u.failedRequests || 0}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#f87171' }}>${(u.failedCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastLogin)}</span></td>
                     <td style={s.td}>

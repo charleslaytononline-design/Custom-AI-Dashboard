@@ -342,14 +342,16 @@ export default function ProjectBuilder() {
     // Continuation loop — handles automatic re-triggering when the server hits its time limit
     let continuationCount = 0
     let accumulatedPartialRaw = ''
+    let accumulatedApiCost = 0
     const MAX_CONTINUATIONS = 3
 
     while (true) {
-      const payload = { ...basePayload }
+      const payload: any = { ...basePayload }
       if (continuationCount > 0) {
         payload.isContinuation = true
         payload.partialRaw = accumulatedPartialRaw
         payload.continuationCount = continuationCount
+        payload.accumulatedApiCost = accumulatedApiCost
       }
 
       let fetchRes: Response
@@ -421,6 +423,7 @@ export default function ProjectBuilder() {
               // Server hit its time limit — accumulate partial and auto-continue
               accumulatedPartialRaw = event.partialRaw || ''
               continuationCount = event.continuationCount || (continuationCount + 1)
+              accumulatedApiCost = event.accumulatedApiCost || 0
               shouldContinue = true
               if (onStatus) onStatus(`⏳ Build continuing (part ${continuationCount + 1})...`)
             } else if (event.type === 'error') {

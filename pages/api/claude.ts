@@ -109,7 +109,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const SAFE_DURATION_MS = 45_000 // 45s safety cutoff, leaving 15s buffer before Vercel's 60s kill
   const handlerStart = Date.now()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0 } = req.body
+  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0, accumulatedApiCost = 0 } = req.body
 
   // Reject if too many continuations
   if (isContinuation && continuationCount > 3) {
@@ -335,6 +335,8 @@ RULES:
 
   let heartbeat: ReturnType<typeof setInterval> | null = null
 
+  let finalMessage: any = null // declared outside try so catch can access for failed cost tracking
+
   try {
     const lastMessage = messages[messages.length - 1]
 
@@ -399,7 +401,6 @@ RULES:
       setTimeout(() => reject(new Error('__CONTINUATION__')), timeRemaining)
     })
 
-    let finalMessage: any
     try {
       finalMessage = await Promise.race([stream.finalMessage(), timeoutPromise])
     } catch (timeoutErr: any) {
@@ -407,10 +408,21 @@ RULES:
         // Gracefully abort the stream and send continuation signal to client
         try { stream.abort() } catch (_) {}
         const elapsed = ((Date.now() - handlerStart) / 1000).toFixed(1)
+        // Estimate cost of partial response (we don't have finalMessage.usage since stream was aborted)
+        const estimatedOutputTokens = Math.ceil(raw.length / 4)
+        const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
+        const newAccumulatedCost = accumulatedApiCost + partialCost
+
         await log('builder_continuation', 'info', `Build timed out after ${elapsed}s, sending continuation signal (part ${continuationCount + 1})`, userEmail, {
-          userId, pageName, elapsed, partialChars: raw.length, continuationCount,
+          userId, pageName, elapsed, partialChars: raw.length, continuationCount, estimatedPartialCost: partialCost,
         })
-        sendSSE({ type: 'continue', partialRaw: (partialRaw || '') + raw, continuationCount: continuationCount + 1 })
+        // Record continuation event in transactions for tracking
+        await supabase.from('transactions').insert({
+          user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
+          type: 'continuation', description: `Build continuation part ${continuationCount + 1}: ${pageName}`,
+        }).catch(() => {}) // don't let tracking failure block the continuation
+
+        sendSSE({ type: 'continue', partialRaw: (partialRaw || '') + raw, continuationCount: continuationCount + 1, accumulatedApiCost: newAccumulatedCost })
         res.end()
         return
       }
@@ -426,7 +438,8 @@ RULES:
     const outputTokens = finalMessage.usage.output_tokens
     const totalTokens = inputTokens + outputTokens
     const apiCost = (inputTokens / 1000) * settings.inputCostPer1k + (outputTokens / 1000) * settings.outputCostPer1k
-    const userCharge = apiCost * settings.markupMultiplier
+    const totalApiCost = apiCost + accumulatedApiCost // include costs from prior continuations
+    const userCharge = totalApiCost * settings.markupMultiplier
     const stopReason = finalMessage.stop_reason
 
     // Send processing status
@@ -543,13 +556,14 @@ RULES:
       ? generatedImageUrl
       : 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
 
-    // Deduct credits from everyone including admin
+    // Deduct credits from everyone including admin (includes accumulated costs from continuations)
+    const buildDesc = continuationCount > 0 ? `AI build: ${pageName} (continued ${continuationCount}x)` : `AI build: ${pageName}`
     const { data: deducted } = await supabase.rpc('deduct_credits', {
       p_user_id: userId,
       p_amount: userCharge,
-      p_description: `AI build: ${pageName}`,
+      p_description: buildDesc,
       p_tokens_used: totalTokens,
-      p_api_cost: apiCost,
+      p_api_cost: totalApiCost,
     })
     if (!deducted) {
       await log('credits_error', 'warn', `deduct_credits failed after build`, userEmail, {
@@ -699,6 +713,25 @@ RULES:
       elapsedSeconds: elapsedSec,
       stack: err.stack?.slice(0, 500),
     })
+
+    // Record failed API cost in transactions so admin can see the loss
+    try {
+      let failedCost = accumulatedApiCost // at minimum, any prior continuation costs
+      let failedTokens = 0
+      if (finalMessage?.usage) {
+        // We have exact token counts from this call
+        failedCost += (finalMessage.usage.input_tokens / 1000) * settings.inputCostPer1k
+                    + (finalMessage.usage.output_tokens / 1000) * settings.outputCostPer1k
+        failedTokens = finalMessage.usage.input_tokens + finalMessage.usage.output_tokens
+      }
+      if (failedCost > 0) {
+        await supabase.from('transactions').insert({
+          user_id: userId, amount: 0, api_cost: failedCost, tokens_used: failedTokens,
+          type: 'failed', description: `Build failed: ${pageName} - ${errMsg.slice(0, 80)}`,
+        })
+      }
+    } catch (_) { /* don't let tracking failure block error response */ }
+
     // If headers already sent (streaming started), send error as SSE event
     if (res.headersSent) {
       sendSSE({ type: 'error', error: userMessage })
