@@ -78,6 +78,7 @@ interface Settings {
   output_cost_per_1k: string
   image_cost_per_gen: string
   stop_limit_per_hour: string
+  max_images_per_build: string
 }
 
 // Verified pricing from official docs (March 2026) — per 1K tokens
@@ -152,7 +153,7 @@ export default function Admin() {
   const [user, setUser] = useState<any>(null)
   const [users, setUsers] = useState<UserRow[]>([])
   const [plans, setPlans] = useState<Plan[]>([])
-  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5' })
+  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5', max_images_per_build: '5' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training'>('users')
@@ -535,7 +536,7 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      const defaults: Settings = { markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5' }
+      const defaults: Settings = { markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5', max_images_per_build: '5' }
       setSettings({ ...defaults, ...map as unknown as Settings })
     }
   }
@@ -1066,6 +1067,11 @@ export default function Admin() {
                 <label style={s.label}>Stop Button Limit (per hour)</label>
                 <p style={s.fieldDesc}>Max times a user can stop a build per hour without being charged. After this limit, stopped builds are charged normally. Default: 5</p>
                 <input type="number" value={settings.stop_limit_per_hour} onChange={e => setSettings(p => ({ ...p, stop_limit_per_hour: e.target.value }))} style={s.input} step="1" min="1" />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Max Images per Build</label>
+                <p style={s.fieldDesc}>Maximum AI-generated images per single build. Each image costs ${settings.image_cost_per_gen}. Default: 5</p>
+                <input type="number" value={settings.max_images_per_build} onChange={e => setSettings(p => ({ ...p, max_images_per_build: e.target.value }))} style={s.input} step="1" min="1" max="10" />
               </div>
             </div>
             <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 7, fontSize: 11, color: '#888', lineHeight: 1.5 }}>

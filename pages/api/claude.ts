@@ -73,6 +73,7 @@ async function getSettings() {
     outputCostPer1k: parseFloat(map['output_cost_per_1k']) || 0.015,
     chatModel: map['ai_chat_model'] || 'claude-sonnet-4-5',
     imageCostPerGen: parseFloat(map['image_cost_per_gen']) || 0.05,
+    maxImagesPerBuild: parseInt(map['max_images_per_build']) || 5,
   }
 }
 
@@ -243,9 +244,14 @@ LAYOUT RULES:
 - ${hasLayout ? 'A layout already exists. Only output <LAYOUT> if the user asks to change navigation or add pages.' : 'This project has no layout yet. Generate a <LAYOUT> tag on this first build.'}
 
 IMAGE GENERATION CAPABILITY:
-Generate real AI images using Flux. Output BEFORE the CODE block:
-<GENERATE_IMAGE>your detailed image prompt here</GENERATE_IMAGE>
-In CODE: <img src="__GENERATED_IMAGE_URL__" alt="description" class="..." />
+Generate up to ${settings.maxImagesPerBuild} real AI images per build using Flux. Output BEFORE the CODE block:
+<GENERATE_IMAGE>prompt for image 1</GENERATE_IMAGE>
+<GENERATE_IMAGE>prompt for image 2</GENERATE_IMAGE>
+In CODE, reference images by number:
+<img src="__GENERATED_IMAGE_1__" alt="description" class="..." />
+<img src="__GENERATED_IMAGE_2__" alt="description" class="..." />
+You can also use __GENERATED_IMAGE_URL__ as shorthand for the first image.
+IMPORTANT: Only use __GENERATED_IMAGE_N__ placeholders when you also output a matching <GENERATE_IMAGE> tag. For showcase galleries, app screenshots, or decorative images where AI generation isn't needed, use CSS gradients, SVG illustrations, or Font Awesome icons instead.
 
 CRITICAL IMAGE PROMPT RULES:
 - The image prompt MUST describe exactly what the user asked for. If they say "a fluffy dog", the prompt MUST be about a fluffy dog — never something else.
@@ -254,7 +260,7 @@ CRITICAL IMAGE PROMPT RULES:
 - For photos: add "professional photography, studio lighting, shallow depth of field"
 - For illustrations: add "digital illustration, vibrant colors, clean lines"
 - NEVER creatively reinterpret the user's request into a different subject. Match their description exactly.
-- Example: User says "a cute fluffy golden retriever puppy" → <GENERATE_IMAGE>A cute fluffy golden retriever puppy, adorable face, soft golden fur, warm studio lighting, professional pet photography, shallow depth of field, 8k, high quality</GENERATE_IMAGE>
+- Maximum ${settings.maxImagesPerBuild} images per build — if more are needed, use CSS/icon placeholders for the rest.
 
 DATABASE CAPABILITY:
 Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the CODE block:
@@ -320,7 +326,8 @@ RULES:
 - CRITICAL: Keep HTML output under 8,000 tokens. You have ~45 seconds of generation time — be concise.
 - Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
 - Build core functionality first — skip decorative extras on large requests.
-- Prioritize finishing over perfection. A complete 5-section page beats an incomplete 10-section page.`
+- Prioritize finishing over perfection. A complete 5-section page beats an incomplete 10-section page.
+- For landing/marketing pages without a shared layout, always include a sticky top navigation bar with site name and anchor links to the main sections (e.g., #features, #pricing, #faq). Use smooth scrolling with scroll-behavior:smooth on html.`
 
   // Inject AI training rules from database
   const userMsg = messages[messages.length - 1]?.content || ''
@@ -497,36 +504,54 @@ RULES:
     // Send processing status
     sendSSE({ type: 'status', text: 'Processing build...' })
 
-    // Check if image generation is needed
-    const imagePromptMatch = raw.match(/<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/i)
-    let generatedImageUrl: string | null = null
+    // Check if image generation is needed (supports multiple images, searches full output for continuations)
+    const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
+    const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
+    const imagePrompts: string[] = []
+    let imgMatch: RegExpExecArray | null
+    while ((imgMatch = imageRegex.exec(imageSearchText)) !== null) {
+      imagePrompts.push(imgMatch[1].trim())
+    }
+    const maxImages = settings.maxImagesPerBuild
+    const generatedImageUrls: (string | null)[] = []
 
-    if (imagePromptMatch) {
-      sendSSE({ type: 'status', text: 'Generating image...' })
-      const imagePrompt = imagePromptMatch[1].trim()
-      try {
-        const imgRes = await fetch(`${appUrl}/api/generate-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: imagePrompt, userId }),
-        })
-        const imgData = await imgRes.json()
-        if (imgData.url) {
-          generatedImageUrl = imgData.url
-        } else if (imgData.error === 'storage_limit_reached') {
-          sendSSE({ type: 'status', text: imgData.message || 'Storage limit reached. Upgrade your plan for more storage.' })
-          await log('builder_error', 'warn', `Storage limit reached during image generation`, userEmail, { userId, pageName })
-        } else {
-          await log('builder_error', 'warn', `Image generation failed during build: ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
-            userId, pageName, imagePrompt: imagePrompt.slice(0, 200), error: imgData.detail || imgData.error,
+    if (imagePrompts.length > 0) {
+      const toGenerate = imagePrompts.slice(0, maxImages)
+      sendSSE({ type: 'status', text: `Generating ${toGenerate.length} image${toGenerate.length > 1 ? 's' : ''}...` })
+      for (let i = 0; i < toGenerate.length; i++) {
+        try {
+          const imgRes = await fetch(`${appUrl}/api/generate-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: toGenerate[i], userId }),
           })
+          const imgData = await imgRes.json()
+          if (imgData.url) {
+            generatedImageUrls.push(imgData.url)
+          } else if (imgData.error === 'storage_limit_reached') {
+            sendSSE({ type: 'status', text: imgData.message || 'Storage limit reached. Upgrade your plan for more storage.' })
+            await log('builder_error', 'warn', `Storage limit reached during image generation (image ${i + 1})`, userEmail, { userId, pageName })
+            generatedImageUrls.push(null)
+            break // stop generating more if storage is full
+          } else {
+            await log('builder_error', 'warn', `Image generation failed (image ${i + 1}): ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
+              userId, pageName, imagePrompt: toGenerate[i].slice(0, 200), error: imgData.detail || imgData.error,
+            })
+            generatedImageUrls.push(null)
+          }
+        } catch (imgErr: any) {
+          await log('builder_error', 'warn', `Image generation network error (image ${i + 1}): ${imgErr.message}`, userEmail, {
+            userId, pageName, error: imgErr.message,
+          })
+          generatedImageUrls.push(null)
         }
-      } catch (imgErr: any) {
-        await log('builder_error', 'warn', `Image generation network error: ${imgErr.message}`, userEmail, {
-          userId, pageName, error: imgErr.message,
-        })
+        if (i < toGenerate.length - 1) {
+          sendSSE({ type: 'status', text: `Generating image ${i + 2} of ${toGenerate.length}...` })
+        }
       }
     }
+    // Backwards compat: first URL for legacy __GENERATED_IMAGE_URL__
+    const generatedImageUrl = generatedImageUrls[0] || null
 
     // Handle <CREATE_TABLE> tags — create real tables in Clients DB (supports multiple per build)
     const tableDefsFound: RegExpExecArray[] = []
@@ -604,9 +629,21 @@ RULES:
       }
     }
 
-    const imageFallback = generatedImageUrl
-      ? generatedImageUrl
-      : 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
+    const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
+
+    // Replace all image placeholders in code (numbered + legacy)
+    function replaceImagePlaceholders(html: string): string {
+      // Replace numbered placeholders: __GENERATED_IMAGE_1__, __GENERATED_IMAGE_2__, etc.
+      generatedImageUrls.forEach((url, i) => {
+        const placeholder = `__GENERATED_IMAGE_${i + 1}__`
+        html = html.replace(new RegExp(placeholder, 'g'), url || imagePlaceholder)
+      })
+      // Legacy: __GENERATED_IMAGE_URL__ maps to first image
+      html = html.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrls[0] || imagePlaceholder)
+      // Catch any remaining unmatched numbered placeholders
+      html = html.replace(/__GENERATED_IMAGE_\d+__/g, imagePlaceholder)
+      return html
+    }
 
     // Deduct credits from everyone including admin (includes accumulated costs from continuations)
     const buildDesc = continuationCount > 0 ? `AI build: ${pageName} (continued ${continuationCount}x)` : `AI build: ${pageName}`
@@ -641,9 +678,7 @@ RULES:
       if (messageMatch && codeMatch) {
         message = messageMatch[1].trim()
         code = codeMatch[1].trim()
-        if (generatedImageUrl && code) {
-          code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
-        }
+        if (code) code = replaceImagePlaceholders(code)
         if (code && projectId) {
           code = code.replace(/__PROJECT_ID__/g, projectId)
         }
@@ -655,9 +690,7 @@ RULES:
           const mdMatch = fullRaw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
           if (mdMatch) code = mdMatch[1]
         }
-        if (generatedImageUrl && code) {
-          code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
-        }
+        if (code) code = replaceImagePlaceholders(code)
         if (code && projectId) {
           code = code.replace(/__PROJECT_ID__/g, projectId)
         }
@@ -692,9 +725,7 @@ RULES:
               code = retryHtmlMatch[0]
               message = 'Done! Your page has been updated (simplified version).'
             }
-            if (generatedImageUrl && code) {
-              code = code.replace(/__GENERATED_IMAGE_URL__/g, imageFallback)
-            }
+            if (code) code = replaceImagePlaceholders(code)
             if (code && projectId) {
               code = code.replace(/__PROJECT_ID__/g, projectId)
             }
@@ -728,12 +759,15 @@ RULES:
     // Send the final done event with all metadata
     sendSSE({
       type: 'done',
-      message: generatedImageUrl ? message + ' (AI image generated ✓)' : message,
+      message: generatedImageUrls.filter(Boolean).length > 0
+        ? message + ` (${generatedImageUrls.filter(Boolean).length} AI image${generatedImageUrls.filter(Boolean).length > 1 ? 's' : ''} generated ✓)`
+        : message,
       code,
       tokensUsed: totalTokens,
       apiCost,
       userCharge,
-      imageGenerated: !!generatedImageUrl,
+      imageGenerated: generatedImageUrls.filter(Boolean).length > 0,
+      imagesGenerated: generatedImageUrls.filter(Boolean).length,
       newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
       layoutUpdated: !!layoutMatch,
       pagesCreated: newPages,
