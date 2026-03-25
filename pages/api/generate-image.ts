@@ -6,6 +6,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+export const config = {
+  maxDuration: 60,
+}
+
 const FALLBACK_MODEL = 'black-forest-labs/flux-1.1-pro'
 
 async function getImageSettings() {
