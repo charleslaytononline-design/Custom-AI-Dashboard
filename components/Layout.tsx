@@ -20,7 +20,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   async function refreshProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('credit_balance, role').eq('id', userId).single()
+    const { data } = await supabase.from('profiles').select('credit_balance, gift_balance, role').eq('id', userId).single()
     if (data) setProfile(data)
   }
 
@@ -65,6 +65,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const isAdmin = profile?.role === 'admin'
   const balance = profile?.credit_balance || 0
+  const giftBalance = profile?.gift_balance || 0
   const path = router.pathname
 
   const sidebarStyle: React.CSSProperties = isMobile
@@ -114,9 +115,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </nav>
         <div style={s.sideBottom}>
           <div style={s.balanceCard}>
-            <div style={s.balanceLabel}>Credit Balance</div>
-            <div style={{ ...s.balanceVal, color: balance > 0 ? '#5DCAA5' : '#f09595' }}>
-              ${balance.toFixed(2)}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={s.balanceLabel}>Credit Balance</div>
+                <div style={{ ...s.balanceVal, color: balance > 0 ? '#5DCAA5' : '#f09595' }}>
+                  ${balance.toFixed(2)}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' as const }}>
+                <div style={{ ...s.balanceLabel, color: '#f5a623' }}>Gift Credit</div>
+                <div style={{ ...s.balanceVal, color: giftBalance > 0 ? '#f5a623' : '#f09595' }}>
+                  ${giftBalance.toFixed(2)}
+                </div>
+              </div>
             </div>
             <button onClick={() => setShowBuy(true)} style={s.topUpBtn}>+ Top up</button>
           </div>

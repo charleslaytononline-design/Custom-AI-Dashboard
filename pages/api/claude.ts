@@ -596,7 +596,10 @@ RULES:
     // Replace image placeholders with loading placeholders (frontend will replace with real URLs after build)
     const replaceImagePlaceholders = (html: string): string => {
       html = html.replace(/__GENERATED_IMAGE_URL__/g, imagePlaceholder)
-      html = html.replace(/__GENERATED_IMAGE_\d+__/g, imagePlaceholder)
+      // Keep numbered placeholders distinct so frontend can replace each individually
+      html = html.replace(/__GENERATED_IMAGE_(\d+)__/g, (_, n) =>
+        `https://placehold.co/1024x768/141414/444444?text=Loading+image+${n}...`
+      )
       return html
     }
 

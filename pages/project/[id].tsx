@@ -277,11 +277,14 @@ export default function ProjectBuilder() {
         })
         const data = await res.json()
         if (data.url) {
-          const numbered = `__GENERATED_IMAGE_${i + 1}__`
+          const num = i + 1
+          // Replace numbered loading placeholder for this specific image
+          const numberedLoading = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${num}...`
+          updatedCode = updatedCode.replace(new RegExp(numberedLoading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), data.url)
+          // Also replace generic loading placeholder (for __GENERATED_IMAGE_URL__ case)
           if (i === 0) {
             updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image\.\.\./g, data.url)
           }
-          updatedCode = updatedCode.replace(new RegExp(numbered.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), data.url)
           renderIframe(updatedCode)
           if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
         }
@@ -290,7 +293,7 @@ export default function ProjectBuilder() {
     )
 
     // Replace any remaining loading placeholders with fallback
-    updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image\.\.\./g, fallback)
+    updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image[^"]*/g, fallback)
 
     // Save final code with all images
     await savePage(updatedCode)
