@@ -963,7 +963,7 @@ export default function ProjectBuilder() {
 
           {sidebarTab === 'chat' && (
             <>
-              <div className={`flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 ${isMobile ? 'pb-[180px]' : ''}`}>
+              <div className={`flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 ${isMobile ? 'pb-[60px]' : ''}`}>
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-2 py-8 flex-1">
                     <div className="text-[28px] mb-3">✦</div>
@@ -1033,7 +1033,7 @@ export default function ProjectBuilder() {
                 </div>
               )}
 
-              <div className={`p-2.5 border-t border-white/[0.07] flex flex-col gap-2 shrink-0 bg-surface-1 ${isMobile ? 'fixed bottom-0 left-0 right-0 z-50 pb-safe' : ''}`}>
+              <div className="p-2.5 border-t border-white/[0.07] flex flex-col gap-2 shrink-0">
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => { setMode('plan'); setPendingPlan(null) }} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='plan' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Plan</button>
                   <button onClick={() => setMode('build')} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='build' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Build</button>
@@ -1043,18 +1043,6 @@ export default function ProjectBuilder() {
                   <span className="flex-1" />
                   <button onClick={() => fileInputRef.current?.click()} className="px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-md cursor-pointer text-sm" title="Attach image">🖼</button>
                   <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-                  {isMobile && (
-                    <div className="flex gap-1 ml-1">
-                      <button onClick={() => setMobilePanel('chat')}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer border ${mobilePanel === 'chat' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
-                        Chat
-                      </button>
-                      <button onClick={() => setMobilePanel('preview')}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer border ${mobilePanel === 'preview' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
-                        Preview
-                      </button>
-                    </div>
-                  )}
                 </div>
                 <textarea
                   value={input}
@@ -1062,7 +1050,7 @@ export default function ProjectBuilder() {
                   onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
                   onPaste={handlePaste}
                   placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
-                  rows={isMobile ? 2 : 3} className="p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
+                  rows={3} className="p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
                 />
                 <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
                   {loading ? 'Working...' : mode==='plan' ? 'Create Plan' : 'Build'}
@@ -1106,7 +1094,7 @@ export default function ProjectBuilder() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className={`flex-1 flex flex-col overflow-hidden ${isMobile && !showRight ? 'hidden' : ''} ${isMobile ? 'pb-[140px]' : ''}`}>
+        <div className={`flex-1 flex flex-col overflow-hidden ${isMobile && !showRight ? 'hidden' : ''} ${isMobile ? 'pb-[50px]' : ''}`}>
           <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.07] bg-surface-1 shrink-0">
             <div className="flex items-center gap-1.5 px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-[7px] shrink-0">
               <span className="text-xs text-[#555]">⊞</span>
@@ -1168,6 +1156,22 @@ export default function ProjectBuilder() {
           )}
         </div>
       </div>
+
+      {/* MOBILE BOTTOM NAV BAR */}
+      {isMobile && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-end px-3 h-[50px] border-t border-white/[0.07] bg-surface-1 pb-safe">
+          <div className="flex gap-1">
+            <button onClick={() => setMobilePanel('chat')}
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'chat' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              Chat
+            </button>
+            <button onClick={() => setMobilePanel('preview')}
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'preview' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              Preview
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Version History */}
       {showHistory && activePage && (
