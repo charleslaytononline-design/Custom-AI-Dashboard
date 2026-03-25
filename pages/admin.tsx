@@ -506,7 +506,8 @@ export default function Admin() {
 
     // Gift used = total gifted - current gift balances remaining
     const totalGiftBalanceRemaining = profiles.reduce((a: number, p: any) => a + (p.gift_balance || 0), 0)
-    setTotalGiftUsed(Math.max(0, giftTotal - totalGiftBalanceRemaining))
+    const totalGiftedInScope = Object.values(giftedAmounts).reduce((a, b) => a + b, 0)
+    setTotalGiftUsed(Math.max(0, totalGiftedInScope - totalGiftBalanceRemaining))
 
     setUsers(profiles.map((p: any) => ({
       ...p,

@@ -122,12 +122,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   ${balance.toFixed(2)}
                 </div>
               </div>
-              <div style={{ textAlign: 'right' as const }}>
-                <div style={{ ...s.balanceLabel, color: '#f5a623' }}>Gift Credit</div>
-                <div style={{ ...s.balanceVal, color: giftBalance > 0 ? '#f5a623' : '#f09595' }}>
-                  ${giftBalance.toFixed(2)}
+              {giftBalance > 0 && (
+                <div style={{ textAlign: 'right' as const }}>
+                  <div style={{ ...s.balanceLabel, color: '#f5a623' }}>Gift Credit</div>
+                  <div style={{ ...s.balanceVal, color: '#f5a623' }}>
+                    ${giftBalance.toFixed(2)}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <button onClick={() => setShowBuy(true)} style={s.topUpBtn}>+ Top up</button>
           </div>
