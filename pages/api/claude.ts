@@ -515,40 +515,51 @@ RULES:
     const maxImages = settings.maxImagesPerBuild
     const generatedImageUrls: (string | null)[] = []
 
+    // Time budget check — skip images if not enough time remaining
+    const elapsedBeforeImages = Date.now() - handlerStart
+    const remainingMs = 55_000 - elapsedBeforeImages // 55s budget, 5s buffer before Vercel 60s kill
+    if (imagePrompts.length > 0 && remainingMs < 5_000) {
+      await log('builder_error', 'warn', `Skipping image generation — only ${(remainingMs / 1000).toFixed(1)}s remaining`, userEmail, {
+        userId, pageName, imagesRequested: imagePrompts.length, elapsedMs: elapsedBeforeImages,
+      })
+      sendSSE({ type: 'status', text: 'Skipping images — not enough time remaining' })
+      imagePrompts.length = 0
+    }
+
     if (imagePrompts.length > 0) {
       const toGenerate = imagePrompts.slice(0, maxImages)
-      sendSSE({ type: 'status', text: `Generating ${toGenerate.length} image${toGenerate.length > 1 ? 's' : ''}...` })
-      for (let i = 0; i < toGenerate.length; i++) {
-        try {
-          const imgRes = await fetch(`${appUrl}/api/generate-image`, {
+      sendSSE({ type: 'status', text: `Generating ${toGenerate.length} image${toGenerate.length > 1 ? 's' : ''} in parallel...` })
+
+      // Generate all images concurrently
+      const imageResults = await Promise.allSettled(
+        toGenerate.map(prompt =>
+          fetch(`${appUrl}/api/generate-image`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: toGenerate[i], userId }),
-          })
-          const imgData = await imgRes.json()
-          if (imgData.url) {
-            generatedImageUrls.push(imgData.url)
-          } else if (imgData.error === 'storage_limit_reached') {
-            sendSSE({ type: 'status', text: imgData.message || 'Storage limit reached. Upgrade your plan for more storage.' })
-            await log('builder_error', 'warn', `Storage limit reached during image generation (image ${i + 1})`, userEmail, { userId, pageName })
-            generatedImageUrls.push(null)
-            break // stop generating more if storage is full
-          } else {
-            await log('builder_error', 'warn', `Image generation failed (image ${i + 1}): ${imgData.detail || imgData.error || 'unknown'}`, userEmail, {
-              userId, pageName, imagePrompt: toGenerate[i].slice(0, 200), error: imgData.detail || imgData.error,
-            })
-            generatedImageUrls.push(null)
-          }
-        } catch (imgErr: any) {
-          await log('builder_error', 'warn', `Image generation network error (image ${i + 1}): ${imgErr.message}`, userEmail, {
-            userId, pageName, error: imgErr.message,
+            body: JSON.stringify({ prompt, userId }),
+          }).then(r => r.json())
+        )
+      )
+
+      for (let i = 0; i < imageResults.length; i++) {
+        const result = imageResults[i]
+        if (result.status === 'fulfilled' && result.value.url) {
+          generatedImageUrls.push(result.value.url)
+        } else {
+          const reason = result.status === 'rejected'
+            ? result.reason?.message || 'Network error'
+            : (result.value?.error === 'storage_limit_reached'
+              ? 'Storage limit reached'
+              : result.value?.detail || result.value?.error || 'unknown')
+          await log('builder_error', 'warn', `Image ${i + 1}/${toGenerate.length} failed: ${reason}`, userEmail, {
+            userId, pageName, imageIndex: i + 1, total: toGenerate.length, error: reason,
           })
           generatedImageUrls.push(null)
         }
-        if (i < toGenerate.length - 1) {
-          sendSSE({ type: 'status', text: `Generating image ${i + 2} of ${toGenerate.length}...` })
-        }
       }
+
+      const succeeded = generatedImageUrls.filter(Boolean).length
+      sendSSE({ type: 'status', text: succeeded > 0 ? `Generated ${succeeded}/${toGenerate.length} images` : 'Image generation failed — using placeholders' })
     }
     // Backwards compat: first URL for legacy __GENERATED_IMAGE_URL__
     const generatedImageUrl = generatedImageUrls[0] || null
@@ -814,6 +825,10 @@ RULES:
       error: errMsg,
       elapsedSeconds: elapsedSec,
       stack: err.stack?.slice(0, 500),
+      imagesRequested: imagePrompts?.length || 0,
+      imagesGenerated: generatedImageUrls?.filter(Boolean).length || 0,
+      rawChars: (raw || '').length,
+      continuationCount,
     })
 
     // Record failed API cost in transactions so admin can see the loss
