@@ -34,7 +34,10 @@
       "Bash(cmd /c \"cd /d C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard && npm run build\")",
       "Bash(powershell -Command \"cd ''C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard''; npm run build 2>&1\")",
       "Bash(where npm:*)",
-      "Bash(cmd.exe /c \"where node\")"
+      "Bash(cmd.exe /c \"where node\")",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__deploy_to_vercel",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__list_deployments",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__get_deployment_build_logs"
     ]
   }
 }
