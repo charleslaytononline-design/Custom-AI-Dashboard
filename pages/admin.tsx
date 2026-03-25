@@ -52,6 +52,8 @@ interface UserRow {
   giftUsed?: number
   failedRequests?: number
   failedCost?: number
+  stopRequests?: number
+  stopCost?: number
 }
 
 interface Plan {
@@ -75,6 +77,7 @@ interface Settings {
   input_cost_per_1k: string
   output_cost_per_1k: string
   image_cost_per_gen: string
+  stop_limit_per_hour: string
 }
 
 // Verified pricing from official docs (March 2026) — per 1K tokens
@@ -149,7 +152,7 @@ export default function Admin() {
   const [user, setUser] = useState<any>(null)
   const [users, setUsers] = useState<UserRow[]>([])
   const [plans, setPlans] = useState<Plan[]>([])
-  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05' })
+  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training'>('users')
@@ -166,6 +169,8 @@ export default function Admin() {
   const [totalGiftUsed, setTotalGiftUsed] = useState(0)
   const [failedCostTotal, setFailedCostTotal] = useState(0)
   const [failedCount, setFailedCount] = useState(0)
+  const [stoppedCostTotal, setStoppedCostTotal] = useState(0)
+  const [stoppedCount, setStoppedCount] = useState(0)
   const [continuationTriggered, setContinuationTriggered] = useState(0)
   const [continuationCompleted, setContinuationCompleted] = useState(0)
   const [continuationFailed, setContinuationFailed] = useState(0)
@@ -461,6 +466,8 @@ export default function Admin() {
     const giftedAmounts: Record<string, number> = {}
     const failedCounts: Record<string, number> = {}
     const failedCosts: Record<string, number> = {}
+    const stopCounts: Record<string, number> = {}
+    const stopCosts: Record<string, number> = {}
 
     projects?.forEach((p: any) => { projectCounts[p.user_id] = (projectCounts[p.user_id] || 0) + 1 })
     pages?.forEach((p: any) => { pageCounts[p.user_id] = (pageCounts[p.user_id] || 0) + 1 })
@@ -489,6 +496,10 @@ export default function Admin() {
         failedCounts[t.user_id] = (failedCounts[t.user_id] || 0) + 1
         failedCosts[t.user_id] = (failedCosts[t.user_id] || 0) + (t.api_cost || 0)
       }
+      if (t.type === 'stopped') {
+        stopCounts[t.user_id] = (stopCounts[t.user_id] || 0) + 1
+        stopCosts[t.user_id] = (stopCosts[t.user_id] || 0) + (t.api_cost || 0)
+      }
     })
 
     // Calculate how much gifted credit has been used per user
@@ -514,6 +525,8 @@ export default function Admin() {
       giftUsed: Math.min(tokenSpend[p.id] || 0, giftedAmounts[p.id] || 0),
       failedRequests: failedCounts[p.id] || 0,
       failedCost: failedCosts[p.id] || 0,
+      stopRequests: stopCounts[p.id] || 0,
+      stopCost: stopCosts[p.id] || 0,
     })))
   }
 
@@ -522,7 +535,7 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      const defaults: Settings = { markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05' }
+      const defaults: Settings = { markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5' }
       setSettings({ ...defaults, ...map as unknown as Settings })
     }
   }
@@ -532,6 +545,7 @@ export default function Admin() {
     if (!data) return
     let revenue = 0, anthropicTotal = 0, replicateTotal = 0, giftTotal = 0
     let failedTotal = 0, failedCnt = 0
+    let stoppedTotal = 0, stoppedCnt = 0
     let contTriggered = 0, contCompleted = 0, contFailed = 0
     data.forEach((t: any) => {
       if (t.type === 'usage') {
@@ -544,6 +558,7 @@ export default function Admin() {
       }
       if (t.type === 'gift') giftTotal += Math.abs(t.amount)
       if (t.type === 'failed') { failedTotal += (t.api_cost || 0); failedCnt++ }
+      if (t.type === 'stopped') { stoppedTotal += (t.api_cost || 0); stoppedCnt++ }
       if (t.type === 'continuation') contTriggered++
     })
     // Failed builds that had continuations
@@ -556,6 +571,8 @@ export default function Admin() {
     setReplicateCostTotal(replicateTotal)
     setFailedCostTotal(failedTotal)
     setFailedCount(failedCnt)
+    setStoppedCostTotal(stoppedTotal)
+    setStoppedCount(stoppedCnt)
     setContinuationTriggered(contTriggered)
     setContinuationCompleted(contCompleted)
     setContinuationFailed(contFailed)
@@ -693,7 +710,7 @@ export default function Admin() {
   const isMobile = useMobile()
   const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
   const giftApiCost = totalGiftUsed > 0 ? totalGiftUsed / parseFloat(settings.markup_multiplier || '3') : 0
-  const actualProfit = totalProfit - giftApiCost - failedCostTotal
+  const actualProfit = totalProfit - giftApiCost - failedCostTotal - stoppedCostTotal
   const margin = totalRevenue > 0 ? ((actualProfit / totalRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
@@ -718,7 +735,7 @@ export default function Admin() {
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
           <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}</div>
+          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}{stoppedCostTotal > 0 ? ` · -$${stoppedCostTotal.toFixed(2)} stop costs` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -758,11 +775,16 @@ export default function Admin() {
           <div style={s.statSub}>you keep ${totalRevenue > 0 ? (1 - totalApiCost / totalRevenue).toFixed(3) : '1.000'} per $1</div>
         </div>
       </div>
-      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)', marginBottom: 0 }}>
+      <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', marginBottom: 0 }}>
         <div style={{ ...s.statCard, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#f87171' }}>Failed Requests</div>
           <div style={{ ...s.statVal, color: '#f87171', fontSize: 18 }}>${failedCostTotal.toFixed(4)}</div>
           <div style={s.statSub}>{failedCount} failed API calls not charged to users</div>
+        </div>
+        <div style={{ ...s.statCard, border: '1px solid rgba(192,132,252,0.2)', background: 'rgba(192,132,252,0.05)' }}>
+          <div style={{ ...s.statLabel, color: '#c084fc' }}>Stop Costs</div>
+          <div style={{ ...s.statVal, color: '#c084fc', fontSize: 18 }}>${stoppedCostTotal.toFixed(4)}</div>
+          <div style={s.statSub}>{stoppedCount} stopped builds not charged to users</div>
         </div>
         <div style={{ ...s.statCard, border: '1px solid rgba(251,146,60,0.2)', background: 'rgba(251,146,60,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fb923c' }}>Continuations</div>
@@ -813,6 +835,8 @@ export default function Admin() {
                   <th style={s.th}>Profit</th>
                   <th style={{ ...s.th, color: '#fb923c' }}>Failed</th>
                   <th style={{ ...s.th, color: '#f87171' }}>Failed $</th>
+                  <th style={{ ...s.th, color: '#c084fc' }}>Stopped</th>
+                  <th style={{ ...s.th, color: '#c084fc' }}>Stop $</th>
                   <th style={s.th}>Last Active</th>
                   <th style={s.th}>Last Login</th>
                   <th style={s.th}>Status</th>
@@ -856,9 +880,11 @@ export default function Admin() {
                     <td style={s.td}><span style={{ ...s.num, color: '#2dd4bf' }}>${(u.replicateCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.tokenCount || 0).toLocaleString()}</span></td>
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
-                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0) - (u.failedCost || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0) - (u.failedCost || 0) - (u.stopCost || 0)).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#fb923c' }}>{u.failedRequests || 0}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#f87171' }}>${(u.failedCost || 0).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#c084fc' }}>{u.stopRequests || 0}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#c084fc' }}>${(u.stopCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastActive)}</span></td>
                     <td style={s.td}><span style={s.num}>{formatDate(u.lastLogin)}</span></td>
                     <td style={s.td}>
@@ -1035,6 +1061,11 @@ export default function Admin() {
                 <label style={s.label}>Image Cost per Generation ($) — {aiImageModel.split('/').pop()}</label>
                 <p style={s.fieldDesc}>Default for {aiImageModel.split('/').pop()}: ${IMAGE_MODEL_PRICING[aiImageModel] ?? '?'}</p>
                 <input type="number" value={settings.image_cost_per_gen} onChange={e => setSettings(p => ({ ...p, image_cost_per_gen: e.target.value }))} style={s.input} step="0.001" min="0" />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Stop Button Limit (per hour)</label>
+                <p style={s.fieldDesc}>Max times a user can stop a build per hour without being charged. After this limit, stopped builds are charged normally. Default: 5</p>
+                <input type="number" value={settings.stop_limit_per_hour} onChange={e => setSettings(p => ({ ...p, stop_limit_per_hour: e.target.value }))} style={s.input} step="1" min="1" />
               </div>
             </div>
             <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 7, fontSize: 11, color: '#888', lineHeight: 1.5 }}>

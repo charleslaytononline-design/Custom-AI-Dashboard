@@ -334,8 +334,10 @@ RULES:
   }
 
   let heartbeat: ReturnType<typeof setInterval> | null = null
-
   let finalMessage: any = null // declared outside try so catch can access for failed cost tracking
+  let clientDisconnected = false
+  let streamCompleted = false
+  let raw = ''
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -375,6 +377,9 @@ RULES:
     res.setHeader('X-Accel-Buffering', 'no')
     res.status(200)
 
+    // Track client disconnect (user clicked Stop or closed tab)
+    res.on('close', () => { clientDisconnected = true })
+
     // Send immediate status to prevent early idle timeout
     sendSSE({ type: 'status', text: isContinuation ? `Continuing build (part ${continuationCount + 1})...` : 'Starting build...' })
 
@@ -386,12 +391,15 @@ RULES:
       messages: apiMessages,
     })
 
-    let raw = ''
     const streamStart = Date.now()
 
     // Stream text deltas to the client
     stream.on('text', (text) => {
       raw += text
+      if (clientDisconnected) {
+        try { stream.abort() } catch (_) {}
+        return
+      }
       sendSSE({ type: 'delta', text })
     })
 
@@ -404,6 +412,43 @@ RULES:
     try {
       finalMessage = await Promise.race([stream.finalMessage(), timeoutPromise])
     } catch (timeoutErr: any) {
+      // Handle client disconnect (user clicked Stop)
+      if (clientDisconnected) {
+        try { stream.abort() } catch (_) {}
+        const estimatedOutputTokens = Math.ceil(raw.length / 4)
+        const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
+
+        // Check if user has exceeded stop limit — if so, charge them normally
+        let chargeUser = false
+        try {
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+          const { count } = await supabase.from('transactions').select('*', { count: 'exact', head: true })
+            .eq('user_id', userId).eq('type', 'stopped').gte('created_at', oneHourAgo)
+          const { data: limitSetting } = await supabase.from('settings').select('value').eq('key', 'stop_limit_per_hour').single()
+          const stopLimit = parseInt(limitSetting?.value || '5', 10)
+          if (count !== null && count >= stopLimit) chargeUser = true
+        } catch (_) {}
+
+        const userCharge = chargeUser ? partialCost * settings.markupMultiplier : 0
+        const txType = chargeUser ? 'usage' : 'stopped'
+
+        try {
+          await supabase.from('transactions').insert({
+            user_id: userId, amount: userCharge, api_cost: partialCost, tokens_used: estimatedOutputTokens,
+            type: txType, description: `User stopped ${planOnly ? 'plan' : 'build'}: ${pageName}${chargeUser ? ' (stop limit exceeded, charged)' : ''}`,
+          })
+          if (chargeUser) {
+            await supabase.rpc('deduct_credits', { p_user_id: userId, p_amount: userCharge, p_description: `Stopped build (limit exceeded): ${pageName}`, p_tokens_used: estimatedOutputTokens, p_api_cost: partialCost })
+          }
+        } catch (_) {}
+
+        await log('builder_stopped', 'info', `Build stopped by user after ${((Date.now() - handlerStart) / 1000).toFixed(1)}s`, userEmail, {
+          userId, pageName, partialChars: raw.length, estimatedCost: partialCost, chargedUser: chargeUser,
+        })
+        try { res.end() } catch (_) {}
+        return
+      }
+
       if (timeoutErr.message === '__CONTINUATION__') {
         // Gracefully abort the stream and send continuation signal to client
         try { stream.abort() } catch (_) {}
@@ -430,6 +475,9 @@ RULES:
       }
       throw timeoutErr
     }
+
+    // Stream completed — mark so disconnect handler won't double-record
+    streamCompleted = true
 
     // Start heartbeat to keep connection alive during post-processing (image gen, table creation, etc.)
     heartbeat = setInterval(() => {
@@ -692,6 +740,21 @@ RULES:
   } catch (err: any) {
     // Clean up heartbeat if it was started
     if (heartbeat) clearInterval(heartbeat)
+
+    // If client disconnected and stream wasn't completed, record as 'stopped' not 'failed'
+    if (clientDisconnected && !streamCompleted) {
+      const estimatedOutputTokens = Math.ceil((raw || '').length / 4)
+      const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
+      try {
+        await supabase.from('transactions').insert({
+          user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
+          type: 'stopped', description: `User stopped ${planOnly ? 'plan' : 'build'}: ${pageName}`,
+        })
+      } catch (_) {}
+      await log('builder_stopped', 'info', `Build stopped by user (outer catch)`, userEmail, { userId, pageName, partialChars: (raw || '').length })
+      try { res.end() } catch (_) {}
+      return
+    }
 
     const errMsg = err.message || 'Unknown error'
     let userMessage = errMsg

@@ -44,6 +44,7 @@ export default function ProjectBuilder() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -355,13 +356,17 @@ export default function ProjectBuilder() {
       }
 
       let fetchRes: Response
+      const controller = new AbortController()
+      abortControllerRef.current = controller
       try {
         fetchRes = await fetch('/api/claude', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         })
       } catch (networkErr: any) {
+        if (networkErr.name === 'AbortError') throw new Error('__USER_STOPPED__')
         throw new Error('The builder timed out. Try a simpler request or try again.')
       }
 
@@ -401,42 +406,47 @@ export default function ProjectBuilder() {
       let result: any = null
       let shouldContinue = false
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const event = JSON.parse(line.slice(6))
-            if (event.type === 'delta' && onDelta) {
-              onDelta(event.text)
-            } else if (event.type === 'status' && onStatus) {
-              onStatus(event.text)
-            } else if (event.type === 'done') {
-              result = event
-            } else if (event.type === 'continue') {
-              // Server hit its time limit — accumulate partial and auto-continue
-              accumulatedPartialRaw = event.partialRaw || ''
-              continuationCount = event.continuationCount || (continuationCount + 1)
-              accumulatedApiCost = event.accumulatedApiCost || 0
-              shouldContinue = true
-              if (onStatus) onStatus(`⏳ Build continuing (part ${continuationCount + 1})...`)
-            } else if (event.type === 'error') {
-              if (event.error === 'insufficient_credits') {
-                setShowBuyCredits(true)
-                throw new Error(event.message || 'Insufficient credits')
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const event = JSON.parse(line.slice(6))
+              if (event.type === 'delta' && onDelta) {
+                onDelta(event.text)
+              } else if (event.type === 'status' && onStatus) {
+                onStatus(event.text)
+              } else if (event.type === 'done') {
+                result = event
+              } else if (event.type === 'continue') {
+                // Server hit its time limit — accumulate partial and auto-continue
+                accumulatedPartialRaw = event.partialRaw || ''
+                continuationCount = event.continuationCount || (continuationCount + 1)
+                accumulatedApiCost = event.accumulatedApiCost || 0
+                shouldContinue = true
+                if (onStatus) onStatus(`⏳ Build continuing (part ${continuationCount + 1})...`)
+              } else if (event.type === 'error') {
+                if (event.error === 'insufficient_credits') {
+                  setShowBuyCredits(true)
+                  throw new Error(event.message || 'Insufficient credits')
+                }
+                throw new Error(event.error || event.message || 'Build failed')
               }
-              throw new Error(event.error || event.message || 'Build failed')
+            } catch (parseErr: any) {
+              if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
             }
-          } catch (parseErr: any) {
-            if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
           }
         }
+      } catch (streamErr: any) {
+        if (streamErr.name === 'AbortError') throw new Error('__USER_STOPPED__')
+        throw streamErr
       }
 
       // If we received a 'continue' event, loop back for another API call
@@ -451,6 +461,21 @@ export default function ProjectBuilder() {
       if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
       return result
     }
+  }
+
+  async function handleStop() {
+    try {
+      const res = await fetch(`/api/check-stop-limit?userId=${user?.id}`)
+      const data = await res.json()
+      if (!data.allowed) {
+        setLastError(`Stop limit reached (${data.limit} per hour). Build will continue and you will be charged.`)
+        return
+      }
+    } catch (_) {
+      // If rate limit check fails, still allow the stop
+    }
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
   }
 
   async function getPlan() {
@@ -483,14 +508,24 @@ export default function ProjectBuilder() {
       await saveChatMessage('assistant', data.message, true)
       setPendingPlan(savedInput)
     } catch (err: any) {
-      setLastError(err.message)
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
-        return updated
-      })
-      await saveChatMessage('assistant', 'Error: ' + err.message)
-      logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
+      if (err.message === '__USER_STOPPED__') {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Stopped by user.')
+        logEvent('builder_stopped', 'info', `Plan generation stopped by user`, { pageName: activePage?.name, projectId })
+      } else {
+        setLastError(err.message)
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Error: ' + err.message)
+        logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
+      }
     }
     setLoading(false)
   }
@@ -545,21 +580,31 @@ export default function ProjectBuilder() {
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
-      const phase = streamingMsg.content || 'starting'
-      const errDetail = `${err.message} (failed during: ${phase})`
-      setLastError(errDetail)
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
-        return updated
-      })
-      await saveChatMessage('assistant', 'Error: ' + errDetail)
-      const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
-      logEvent('builder_error', 'error', `approvePlan failed after ${elapsedSec}s: ${err.message}`, {
-        pageName: activePage?.name, projectId, phase, elapsedSeconds: elapsedSec,
-        partialResponseChars: rawAccumulator.length, userPromptPreview: pendingPlan?.slice(0, 200),
-        stack: err.stack?.slice(0, 300),
-      })
+      if (err.message === '__USER_STOPPED__') {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Stopped by user.')
+        logEvent('builder_stopped', 'info', `Build stopped by user during approvePlan`, { pageName: activePage?.name, projectId })
+      } else {
+        const phase = streamingMsg.content || 'starting'
+        const errDetail = `${err.message} (failed during: ${phase})`
+        setLastError(errDetail)
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Error: ' + errDetail)
+        const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
+        logEvent('builder_error', 'error', `approvePlan failed after ${elapsedSec}s: ${err.message}`, {
+          pageName: activePage?.name, projectId, phase, elapsedSeconds: elapsedSec,
+          partialResponseChars: rawAccumulator.length, userPromptPreview: pendingPlan?.slice(0, 200),
+          stack: err.stack?.slice(0, 300),
+        })
+      }
     }
     setLoading(false)
   }
@@ -638,14 +683,22 @@ export default function ProjectBuilder() {
         pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300), success: !!data.code,
       })
     } catch (err: any) {
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: `Auto-fix failed: ${err.message}` }
-        return updated
-      })
-      logEvent('auto_fix_error', 'error', `Auto-fix failed: ${err.message}`, {
-        pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300),
-      })
+      if (err.message === '__USER_STOPPED__') {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Auto-fix stopped by user.' }
+          return updated
+        })
+      } else {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: `Auto-fix failed: ${err.message}` }
+          return updated
+        })
+        logEvent('auto_fix_error', 'error', `Auto-fix failed: ${err.message}`, {
+          pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300),
+        })
+      }
     }
     setLoading(false)
     setIsAutoFixing(false)
@@ -713,20 +766,30 @@ export default function ProjectBuilder() {
       if (data.layoutUpdated) await loadProject()
       if (data.pagesCreated?.length > 0) await loadPages()
     } catch (err: any) {
-      const phase = streamingMsg.content || 'starting'
-      const errDetail = `${err.message} (failed during: ${phase})`
-      setLastError(errDetail)
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
-        return updated
-      })
-      await saveChatMessage('assistant', 'Error: ' + errDetail)
-      const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
-      logEvent('builder_error', 'error', `sendMessage failed after ${elapsedSec}s: ${err.message}`, {
-        pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase,
-        elapsedSeconds: elapsedSec, partialResponseChars: rawAccumulator.length,
-      })
+      if (err.message === '__USER_STOPPED__') {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Stopped by user.')
+        logEvent('builder_stopped', 'info', `Build stopped by user`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
+      } else {
+        const phase = streamingMsg.content || 'starting'
+        const errDetail = `${err.message} (failed during: ${phase})`
+        setLastError(errDetail)
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
+          return updated
+        })
+        await saveChatMessage('assistant', 'Error: ' + errDetail)
+        const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
+        logEvent('builder_error', 'error', `sendMessage failed after ${elapsedSec}s: ${err.message}`, {
+          pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase,
+          elapsedSeconds: elapsedSec, partialResponseChars: rawAccumulator.length,
+        })
+      }
     }
     setLoading(false)
   }
@@ -890,6 +953,9 @@ export default function ProjectBuilder() {
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => { setMode('plan'); setPendingPlan(null) }} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='plan' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Plan</button>
                   <button onClick={() => setMode('build')} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='build' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Build</button>
+                  {loading && (
+                    <button onClick={handleStop} className="px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border bg-red-500/[0.15] border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors" title="Stop current operation">Stop</button>
+                  )}
                   <span className="flex-1" />
                   <button onClick={() => fileInputRef.current?.click()} className="px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-md cursor-pointer text-sm" title="Attach image">🖼</button>
                   <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
