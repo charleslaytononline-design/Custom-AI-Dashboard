@@ -72,6 +72,22 @@ interface Settings {
   markup_multiplier: string
   input_cost_per_1k: string
   output_cost_per_1k: string
+  image_cost_per_gen: string
+}
+
+// Verified pricing from official docs (March 2026) — per 1K tokens
+const MODEL_PRICING: Record<string, { input_cost_per_1k: number; output_cost_per_1k: number }> = {
+  'claude-opus-4-6':           { input_cost_per_1k: 0.005,  output_cost_per_1k: 0.025  },
+  'claude-sonnet-4-6':         { input_cost_per_1k: 0.003,  output_cost_per_1k: 0.015  },
+  'claude-sonnet-4-5':         { input_cost_per_1k: 0.003,  output_cost_per_1k: 0.015  },
+  'claude-haiku-4-5-20251001': { input_cost_per_1k: 0.001,  output_cost_per_1k: 0.005  },
+}
+
+// Verified pricing from Replicate/BFL (March 2026) — per image
+const IMAGE_MODEL_PRICING: Record<string, number> = {
+  'black-forest-labs/flux-2-pro':   0.05,
+  'black-forest-labs/flux-1.1-pro': 0.04,
+  'black-forest-labs/flux-schnell': 0.003,
 }
 
 interface Role {
@@ -131,10 +147,10 @@ export default function Admin() {
   const [user, setUser] = useState<any>(null)
   const [users, setUsers] = useState<UserRow[]>([])
   const [plans, setPlans] = useState<Plan[]>([])
-  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015' })
+  const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'ai_connections' | 'actions' | 'ai_training'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -185,8 +201,7 @@ export default function Admin() {
   // AI Connections state
   const [aiChatModel, setAiChatModel] = useState('claude-sonnet-4-5')
   const [aiImageModel, setAiImageModel] = useState('black-forest-labs/flux-2-pro')
-  const [aiConnectionsSaving, setAiConnectionsSaving] = useState(false)
-  const [aiConnectionsMsg, setAiConnectionsMsg] = useState('')
+  // aiConnectionsSaving and aiConnectionsMsg removed — AI Connections merged into Settings tab
 
   // AI Training state
   interface TrainingRule { id: string; type: 'global' | 'keyword'; keywords: string | null; instructions: string; enabled: boolean; priority: number; created_at: string }
@@ -246,14 +261,7 @@ export default function Admin() {
     }
   }
 
-  async function saveAiConnections() {
-    setAiConnectionsSaving(true)
-    await supabase.from('settings').upsert({ key: 'ai_chat_model', value: aiChatModel, updated_at: new Date().toISOString() })
-    await supabase.from('settings').upsert({ key: 'ai_image_model', value: aiImageModel, updated_at: new Date().toISOString() })
-    setAiConnectionsSaving(false)
-    setAiConnectionsMsg('Saved! Changes apply to the next build.')
-    setTimeout(() => setAiConnectionsMsg(''), 4000)
-  }
+  // saveAiConnections removed — AI model saves are now part of saveSettings()
 
   async function loadTrainingRules() {
     const res = await fetch('/api/admin/ai-training')
@@ -499,7 +507,8 @@ export default function Admin() {
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
-      setSettings(map as unknown as Settings)
+      const defaults: Settings = { markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05' }
+      setSettings({ ...defaults, ...map as unknown as Settings })
     }
   }
 
@@ -526,11 +535,16 @@ export default function Admin() {
 
   async function saveSettings() {
     setSavingSettings(true)
-    for (const [key, value] of Object.entries(settings)) {
+    const allSettings: Record<string, string> = {
+      ...settings,
+      ai_chat_model: aiChatModel,
+      ai_image_model: aiImageModel,
+    }
+    for (const [key, value] of Object.entries(allSettings)) {
       await supabase.from('settings').upsert({ key, value, updated_at: new Date().toISOString() })
     }
     setSavingSettings(false)
-    alert('Settings saved!')
+    alert('Settings saved! Changes apply to the next build or image generation.')
   }
 
   async function giftCredits() {
@@ -719,9 +733,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_connections', 'ai_training', 'actions'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_connections' ? 'AI Connections' : tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -848,27 +862,133 @@ export default function Admin() {
       {/* SETTINGS TAB */}
       {activeTab === 'settings' && (
         <div style={s.section}>
+          {/* AI Model Selection (moved from AI Connections tab) */}
+          <h2 style={s.sectionTitle}>AI Model Selection</h2>
+          <p style={{ fontSize: 12, color: '#555', marginTop: -10, marginBottom: 16 }}>Choose which AI models power your platform. Changing a model auto-updates the pricing fields below.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
+            {/* Chat / Text model */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🤖</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Chat / Text Model</div>
+                  <div style={{ fontSize: 11, color: '#555' }}>Anthropic — powers the AI builder</div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Model</label>
+                <select value={aiChatModel} onChange={e => {
+                  const model = e.target.value
+                  setAiChatModel(model)
+                  const pricing = MODEL_PRICING[model]
+                  if (pricing) {
+                    setSettings(prev => ({
+                      ...prev,
+                      input_cost_per_1k: String(pricing.input_cost_per_1k),
+                      output_cost_per_1k: String(pricing.output_cost_per_1k),
+                    }))
+                  }
+                }} style={{ ...s.select, marginBottom: 12 }}>
+                  <optgroup label="Claude 4.6">
+                    <option value="claude-opus-4-6">claude-opus-4-6 — most capable, slowest</option>
+                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — best balance (recommended)</option>
+                  </optgroup>
+                  <optgroup label="Claude 4.5">
+                    <option value="claude-sonnet-4-5">claude-sonnet-4-5 — fast, capable</option>
+                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
+                  </optgroup>
+                </select>
+                <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 8, fontSize: 11, color: '#9d92f5', lineHeight: 1.6 }}>
+                  <strong>Current:</strong> {aiChatModel}<br />
+                  <strong>Input:</strong> ${MODEL_PRICING[aiChatModel]?.input_cost_per_1k ?? '?'}/1K tokens | <strong>Output:</strong> ${MODEL_PRICING[aiChatModel]?.output_cost_per_1k ?? '?'}/1K tokens
+                </div>
+              </div>
+            </div>
+
+            {/* Image model */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(20,184,166,0.2)', background: 'rgba(20,184,166,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(20,184,166,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🎨</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Image Generation Model</div>
+                  <div style={{ fontSize: 11, color: '#555' }}>Replicate — generates images in built apps</div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Model</label>
+                <select value={aiImageModel} onChange={e => {
+                  const model = e.target.value
+                  setAiImageModel(model)
+                  const cost = IMAGE_MODEL_PRICING[model]
+                  if (cost !== undefined) {
+                    setSettings(prev => ({
+                      ...prev,
+                      image_cost_per_gen: String(cost),
+                    }))
+                  }
+                }} style={{ ...s.select, marginBottom: 12 }}>
+                  <optgroup label="Black Forest Labs (Flux)">
+                    <option value="black-forest-labs/flux-2-pro">flux-2-pro — highest quality (recommended)</option>
+                    <option value="black-forest-labs/flux-1.1-pro">flux-1.1-pro — reliable fallback</option>
+                    <option value="black-forest-labs/flux-schnell">flux-schnell — fastest, cheapest</option>
+                  </optgroup>
+                </select>
+                <div style={{ padding: '10px 14px', background: 'rgba(20,184,166,0.07)', border: '1px solid rgba(20,184,166,0.15)', borderRadius: 8, fontSize: 11, color: '#2dd4bf', lineHeight: 1.6 }}>
+                  <strong>Current:</strong> {aiImageModel}<br />
+                  <strong>Cost per image:</strong> ${IMAGE_MODEL_PRICING[aiImageModel] ?? '?'}
+                </div>
+              </div>
+              <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(240,169,82,0.07)', border: '1px solid rgba(240,169,82,0.15)', borderRadius: 7, fontSize: 11, color: '#f0a952', lineHeight: 1.5 }}>
+                ⚡ <strong>Auto-fallback enabled:</strong> If flux-2-pro fails due to an SSL or network error on Replicate's servers, the platform will automatically retry with flux-1.1-pro and log the fallback.
+              </div>
+            </div>
+          </div>
+
+          {/* API Keys Info */}
+          <div style={{ ...s.settingsCard, marginBottom: 24, background: 'rgba(255,255,255,0.02)' }}>
+            <h3 style={{ fontSize: 13, fontWeight: 500, color: '#888', marginBottom: 12 }}>How to add your own API keys</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, fontSize: 12, color: '#555', lineHeight: 1.7 }}>
+              <div>
+                <div style={{ color: '#9d92f5', fontWeight: 500, marginBottom: 4 }}>Anthropic (Chat)</div>
+                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>ANTHROPIC_API_KEY</code> in your Vercel environment variables. Get a key at console.anthropic.com.
+              </div>
+              <div>
+                <div style={{ color: '#2dd4bf', fontWeight: 500, marginBottom: 4 }}>Replicate (Images)</div>
+                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>REPLICATE_API_TOKEN</code> in your Vercel environment variables. Get a token at replicate.com/account/api-tokens.
+              </div>
+            </div>
+          </div>
+
+          {/* Pricing Settings */}
           <h2 style={s.sectionTitle}>Pricing Settings</h2>
           <div style={s.settingsCard}>
-            <div style={{ ...s.settingsGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)' }}>
+            <div style={{ ...s.settingsGrid, gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr) repeat(2, 1fr)' }}>
               <div style={s.field}>
                 <label style={s.label}>Markup Multiplier</label>
-                <p style={s.fieldDesc}>How much to charge users vs what Anthropic charges you. 3x = 66% margin.</p>
+                <p style={s.fieldDesc}>How much to charge users vs what the AI costs you. 3x = 66% margin.</p>
                 <input type="number" value={settings.markup_multiplier} onChange={e => setSettings(p => ({ ...p, markup_multiplier: e.target.value }))} style={s.input} step="0.1" min="1" />
                 <div style={s.previewBox}>
                   At {settings.markup_multiplier}x: You pay $0.01 → User pays ${(0.01 * parseFloat(settings.markup_multiplier || '1')).toFixed(3)} → Your profit: ${(0.01 * parseFloat(settings.markup_multiplier || '1') - 0.01).toFixed(3)} ({((1 - 1 / parseFloat(settings.markup_multiplier || '1')) * 100).toFixed(0)}% margin)
                 </div>
               </div>
               <div style={s.field}>
-                <label style={s.label}>Input Cost per 1k tokens ($)</label>
-                <p style={s.fieldDesc}>Anthropic's actual charge for input tokens. Claude Sonnet = ~$0.003</p>
+                <label style={s.label}>Input Cost per 1K tokens ($) — {aiChatModel}</label>
+                <p style={s.fieldDesc}>Default for {aiChatModel}: ${MODEL_PRICING[aiChatModel]?.input_cost_per_1k ?? '?'}</p>
                 <input type="number" value={settings.input_cost_per_1k} onChange={e => setSettings(p => ({ ...p, input_cost_per_1k: e.target.value }))} style={s.input} step="0.001" min="0" />
               </div>
               <div style={s.field}>
-                <label style={s.label}>Output Cost per 1k tokens ($)</label>
-                <p style={s.fieldDesc}>Anthropic's actual charge for output tokens. Claude Sonnet = ~$0.015</p>
+                <label style={s.label}>Output Cost per 1K tokens ($) — {aiChatModel}</label>
+                <p style={s.fieldDesc}>Default for {aiChatModel}: ${MODEL_PRICING[aiChatModel]?.output_cost_per_1k ?? '?'}</p>
                 <input type="number" value={settings.output_cost_per_1k} onChange={e => setSettings(p => ({ ...p, output_cost_per_1k: e.target.value }))} style={s.input} step="0.001" min="0" />
               </div>
+              <div style={s.field}>
+                <label style={s.label}>Image Cost per Generation ($) — {aiImageModel.split('/').pop()}</label>
+                <p style={s.fieldDesc}>Default for {aiImageModel.split('/').pop()}: ${IMAGE_MODEL_PRICING[aiImageModel] ?? '?'}</p>
+                <input type="number" value={settings.image_cost_per_gen} onChange={e => setSettings(p => ({ ...p, image_cost_per_gen: e.target.value }))} style={s.input} step="0.001" min="0" />
+              </div>
+            </div>
+            <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 7, fontSize: 11, color: '#888', lineHeight: 1.5 }}>
+              💡 Prices auto-populate when you change the model above. You can override them manually. Verify at <a href="https://anthropic.com/pricing" target="_blank" style={{ color: '#9d92f5' }}>anthropic.com/pricing</a> and <a href="https://replicate.com/pricing" target="_blank" style={{ color: '#2dd4bf' }}>replicate.com/pricing</a>
             </div>
             <div style={s.marginPreview}>
               <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Margin Preview</h3>
@@ -884,6 +1004,11 @@ export default function Admin() {
                   </div>
                 )
               })}
+              <div style={{ ...s.marginRow, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, marginTop: 8 }}>
+                <span style={{ color: '#888', fontSize: 13 }}>1 image generation</span>
+                <span style={{ color: '#f09595', fontSize: 13 }}>API cost: ${parseFloat(settings.image_cost_per_gen || '0.05').toFixed(3)}</span>
+                <span style={{ color: '#5DCAA5', fontSize: 13 }}>User pays: ${(parseFloat(settings.image_cost_per_gen || '0.05') * parseFloat(settings.markup_multiplier || '3')).toFixed(3)}</span>
+              </div>
             </div>
             <button onClick={saveSettings} disabled={savingSettings} style={s.saveBtn}>
               {savingSettings ? 'Saving...' : 'Save Settings'}
@@ -1603,101 +1728,7 @@ export default function Admin() {
         )
       })()}
 
-      {/* AI CONNECTIONS TAB */}
-      {activeTab === 'ai_connections' && (
-        <div style={s.section}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <div>
-              <h2 style={s.sectionTitle}>AI Connections</h2>
-              <p style={{ fontSize: 12, color: '#555', marginTop: -10 }}>Choose which AI models power your platform. Changes take effect on the next build or image generation.</p>
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              {aiConnectionsMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{aiConnectionsMsg}</span>}
-              <button onClick={saveAiConnections} disabled={aiConnectionsSaving} style={s.saveBtn}>
-                {aiConnectionsSaving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            {/* Chat / Text model */}
-            <div style={{ ...s.settingsCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🤖</div>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Chat / Text Model</div>
-                  <div style={{ fontSize: 11, color: '#555' }}>Anthropic — powers the AI builder</div>
-                </div>
-              </div>
-              <div style={s.field}>
-                <label style={s.label}>Model</label>
-                <select value={aiChatModel} onChange={e => setAiChatModel(e.target.value)} style={{ ...s.select, marginBottom: 12 }}>
-                  <optgroup label="Claude 4.6">
-                    <option value="claude-opus-4-6">claude-opus-4-6 — most capable, slowest</option>
-                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — best balance (recommended)</option>
-                  </optgroup>
-                  <optgroup label="Claude 4.5">
-                    <option value="claude-sonnet-4-5">claude-sonnet-4-5 — fast, capable</option>
-                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest</option>
-                  </optgroup>
-                </select>
-                <div style={{ padding: '10px 14px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 8, fontSize: 11, color: '#9d92f5', lineHeight: 1.6 }}>
-                  <strong>Current:</strong> {aiChatModel}<br />
-                  {aiChatModel.includes('opus') && 'Highest quality, ~$15/1M input tokens. Great for complex apps.'}
-                  {aiChatModel.includes('sonnet-4-6') && 'Latest Sonnet. Excellent quality with fast response times.'}
-                  {aiChatModel.includes('sonnet-4-5') && 'Reliable and fast. Best for most builds.'}
-                  {aiChatModel.includes('haiku') && 'Fastest and cheapest. Good for simple pages.'}
-                </div>
-              </div>
-            </div>
-
-            {/* Image model */}
-            <div style={{ ...s.settingsCard, border: '1px solid rgba(20,184,166,0.2)', background: 'rgba(20,184,166,0.03)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(20,184,166,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🎨</div>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Image Generation Model</div>
-                  <div style={{ fontSize: 11, color: '#555' }}>Replicate — generates images in built apps</div>
-                </div>
-              </div>
-              <div style={s.field}>
-                <label style={s.label}>Model</label>
-                <select value={aiImageModel} onChange={e => setAiImageModel(e.target.value)} style={{ ...s.select, marginBottom: 12 }}>
-                  <optgroup label="Black Forest Labs (Flux)">
-                    <option value="black-forest-labs/flux-2-pro">flux-2-pro — highest quality (recommended)</option>
-                    <option value="black-forest-labs/flux-1.1-pro">flux-1.1-pro — reliable fallback</option>
-                    <option value="black-forest-labs/flux-schnell">flux-schnell — fastest, cheapest</option>
-                  </optgroup>
-                </select>
-                <div style={{ padding: '10px 14px', background: 'rgba(20,184,166,0.07)', border: '1px solid rgba(20,184,166,0.15)', borderRadius: 8, fontSize: 11, color: '#2dd4bf', lineHeight: 1.6 }}>
-                  <strong>Current:</strong> {aiImageModel}<br />
-                  {aiImageModel.includes('flux-2-pro') && 'Best quality. Auto-falls back to flux-1.1-pro on SSL/network errors.'}
-                  {aiImageModel.includes('flux-1.1-pro') && 'Highly reliable. Good quality. Used as fallback for flux-2-pro.'}
-                  {aiImageModel.includes('schnell') && 'Fastest generation (~5s). Lower quality, great for testing.'}
-                </div>
-              </div>
-              <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(240,169,82,0.07)', border: '1px solid rgba(240,169,82,0.15)', borderRadius: 7, fontSize: 11, color: '#f0a952', lineHeight: 1.5 }}>
-                ⚡ <strong>Auto-fallback enabled:</strong> If flux-2-pro fails due to an SSL or network error on Replicate's servers, the platform will automatically retry with flux-1.1-pro and log the fallback.
-              </div>
-            </div>
-          </div>
-
-          {/* Info section */}
-          <div style={{ ...s.settingsCard, marginTop: 16, background: 'rgba(255,255,255,0.02)' }}>
-            <h3 style={{ fontSize: 13, fontWeight: 500, color: '#888', marginBottom: 12 }}>How to add your own API keys</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, fontSize: 12, color: '#555', lineHeight: 1.7 }}>
-              <div>
-                <div style={{ color: '#9d92f5', fontWeight: 500, marginBottom: 4 }}>Anthropic (Chat)</div>
-                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>ANTHROPIC_API_KEY</code> in your Vercel environment variables. Get a key at console.anthropic.com.
-              </div>
-              <div>
-                <div style={{ color: '#2dd4bf', fontWeight: 500, marginBottom: 4 }}>Replicate (Images)</div>
-                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>REPLICATE_API_TOKEN</code> in your Vercel environment variables. Get a token at replicate.com/account/api-tokens.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* AI CONNECTIONS TAB — removed, merged into Settings tab above */}
 
       {/* WELCOME TAB */}
       {activeTab === 'welcome' && (() => {

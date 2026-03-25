@@ -6,9 +6,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const COST_PER_IMAGE = 0.003  // what Replicate charges you
-const MARKUP_PER_IMAGE = 0.01 // what you charge the user
 const FALLBACK_MODEL = 'black-forest-labs/flux-1.1-pro'
+
+async function getImageSettings() {
+  const { data } = await supabase.from('settings').select('key, value').in('key', ['image_cost_per_gen', 'markup_multiplier'])
+  const map: Record<string, string> = {}
+  data?.forEach((s: any) => { map[s.key] = s.value })
+  return {
+    costPerImage: parseFloat(map['image_cost_per_gen']) || 0.05,
+    markupMultiplier: parseFloat(map['markup_multiplier']) || 3.0,
+  }
+}
 
 async function logEvent(
   event_type: string,
@@ -132,14 +140,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
-  const [{ data: profile }, { data: modelSetting }] = await Promise.all([
+  const [{ data: profile }, { data: modelSetting }, imageSettings] = await Promise.all([
     supabase.from('profiles').select('credit_balance, gift_balance, role, plan_id').eq('id', userId).single(),
     supabase.from('settings').select('value').eq('key', 'ai_image_model').single(),
+    getImageSettings(),
   ])
+
+  const costPerImage = imageSettings.costPerImage
+  const chargePerImage = costPerImage * imageSettings.markupMultiplier
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
-  if ((profile.credit_balance + (profile.gift_balance || 0)) < MARKUP_PER_IMAGE) {
+  if ((profile.credit_balance + (profile.gift_balance || 0)) < chargePerImage) {
     return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits to generate an image.' })
   }
 
@@ -234,10 +246,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // ── Step 3: Deduct credits ───────────────────────────────────────────────
   await supabase.rpc('deduct_credits', {
     p_user_id: userId,
-    p_amount: MARKUP_PER_IMAGE,
+    p_amount: chargePerImage,
     p_description: `Image generation: ${prompt.slice(0, 50)}`,
     p_tokens_used: 0,
-    p_api_cost: COST_PER_IMAGE,
+    p_api_cost: costPerImage,
   })
 
   const { data: updatedProfile } = await supabase

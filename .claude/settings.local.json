@@ -27,7 +27,8 @@
       "Bash(grep -r \"storage\\\\|upload\\\\|blob\\\\|file\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/pages/api --include=*.ts)",
       "Bash(/tmp/analysis.txt:*)",
       "Read(//tmp/**)",
-      "Bash(grep -r \"max_pages\\\\|pages_per_project\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx --include=*.sql)"
+      "Bash(grep -r \"max_pages\\\\|pages_per_project\" /c/Users/charl/Documents/GitHub/Custom-AI-Dashboard --include=*.ts --include=*.tsx --include=*.sql)",
+      "Bash(node_modules/.bin/tsc --noEmit --pretty)"
     ]
   }
 }

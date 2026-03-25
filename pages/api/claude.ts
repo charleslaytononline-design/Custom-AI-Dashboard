@@ -72,6 +72,7 @@ async function getSettings() {
     inputCostPer1k: parseFloat(map['input_cost_per_1k']) || 0.003,
     outputCostPer1k: parseFloat(map['output_cost_per_1k']) || 0.015,
     chatModel: map['ai_chat_model'] || 'claude-sonnet-4-5',
+    imageCostPerGen: parseFloat(map['image_cost_per_gen']) || 0.05,
   }
 }
 
