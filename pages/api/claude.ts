@@ -504,7 +504,7 @@ RULES:
     // Send processing status
     sendSSE({ type: 'status', text: 'Processing build...' })
 
-    // Check if image generation is needed (supports multiple images, searches full output for continuations)
+    // Extract image prompts — frontend will generate images after build completes (avoids timeout)
     const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
     const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
     const imagePrompts: string[] = []
@@ -512,57 +512,7 @@ RULES:
     while ((imgMatch = imageRegex.exec(imageSearchText)) !== null) {
       imagePrompts.push(imgMatch[1].trim())
     }
-    const maxImages = settings.maxImagesPerBuild
-    const generatedImageUrls: (string | null)[] = []
-
-    // Time budget check — skip images if not enough time remaining
-    const elapsedBeforeImages = Date.now() - handlerStart
-    const remainingMs = 55_000 - elapsedBeforeImages // 55s budget, 5s buffer before Vercel 60s kill
-    if (imagePrompts.length > 0 && remainingMs < 5_000) {
-      await log('builder_error', 'warn', `Skipping image generation — only ${(remainingMs / 1000).toFixed(1)}s remaining`, userEmail, {
-        userId, pageName, imagesRequested: imagePrompts.length, elapsedMs: elapsedBeforeImages,
-      })
-      sendSSE({ type: 'status', text: 'Skipping images — not enough time remaining' })
-      imagePrompts.length = 0
-    }
-
-    if (imagePrompts.length > 0) {
-      const toGenerate = imagePrompts.slice(0, maxImages)
-      sendSSE({ type: 'status', text: `Generating ${toGenerate.length} image${toGenerate.length > 1 ? 's' : ''} in parallel...` })
-
-      // Generate all images concurrently
-      const imageResults = await Promise.allSettled(
-        toGenerate.map(prompt =>
-          fetch(`${appUrl}/api/generate-image`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, userId }),
-          }).then(r => r.json())
-        )
-      )
-
-      for (let i = 0; i < imageResults.length; i++) {
-        const result = imageResults[i]
-        if (result.status === 'fulfilled' && result.value.url) {
-          generatedImageUrls.push(result.value.url)
-        } else {
-          const reason = result.status === 'rejected'
-            ? result.reason?.message || 'Network error'
-            : (result.value?.error === 'storage_limit_reached'
-              ? 'Storage limit reached'
-              : result.value?.detail || result.value?.error || 'unknown')
-          await log('builder_error', 'warn', `Image ${i + 1}/${toGenerate.length} failed: ${reason}`, userEmail, {
-            userId, pageName, imageIndex: i + 1, total: toGenerate.length, error: reason,
-          })
-          generatedImageUrls.push(null)
-        }
-      }
-
-      const succeeded = generatedImageUrls.filter(Boolean).length
-      sendSSE({ type: 'status', text: succeeded > 0 ? `Generated ${succeeded}/${toGenerate.length} images` : 'Image generation failed — using placeholders' })
-    }
-    // Backwards compat: first URL for legacy __GENERATED_IMAGE_URL__
-    const generatedImageUrl = generatedImageUrls[0] || null
+    const trimmedImagePrompts = imagePrompts.slice(0, settings.maxImagesPerBuild)
 
     // Handle <CREATE_TABLE> tags — create real tables in Clients DB (supports multiple per build)
     const tableDefsFound: RegExpExecArray[] = []
@@ -640,18 +590,11 @@ RULES:
       }
     }
 
-    const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
+    const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Loading+image...'
 
-    // Replace all image placeholders in code (numbered + legacy)
+    // Replace image placeholders with loading placeholders (frontend will replace with real URLs after build)
     const replaceImagePlaceholders = (html: string): string => {
-      // Replace numbered placeholders: __GENERATED_IMAGE_1__, __GENERATED_IMAGE_2__, etc.
-      generatedImageUrls.forEach((url, i) => {
-        const placeholder = `__GENERATED_IMAGE_${i + 1}__`
-        html = html.replace(new RegExp(placeholder, 'g'), url || imagePlaceholder)
-      })
-      // Legacy: __GENERATED_IMAGE_URL__ maps to first image
-      html = html.replace(/__GENERATED_IMAGE_URL__/g, generatedImageUrls[0] || imagePlaceholder)
-      // Catch any remaining unmatched numbered placeholders
+      html = html.replace(/__GENERATED_IMAGE_URL__/g, imagePlaceholder)
       html = html.replace(/__GENERATED_IMAGE_\d+__/g, imagePlaceholder)
       return html
     }
@@ -770,15 +713,14 @@ RULES:
     // Send the final done event with all metadata
     sendSSE({
       type: 'done',
-      message: generatedImageUrls.filter(Boolean).length > 0
-        ? message + ` (${generatedImageUrls.filter(Boolean).length} AI image${generatedImageUrls.filter(Boolean).length > 1 ? 's' : ''} generated ✓)`
+      message: trimmedImagePrompts.length > 0
+        ? message + ` (${trimmedImagePrompts.length} image${trimmedImagePrompts.length > 1 ? 's' : ''} generating...)`
         : message,
       code,
+      imagePrompts: trimmedImagePrompts, // frontend generates images after build
       tokensUsed: totalTokens,
       apiCost,
       userCharge,
-      imageGenerated: generatedImageUrls.filter(Boolean).length > 0,
-      imagesGenerated: generatedImageUrls.filter(Boolean).length,
       newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
       layoutUpdated: !!layoutMatch,
       pagesCreated: newPages,
@@ -826,7 +768,6 @@ RULES:
       elapsedSeconds: elapsedSec,
       stack: err.stack?.slice(0, 500),
       imagesRequested: imagePrompts?.length || 0,
-      imagesGenerated: generatedImageUrls?.filter(Boolean).length || 0,
       rawChars: (raw || '').length,
       continuationCount,
     })

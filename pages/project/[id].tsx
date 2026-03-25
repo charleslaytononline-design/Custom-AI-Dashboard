@@ -263,6 +263,39 @@ export default function ProjectBuilder() {
     }
   }
 
+  // Generate images progressively after build — each image gets its own API call (no timeout pressure)
+  async function generateImagesProgressively(currentCode: string, prompts: string[]) {
+    let updatedCode = currentCode
+    const fallback = 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
+
+    const results = await Promise.allSettled(
+      prompts.map(async (prompt, i) => {
+        const res = await fetch('/api/generate-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, userId: user?.id }),
+        })
+        const data = await res.json()
+        if (data.url) {
+          const numbered = `__GENERATED_IMAGE_${i + 1}__`
+          if (i === 0) {
+            updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image\.\.\./g, data.url)
+          }
+          updatedCode = updatedCode.replace(new RegExp(numbered.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), data.url)
+          renderIframe(updatedCode)
+          if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
+        }
+        return data.url || null
+      })
+    )
+
+    // Replace any remaining loading placeholders with fallback
+    updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image\.\.\./g, fallback)
+
+    // Save final code with all images
+    await savePage(updatedCode)
+  }
+
   async function deletePage(pageId: string) {
     if (pages.length === 1) return alert('Need at least one page.')
     await supabase.from('pages').delete().eq('id', pageId)
@@ -624,6 +657,10 @@ export default function ProjectBuilder() {
       if (data.code) {
         await savePage(data.code)
         if (isMobile) setMobilePanel('preview')
+        // Generate images in background after page is saved/displayed
+        if (data.imagePrompts?.length > 0) {
+          generateImagesProgressively(data.code, data.imagePrompts)
+        }
       } else {
         logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
       }
@@ -810,6 +847,10 @@ export default function ProjectBuilder() {
       if (data.code) {
         await savePage(data.code)
         if (isMobile) setMobilePanel('preview')
+        // Generate images in background after page is saved/displayed
+        if (data.imagePrompts?.length > 0) {
+          generateImagesProgressively(data.code, data.imagePrompts)
+        }
       } else {
         logEvent('builder_error', 'error', `sendMessage build returned no code: ${data.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
       }
