@@ -347,6 +347,7 @@ RULES:
   let clientDisconnected = false
   let streamCompleted = false
   let raw = ''
+  let imagePrompts: string[] = []
 
   try {
     const lastMessage = messages[messages.length - 1]
@@ -507,7 +508,7 @@ RULES:
     // Extract image prompts — frontend will generate images after build completes (avoids timeout)
     const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
     const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
-    const imagePrompts: string[] = []
+    imagePrompts = []
     let imgMatch: RegExpExecArray | null
     while ((imgMatch = imageRegex.exec(imageSearchText)) !== null) {
       imagePrompts.push(imgMatch[1].trim())
