@@ -89,3 +89,14 @@ input, textarea {
     display: flex;
   }
 }
+
+/* Dynamic viewport height — accounts for mobile browser chrome (address bar, bottom nav) */
+.h-dvh {
+  height: 100vh; /* fallback */
+  height: 100dvh;
+}
+
+/* Safe area padding for notched devices (iPhone home indicator) */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

@@ -1,5 +1,6 @@
 import type { AppProps } from 'next/app'
 import { useEffect } from 'react'
+import Head from 'next/head'
 import '../styles/globals.css'
 import { useSessionTimeout } from '../hooks/useSessionTimeout'
 
@@ -80,5 +81,12 @@ export default function App({ Component, pageProps }: AppProps) {
   }, [])
 
   const getLayout = (Component as any).getLayout ?? ((page: React.ReactNode) => page)
-  return getLayout(<Component {...pageProps} />)
+  return (
+    <>
+      <Head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+      </Head>
+      {getLayout(<Component {...pageProps} />)}
+    </>
+  )
 }
