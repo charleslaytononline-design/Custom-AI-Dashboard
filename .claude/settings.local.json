@@ -32,7 +32,9 @@
       "Bash(export PATH=\"$PATH:/c/Program Files/nodejs\")",
       "Bash(cmd /c \"cd /d C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard && npm run build 2>&1\")",
       "Bash(cmd /c \"cd /d C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard && npm run build\")",
-      "Bash(powershell -Command \"cd ''C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard''; npm run build 2>&1\")"
+      "Bash(powershell -Command \"cd ''C:\\\\Users\\\\charl\\\\Documents\\\\GitHub\\\\Custom-AI-Dashboard''; npm run build 2>&1\")",
+      "Bash(where npm:*)",
+      "Bash(cmd.exe /c \"where node\")"
     ]
   }
 }

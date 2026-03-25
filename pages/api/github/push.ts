@@ -21,11 +21,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .from('projects').select('*').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
-  // Fetch all pages
-  const { data: pages } = await supabase
-    .from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
-  if (!pages || pages.length === 0) return res.status(400).json({ error: 'No pages to export' })
-
   const safeName = (repoName || project.name)
     .toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
 
@@ -54,42 +49,62 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const err = await createRes.json()
         return res.status(500).json({ error: `Failed to create repo: ${err.message}` })
       }
-      // Wait briefly for repo initialization
       await new Promise(r => setTimeout(r, 2000))
     }
 
     const owner = await getGitHubUsername(githubToken)
-
-    // Build files to push
     const filesToPush: Array<{ path: string; content: string }> = []
 
-    for (const page of pages) {
-      const composed = composePage(
-        project.layout_code || null,
-        page.code,
-        pages,
-        page.name,
-        projectId
-      )
-      const safePName = page.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+    if (project.project_type === 'react') {
+      // --- REACT PROJECT: Push actual project files ---
+      const { data: projectFiles } = await supabase
+        .from('project_files').select('path, content').eq('project_id', projectId)
+      if (!projectFiles || projectFiles.length === 0) {
+        return res.status(400).json({ error: 'No files to export' })
+      }
+
+      for (const file of projectFiles) {
+        if (file.path === '.env') continue // Never push .env
+        filesToPush.push({ path: file.path, content: file.content || '' })
+      }
+
+      // Add README
       filesToPush.push({
-        path: safePName === pages[0].name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-          ? 'index.html'
-          : `${safePName}.html`,
-        content: composed,
+        path: 'README.md',
+        content: `# ${project.name}\n\nReact + Vite + Tailwind project built with [Custom AI Dashboard](${process.env.NEXT_PUBLIC_APP_URL || 'https://customaidashboard.com'}).\n\n## Setup\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\n## Environment Variables\n\nCreate a \`.env\` file:\n\n\`\`\`\nVITE_SUPABASE_URL=your_supabase_url\nVITE_SUPABASE_ANON_KEY=your_supabase_anon_key\n\`\`\`\n`,
+      })
+    } else {
+      // --- HTML PROJECT: Push composed HTML pages (existing logic) ---
+      const { data: pages } = await supabase
+        .from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
+      if (!pages || pages.length === 0) return res.status(400).json({ error: 'No pages to export' })
+
+      for (const page of pages) {
+        const composed = composePage(
+          project.layout_code || null,
+          page.code,
+          pages,
+          page.name,
+          projectId
+        )
+        const safePName = page.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+        filesToPush.push({
+          path: safePName === pages[0].name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+            ? 'index.html'
+            : `${safePName}.html`,
+          content: composed,
+        })
+      }
+
+      if (!filesToPush.some(f => f.path === 'index.html')) {
+        filesToPush.push({ ...filesToPush[0], path: 'index.html' })
+      }
+
+      filesToPush.push({
+        path: 'README.md',
+        content: `# ${project.name}\n\nBuilt with [Custom AI Dashboard](${process.env.NEXT_PUBLIC_APP_URL || 'https://customaidashboard.com'}).\n\n## Pages\n${pages.map(p => `- ${p.name}`).join('\n')}\n`,
       })
     }
-
-    // Ensure index.html exists
-    if (!filesToPush.some(f => f.path === 'index.html')) {
-      filesToPush.push({ ...filesToPush[0], path: 'index.html' })
-    }
-
-    // Add a README
-    filesToPush.push({
-      path: 'README.md',
-      content: `# ${project.name}\n\nBuilt with [Custom AI Dashboard](${process.env.NEXT_PUBLIC_APP_URL || 'https://customaidashboard.com'}).\n\n## Pages\n${pages.map(p => `- ${p.name}`).join('\n')}\n`,
-    })
 
     // Push each file using the Contents API
     for (const file of filesToPush) {

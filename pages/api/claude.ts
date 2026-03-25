@@ -2,6 +2,9 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { buildPageContext, compactHistory } from '../../lib/contextManager'
+import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
+import { compactReactHistory } from '../../lib/reactContextManager'
+import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -166,30 +169,62 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const settings = await getSettings()
   const lastUserMsg = messages[messages.length - 1]?.content || ''
   const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
-  const pageContext = buildPageContext(
-    { name: pageName || 'Page', code: pageCode || '' },
-    (allPages || []).map((p: any) => ({ name: p.name, code: p.code || '' })),
-    userPrompt,
-  )
-  const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
 
-  // Fetch project layout_code
+  // Detect project type
+  let projectType = 'html'
+  let projectName = ''
   let layoutCode: string | null = null
   if (projectId) {
-    const { data: proj } = await supabase.from('projects').select('layout_code').eq('id', projectId).single()
+    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name').eq('id', projectId).single()
+    projectType = proj?.project_type || 'html'
+    projectName = proj?.name || ''
     layoutCode = proj?.layout_code || null
   }
 
-  const hasLayout = !!layoutCode
+  // For React projects, load project files and build context differently
+  let reactFiles: any[] = []
+  if (projectType === 'react' && projectId) {
+    reactFiles = await loadProjectFiles(projectId)
+  }
 
-  const system = planOnly
-    ? `You are an AI app builder. The user wants to build something on a page called "${pageName}".
+  // HTML-specific context (only for html projects)
+  const pageContext = projectType === 'html' ? buildPageContext(
+    { name: pageName || 'Page', code: pageCode || '' },
+    (allPages || []).map((p: any) => ({ name: p.name, code: p.code || '' })),
+    userPrompt,
+  ) : ''
+  const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
+
+  const hasLayout = projectType === 'html' && !!layoutCode
+
+  // Build system prompt based on project type
+  let system: string
+  if (projectType === 'react') {
+    // React project prompt
+    const activeFile = req.body.activeFilePath || null
+    if (planOnly) {
+      const fileTreeStr = reactFiles.map(f => f.path).join('\n  ')
+      system = buildReactPlanPrompt(projectName, fileTreeStr)
+    } else {
+      system = buildReactSystemPrompt({
+        projectName,
+        projectId: projectId || '',
+        allFiles: reactFiles,
+        activeFilePath: activeFile,
+        userPrompt,
+        maxImagesPerBuild: settings.maxImagesPerBuild,
+        hasClientsDb: !!clientsDb,
+      })
+    }
+  } else if (planOnly) {
+    system = `You are an AI app builder. The user wants to build something on a page called "${pageName}".
 Write a clear bullet-point plan of what you will build. No code. Max 8 bullet points.
 IMPORTANT: Keep plans realistic — the builder can output ~8,000 tokens of HTML per build. Plan 4-6 focused sections maximum, not 10+. Prioritize core content and functionality over decorative extras. A concise, well-built page is better than an ambitious one that times out.
 If the request involves multiple pages, list which pages you'll create and what each contains.
 Respond in plain text only.`
-    : `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
+  } else {
+    system = `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
 
 ${pageContext}
 ${hasLayout ? `PROJECT HAS SHARED LAYOUT: Yes (sidebar + topbar are provided automatically)` : `PROJECT HAS SHARED LAYOUT: No (this is a new project or legacy project)`}
@@ -343,6 +378,7 @@ RULES:
 - Build core functionality first — skip decorative extras on large requests.
 - Prioritize finishing over perfection. A complete 5-section page beats an incomplete 10-section page.
 - For landing/marketing pages without a shared layout, always include a sticky top navigation bar with site name and anchor links to the main sections (e.g., #features, #pricing, #faq). Use smooth scrolling with scroll-behavior:smooth on html.`
+  } // end project type branching
 
   // Inject AI training rules from database
   const userMsg = messages[messages.length - 1]?.content || ''
@@ -381,7 +417,9 @@ RULES:
     }
 
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
-    const { summary, recentMessages } = compactHistory(rawHistory, 4)
+    const { summary, recentMessages } = projectType === 'react'
+      ? compactReactHistory(rawHistory, 4)
+      : compactHistory(rawHistory, 4)
     const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
     const safeHistory = firstUserIdx > 0 ? recentMessages.slice(firstUserIdx) : recentMessages
 
@@ -661,9 +699,48 @@ RULES:
     let message = 'Done!'
     let code: string | null = null
 
+    // Track file operations for React projects
+    const fileOpsApplied: Array<{ action: string; path: string }> = []
+
     if (planOnly) {
       message = fullRaw
+    } else if (projectType === 'react') {
+      // --- REACT PROJECT: Parse FILE_OP tags and apply to project_files ---
+      const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
+      if (messageMatch) message = messageMatch[1].trim()
+
+      const fileOpRegex = /<FILE_OP\s+action="(\w+)"\s+path="([^"]+)"(?:\s*\/>|>([\s\S]*?)<\/FILE_OP>)/gi
+      let fileOpMatch: RegExpExecArray | null
+      while ((fileOpMatch = fileOpRegex.exec(fullRaw)) !== null) {
+        const action = fileOpMatch[1].toLowerCase()
+        const filePath = fileOpMatch[2]
+        const fileContent = fileOpMatch[3]?.trim() || ''
+
+        try {
+          if (action === 'create' || action === 'edit') {
+            const ext = filePath.split('.').pop()?.toLowerCase() || 'text'
+            const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+            await saveFile(projectId, userId, filePath, fileContent, fileType)
+            fileOpsApplied.push({ action, path: filePath })
+            sendSSE({ type: 'file_op', action, path: filePath })
+          } else if (action === 'delete') {
+            await deleteFile(projectId, filePath)
+            fileOpsApplied.push({ action: 'delete', path: filePath })
+            sendSSE({ type: 'file_op', action: 'delete', path: filePath })
+          }
+        } catch (fileErr: any) {
+          await log('builder_error', 'warn', `FILE_OP ${action} failed for ${filePath}: ${fileErr.message}`, userEmail, { userId, projectId, filePath })
+        }
+      }
+
+      if (fileOpsApplied.length === 0 && !messageMatch) {
+        message = 'Could not parse the response. Please try again.'
+      } else if (fileOpsApplied.length > 0) {
+        message = message || `Updated ${fileOpsApplied.length} file(s)`
+      }
+      // code stays null for React projects (files are stored individually)
     } else {
+      // --- HTML PROJECT: Parse CODE tags (existing logic) ---
       const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
       const codeMatch = fullRaw.match(/<CODE>([\s\S]*?)<\/CODE>/)
 
@@ -760,8 +837,11 @@ RULES:
       apiCost,
       userCharge,
       newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
-      layoutUpdated: !!layoutMatch,
-      pagesCreated: newPages,
+      layoutUpdated: projectType === 'html' ? !!layoutMatch : false,
+      pagesCreated: projectType === 'html' ? newPages : [],
+      // React-specific fields
+      fileOps: projectType === 'react' ? fileOpsApplied : undefined,
+      projectType,
     })
     clearInterval(heartbeat)
     res.end()

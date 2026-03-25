@@ -6,9 +6,10 @@ interface CodeEditorProps {
   onChange: (code: string) => void
   onSave: (code: string) => void
   pageName: string
+  language?: string
 }
 
-export default function CodeEditor({ code, onChange, onSave, pageName }: CodeEditorProps) {
+export default function CodeEditor({ code, onChange, onSave, pageName, language }: CodeEditorProps) {
   const editorRef = useRef<any>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -93,7 +94,8 @@ export default function CodeEditor({ code, onChange, onSave, pageName }: CodeEdi
       </div>
       <Editor
         height="100%"
-        defaultLanguage="html"
+        defaultLanguage={language || "html"}
+        language={language || "html"}
         value={code}
         onChange={handleChange}
         onMount={handleMount}

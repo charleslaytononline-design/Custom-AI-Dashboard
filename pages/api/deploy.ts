@@ -18,6 +18,60 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .from('projects').select('*').eq('id', projectId).eq('user_id', userId).single()
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
+  // --- REACT PROJECT DEPLOYMENT ---
+  if (project.project_type === 'react') {
+    const { data: files } = await supabase
+      .from('project_files').select('path, content').eq('project_id', projectId)
+    if (!files || files.length === 0) return res.status(400).json({ error: 'No files to deploy' })
+
+    try {
+      const slug = project.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+      const vercelFiles = files
+        .filter(f => f.path !== '.env')
+        .map(f => ({
+          file: f.path,
+          data: Buffer.from(f.content || '').toString('base64'),
+          encoding: 'base64' as const,
+        }))
+
+      const deployRes = await fetch('https://api.vercel.com/v13/deployments', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${vercelToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: slug,
+          files: vercelFiles,
+          projectSettings: {
+            framework: 'vite',
+            buildCommand: 'npm run build',
+            outputDirectory: 'dist',
+            installCommand: 'npm install',
+          },
+          target: 'production',
+        }),
+      })
+
+      const deployData = await deployRes.json()
+      if (!deployRes.ok) {
+        return res.status(500).json({ error: 'Deployment failed', detail: deployData.error?.message || JSON.stringify(deployData) })
+      }
+
+      const deployUrl = `https://${deployData.url}`
+      await supabase.from('deployments').insert({
+        project_id: projectId, user_id: userId, url: deployUrl, status: 'success', provider: 'vercel',
+        vercel_project_id: deployData.projectId || null,
+        metadata: { deployment_id: deployData.id, files_count: files.length, project_type: 'react' },
+      })
+
+      return res.status(200).json({ url: deployUrl, deploymentId: deployData.id })
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message })
+    }
+  }
+
+  // --- HTML PROJECT DEPLOYMENT (existing logic) ---
   // Fetch all pages
   const { data: pages } = await supabase
     .from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
