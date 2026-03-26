@@ -118,11 +118,9 @@ export function generatePreviewHtml(options: PreviewOptions): string {
     </div>
   </div>
 
-  <!-- Polyfill navigator.locks for sandboxed iframes (Supabase auth uses it) -->
+  <!-- Override navigator.locks for sandboxed iframes (Supabase auth uses it but it throws SecurityError) -->
   <script>
-    if (!navigator.locks) {
-      navigator.locks = { request: async function(_n, _o, cb) { return await (cb || _o)(); } };
-    }
+    navigator.locks = { request: async function(_n, _o, cb) { return await (cb || _o)(); } };
   </script>
 
   <!-- Error & console forwarding to parent -->
