@@ -889,10 +889,12 @@ RULES:
         const fnName = fnMatch[1].trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
         const fnCode = fnMatch[2].trim()
         if (fnName && fnCode && fnCode.length <= 10240) { // 10KB max
-          await supabase.from('project_functions').upsert({
-            project_id: projectId, user_id: userId, name: fnName, code: fnCode, updated_at: new Date().toISOString(),
-          }, { onConflict: 'project_id,name' }).catch(() => {})
-          sendSSE({ type: 'status', text: `Saved server function: ${fnName}` })
+          try {
+            await supabase.from('project_functions').upsert({
+              project_id: projectId, user_id: userId, name: fnName, code: fnCode, updated_at: new Date().toISOString(),
+            }, { onConflict: 'project_id,name' })
+            sendSSE({ type: 'status', text: `Saved server function: ${fnName}` })
+          } catch {}
         }
       }
 
@@ -905,11 +907,13 @@ RULES:
         const funcName = cronMatch[3].trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
         // Validate cron expression (basic 5-field check)
         if (cronName && schedule.split(/\s+/).length === 5 && funcName) {
-          await supabase.from('project_cron_jobs').upsert({
-            project_id: projectId, user_id: userId, name: cronName, schedule, function_name: funcName,
-            next_run_at: new Date().toISOString(),
-          }, { onConflict: 'project_id,name' }).catch(() => {})
-          sendSSE({ type: 'status', text: `Saved cron job: ${cronName}` })
+          try {
+            await supabase.from('project_cron_jobs').upsert({
+              project_id: projectId, user_id: userId, name: cronName, schedule, function_name: funcName,
+              next_run_at: new Date().toISOString(),
+            }, { onConflict: 'project_id,name' })
+            sendSSE({ type: 'status', text: `Saved cron job: ${cronName}` })
+          } catch {}
         }
       }
 

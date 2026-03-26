@@ -85,7 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
       if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
       // Audit log: insert
-      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `insert on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'insert' } }).catch(() => {})
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `insert on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'insert' } }).then(() => {}, () => {})
       return res.status(200).json({ success: true, data: result })
     }
 
@@ -100,7 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
       if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
       // Audit log: update
-      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `update on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'update', rowId: id } }).catch(() => {})
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `update on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'update', rowId: id } }).then(() => {}, () => {})
       return res.status(200).json({ success: true, data: result })
     }
 
@@ -113,7 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
       if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
       // Audit log: delete
-      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `delete on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'delete', rowId: data.id } }).catch(() => {})
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `delete on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'delete', rowId: data.id } }).then(() => {}, () => {})
       return res.status(200).json({ success: true, data: { deleted: result } })
     }
 
