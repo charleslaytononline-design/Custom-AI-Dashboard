@@ -570,12 +570,12 @@ export default function ProjectBuilder() {
                           {msg.isPlan && (
                             <div className="flex gap-2 mt-3">
                               {pendingPlan && (
-                                <>
-                                  <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
-                                  <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
-                                </>
+                                <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
                               )}
                               <button onClick={() => { setPlanModalContent(msg.content); setShowPlanModal(true) }} className="px-3 py-1.5 bg-surface-3 border border-white/10 rounded-[7px] text-[#aaa] text-xs cursor-pointer hover:text-white hover:border-white/20 transition-colors">📋 View Plan</button>
+                              {pendingPlan && (
+                                <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
+                              )}
                             </div>
                           )}
                         </div>
