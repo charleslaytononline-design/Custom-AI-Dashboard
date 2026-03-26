@@ -41,6 +41,8 @@ export default function ProjectBuilder() {
   const [pendingImage, setPendingImage] = useState<{ file: File; preview: string } | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [showPlanModal, setShowPlanModal] = useState(false)
+  const [planModalContent, setPlanModalContent] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -500,13 +502,13 @@ export default function ProjectBuilder() {
               <div className={`flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 ${isMobile ? 'pb-[60px]' : ''}`}>
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-2 py-8 flex-1">
-                    <div className="text-[28px] mb-3">✦</div>
-                    <p className="text-[#555] text-[13px] text-center leading-relaxed mb-5">
+                    <div className="text-[28px] mb-3 text-brand/60">✦</div>
+                    <p className="text-[#999] text-[13px] text-center leading-relaxed mb-5">
                       Describe what to build and I'll create it instantly. You can also upload a screenshot for reference.
                     </p>
                     <div className="flex flex-wrap gap-1.5 justify-center">
                       {['Admin dashboard with sidebar', 'Inventory tracker', 'Sales dashboard with charts', 'User management panel'].map(t => (
-                        <button key={t} className="px-2.5 py-1 bg-surface-3 border border-white/[0.08] rounded-full text-[#666] text-[11px] cursor-pointer" onClick={() => setInput(t)}>{t}</button>
+                        <button key={t} className="px-2.5 py-1 bg-surface-3 border border-white/[0.08] rounded-full text-[#aaa] text-[11px] cursor-pointer hover:text-white hover:border-white/20 transition-colors" onClick={() => setInput(t)}>{t}</button>
                       ))}
                     </div>
                   </div>
@@ -549,10 +551,15 @@ export default function ProjectBuilder() {
                               ))}
                             </div>
                           )}
-                          {msg.isPlan && pendingPlan && (
+                          {msg.isPlan && (
                             <div className="flex gap-2 mt-3">
-                              <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
-                              <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
+                              {pendingPlan && (
+                                <>
+                                  <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
+                                  <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
+                                </>
+                              )}
+                              <button onClick={() => { setPlanModalContent(msg.content); setShowPlanModal(true) }} className="px-3 py-1.5 bg-surface-3 border border-white/10 rounded-[7px] text-[#aaa] text-xs cursor-pointer hover:text-white hover:border-white/20 transition-colors">📋 View Plan</button>
                             </div>
                           )}
                         </div>
@@ -715,8 +722,8 @@ export default function ProjectBuilder() {
                 {deployUrl ? (
                   <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
                 ) : (
-                  <div className="flex-1 flex items-center justify-center text-[#444] text-[13px] flex-col gap-3">
-                    <div className="text-2xl opacity-20">⚡</div>
+                  <div className="flex-1 flex items-center justify-center text-[#666] text-[13px] flex-col gap-3">
+                    <div className="text-2xl opacity-40">⚡</div>
                     <p>Deploy your project to see a preview</p>
                   </div>
                 )}
@@ -787,6 +794,30 @@ export default function ProjectBuilder() {
               ))}
             </div>
             <button onClick={() => setShowBuyCredits(false)} className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* View Plan Modal */}
+      {showPlanModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowPlanModal(false)}>
+          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-[600px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.07] shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">📋</span>
+                <span className="text-[#e0e0e0] text-sm font-semibold">Build Plan</span>
+              </div>
+              <button onClick={() => setShowPlanModal(false)} className="text-[#555] hover:text-white text-lg bg-transparent border-none cursor-pointer transition-colors">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#ccc]">{planModalContent}</div>
+            </div>
+            {pendingPlan && (
+              <div className="flex gap-2 px-5 py-3 border-t border-white/[0.07] shrink-0">
+                <button onClick={() => { approvePlan(); setShowPlanModal(false) }} className="px-4 py-2 bg-brand border-none rounded-lg text-white text-xs font-medium cursor-pointer flex-1">✓ Approve & Build</button>
+                <button onClick={() => { setPendingPlan(null); setShowPlanModal(false) }} className="px-4 py-2 bg-transparent border border-white/10 rounded-lg text-[#666] text-xs cursor-pointer">✕ Revise</button>
+              </div>
+            )}
           </div>
         </div>
       )}
