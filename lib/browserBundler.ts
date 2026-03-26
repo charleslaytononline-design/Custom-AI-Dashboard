@@ -34,6 +34,8 @@ export interface BundleResult {
   js: string
   /** Bundled CSS as a string */
   css: string
+  /** CDN URL map for import map (bare specifier → CDN URL) */
+  cdnMap: Record<string, string>
   /** Any warnings from esbuild */
   warnings: string[]
   /** Any errors from esbuild */
@@ -48,7 +50,7 @@ async function ensureInitialized() {
   if (initPromise) { await initPromise; return }
 
   initPromise = esbuild.initialize({
-    wasmURL: 'https://unpkg.com/esbuild-wasm@latest/esbuild.wasm',
+    wasmURL: 'https://unpkg.com/esbuild-wasm@0.27.4/esbuild.wasm',
   })
 
   await initPromise
@@ -194,7 +196,7 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
               return { errors: [{ text: `Could not resolve "${args.path}" from "${args.importer}"` }] }
             })
 
-            // Resolve bare module imports to CDN URLs
+            // Resolve bare module imports — keep bare specifiers (import map resolves them)
             // This MUST come after the virtual file resolvers so project files aren't treated as packages
             build.onResolve({ filter: /^[^./]/ }, (args) => {
               // Safety check: if this path exists in our virtual files, resolve it there
@@ -206,25 +208,25 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
                 return { path: resolvedVirtual, namespace: 'virtual' }
               }
 
-              // Check exact match first, then try the package name
-              const cdnUrl = cdnMap[args.path]
-              if (cdnUrl) {
-                return { path: cdnUrl, external: true }
+              // Keep bare specifier as-is — the import map in the preview HTML will resolve it
+              // Ensure the cdnMap has an entry for this exact specifier
+              if (!cdnMap[args.path]) {
+                const pkgName = args.path.startsWith('@')
+                  ? args.path.split('/').slice(0, 2).join('/')
+                  : args.path.split('/')[0]
+                const baseCdn = cdnMap[pkgName]
+                if (baseCdn) {
+                  // Known package, sub-path import — construct CDN URL
+                  const subPath = args.path.slice(pkgName.length)
+                  const baseUrl = baseCdn.split('?')[0]
+                  const params = baseCdn.includes('?') ? '?' + baseCdn.split('?')[1] : ''
+                  cdnMap[args.path] = `${baseUrl}${subPath}${params}`
+                } else {
+                  // Unknown package — add esm.sh fallback
+                  cdnMap[args.path] = `https://esm.sh/${args.path}`
+                }
               }
-              // Try just the package name (e.g. "lucide-react/icons/Home" → base package)
-              const pkgName = args.path.startsWith('@')
-                ? args.path.split('/').slice(0, 2).join('/')
-                : args.path.split('/')[0]
-              const baseCdn = cdnMap[pkgName]
-              if (baseCdn) {
-                // Construct sub-path CDN URL
-                const subPath = args.path.slice(pkgName.length)
-                const baseUrl = baseCdn.split('?')[0]
-                const params = baseCdn.includes('?') ? '?' + baseCdn.split('?')[1] : ''
-                return { path: `${baseUrl}${subPath}${params}`, external: true }
-              }
-              // Unknown package — try esm.sh as fallback
-              return { path: `https://esm.sh/${args.path}`, external: true }
+              return { path: args.path, external: true }
             })
 
             // Load virtual files from the in-memory file map
@@ -237,8 +239,10 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
               // Collect CSS separately
               if (loader === 'css') {
                 // Strip @tailwind directives (handled by CDN play script)
+                // Strip @apply directives (CDN can't process custom utilities)
                 const cleanedCss = content
                   .replace(/@tailwind\s+(base|components|utilities);?\s*/g, '')
+                  .replace(/@apply\s+[^;]+;?\s*/g, '')
                   .trim()
                 if (cleanedCss) collectedCss += '\n' + cleanedCss
                 return { contents: '', loader: 'js' }
@@ -261,7 +265,7 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
     const warnings = result.warnings.map(w => `${w.text} (${w.location?.file}:${w.location?.line})`)
     const errors = result.errors.map(e => `${e.text} (${e.location?.file}:${e.location?.line})`)
 
-    return { js, css, warnings, errors }
+    return { js, css, cdnMap, warnings, errors }
   } catch (err: any) {
     // esbuild throws on fatal errors
     const errorMsg = err.message || String(err)
@@ -270,6 +274,6 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
       ? err.errors.map((e: any) => `${e.text}${e.location ? ` (${e.location.file}:${e.location.line})` : ''}`)
       : [errorMsg]
 
-    return { js: '', css: '', warnings: [], errors }
+    return { js: '', css: '', cdnMap, warnings: [], errors }
   }
 }

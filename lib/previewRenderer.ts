@@ -8,6 +8,8 @@ export interface PreviewOptions {
   js: string
   /** Collected CSS from project files */
   css: string
+  /** CDN URL map for the import map (bare specifier → CDN URL) */
+  cdnMap?: Record<string, string>
   /** Project name for the title */
   projectName?: string
   /** Brand color for Tailwind config */
@@ -15,23 +17,39 @@ export interface PreviewOptions {
 }
 
 /**
+ * Build an import map JSON string from a CDN map.
+ * Each exact bare specifier gets mapped to its CDN URL.
+ */
+function buildImportMap(cdnMap: Record<string, string>): string {
+  const imports: Record<string, string> = {}
+  const keys = Object.keys(cdnMap)
+  for (let i = 0; i < keys.length; i++) {
+    imports[keys[i]] = cdnMap[keys[i]]
+  }
+  return JSON.stringify({ imports }, null, 2)
+}
+
+/**
  * Generate the full HTML document to be used as iframe srcdoc.
  * Includes:
+ * - Import map for resolving bare specifiers to CDN URLs
  * - Tailwind CSS via CDN play script (matches how projects actually use Tailwind)
  * - Custom CSS from project files
  * - Bundled React app as ESM module
  * - Error boundary to catch runtime errors and post to parent
  * - Console override to forward logs to parent
+ * - Loading spinner and 10-second timeout
  */
 export function generatePreviewHtml(options: PreviewOptions): string {
-  const { js, css, projectName = 'Preview', brandColor = '#7c6ef7' } = options
+  const { js, css, cdnMap = {}, projectName = 'Preview', brandColor = '#7c6ef7' } = options
 
-  // Escape the JS for embedding in a script tag
-  // We use a blob URL approach to avoid issues with </script> in the code
+  // Escape the JS for embedding in a template literal
   const encodedJs = js
     .replace(/\\/g, '\\\\')
     .replace(/`/g, '\\`')
     .replace(/\$/g, '\\$')
+
+  const importMapJson = buildImportMap(cdnMap)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -39,6 +57,11 @@ export function generatePreviewHtml(options: PreviewOptions): string {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${projectName}</title>
+
+  <!-- Import map: resolves bare specifiers to CDN URLs -->
+  <script type="importmap">
+  ${importMapJson}
+  </script>
 
   <!-- Tailwind CSS CDN Play Script -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -65,10 +88,35 @@ export function generatePreviewHtml(options: PreviewOptions): string {
       padding: 0;
     }
     ${css}
+    /* Loading spinner */
+    @keyframes preview-spin { to { transform: rotate(360deg); } }
+    .preview-loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 12px;
+      color: #888;
+      font-size: 13px;
+    }
+    .preview-loader-ring {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #e5e7eb;
+      border-top-color: ${brandColor};
+      border-radius: 50%;
+      animation: preview-spin 0.8s linear infinite;
+    }
   </style>
 </head>
-<body class="bg-gray-950 text-white min-h-screen">
-  <div id="root"></div>
+<body>
+  <div id="root">
+    <div class="preview-loader">
+      <div class="preview-loader-ring"></div>
+      <span>Loading preview...</span>
+    </div>
+  </div>
 
   <!-- Error & console forwarding to parent -->
   <script>
@@ -130,13 +178,39 @@ export function generatePreviewHtml(options: PreviewOptions): string {
 
   <!-- Bundled React app -->
   <script type="module">
+    console.log('[Preview] Loading module...');
+    const loadStart = Date.now();
+    let loaded = false;
+
+    // Timeout: if module doesn't load in 15s, show error
+    const timeoutId = setTimeout(() => {
+      if (loaded) return;
+      const elapsed = ((Date.now() - loadStart) / 1000).toFixed(1);
+      const msg = 'Preview timed out after ' + elapsed + 's — CDN modules may be unreachable.';
+      console.error('[Preview] ' + msg);
+      const root = document.getElementById('root');
+      if (root) {
+        root.innerHTML = '<div style="padding:32px;font-family:monospace;"><div style="background:#1a0000;border:1px solid #ff4444;border-radius:8px;padding:16px;"><div style="color:#ff6666;font-size:14px;font-weight:600;margin-bottom:8px;">Module Load Timeout</div><pre style="color:#ff9999;font-size:12px;white-space:pre-wrap;margin:0;">' + msg + '</pre></div></div>';
+      }
+      window.parent.postMessage({ type: 'preview-error', message: msg, source: 'timeout', line: 0, col: 0, stack: '', timestamp: Date.now() }, '*');
+    }, 15000);
+
     try {
       const code = \`${encodedJs}\`;
+      if (!code.trim()) {
+        throw new Error('Bundled output is empty — esbuild may have failed silently.');
+      }
       const blob = new Blob([code], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       await import(url);
       URL.revokeObjectURL(url);
+      loaded = true;
+      clearTimeout(timeoutId);
+      console.log('[Preview] Module loaded in ' + ((Date.now() - loadStart) / 1000).toFixed(1) + 's');
     } catch (err) {
+      loaded = true;
+      clearTimeout(timeoutId);
+      console.error('[Preview] Module load error:', err);
       // Show error in the preview
       const root = document.getElementById('root');
       if (root) {

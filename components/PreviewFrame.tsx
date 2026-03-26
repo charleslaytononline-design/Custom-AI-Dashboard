@@ -101,8 +101,10 @@ export default function PreviewFrame({
 
     try {
       // Dynamic import to avoid loading esbuild-wasm until needed
+      console.log('[PreviewFrame] Starting bundle...')
       const { bundleProject } = await import('../lib/browserBundler')
       const { generatePreviewHtml, generateErrorHtml } = await import('../lib/previewRenderer')
+      console.log('[PreviewFrame] esbuild module loaded, bundling...')
 
       const result = await bundleProject({
         files: fileMap,
@@ -110,18 +112,24 @@ export default function PreviewFrame({
         envVars,
       })
 
+      console.log(`[PreviewFrame] Bundle result — js: ${result.js.length} chars, css: ${result.css.length} chars, errors: ${result.errors.length}, cdnMap keys: ${Object.keys(result.cdnMap).length}`)
+
       if (result.errors.length > 0) {
         setBundleErrors(result.errors)
         setSrcdoc(generateErrorHtml(result.errors))
       } else {
-        setSrcdoc(generatePreviewHtml({
+        const html = generatePreviewHtml({
           js: result.js,
           css: result.css,
+          cdnMap: result.cdnMap,
           projectName,
           brandColor,
-        }))
+        })
+        console.log(`[PreviewFrame] Preview HTML generated: ${html.length} chars`)
+        setSrcdoc(html)
       }
     } catch (err: any) {
+      console.error('[PreviewFrame] Bundle error:', err)
       const errorMsg = err.message || 'Bundle failed'
       setBundleErrors([errorMsg])
       const { generateErrorHtml } = await import('../lib/previewRenderer')
