@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../../lib/supabase'
@@ -626,28 +626,28 @@ export default function ProjectBuilder() {
   const showRight = !isMobile || mobilePanel === 'preview'
 
   // Render preview panel
-  // Parse .env file from project files for preview env vars (base layer).
-  // This ensures Supabase credentials set at project creation (from CLIENTS_SUPABASE_URL)
-  // reach the bundler even when projects.supabase_url is not explicitly set.
-  const dotEnvVars: Record<string, string> = {}
-  const dotEnvFile = files.find(f => f.path === '.env')
-  if (dotEnvFile?.content) {
-    for (const line of dotEnvFile.content.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) continue
-      const eqIdx = trimmed.indexOf('=')
-      if (eqIdx > 0) {
-        dotEnvVars[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1)
+  // Memoize env vars so the preview doesn't rebundle on every chat keystroke.
+  // Only recomputes when files, project env vars, or Supabase credentials actually change.
+  const previewEnvVars = useMemo(() => {
+    const dotEnvVars: Record<string, string> = {}
+    const dotEnvFile = files.find(f => f.path === '.env')
+    if (dotEnvFile?.content) {
+      for (const line of dotEnvFile.content.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('#')) continue
+        const eqIdx = trimmed.indexOf('=')
+        if (eqIdx > 0) {
+          dotEnvVars[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1)
+        }
       }
     }
-  }
-
-  const previewEnvVars = {
-    ...dotEnvVars,
-    ...projectEnvVars,
-    ...(projectSupabaseUrl ? { VITE_SUPABASE_URL: projectSupabaseUrl } : {}),
-    ...(projectSupabaseAnonKey ? { VITE_SUPABASE_ANON_KEY: projectSupabaseAnonKey } : {}),
-  }
+    return {
+      ...dotEnvVars,
+      ...projectEnvVars,
+      ...(projectSupabaseUrl ? { VITE_SUPABASE_URL: projectSupabaseUrl } : {}),
+      ...(projectSupabaseAnonKey ? { VITE_SUPABASE_ANON_KEY: projectSupabaseAnonKey } : {}),
+    }
+  }, [files, projectEnvVars, projectSupabaseUrl, projectSupabaseAnonKey])
 
   const renderPreview = () => (
     <PreviewFrame
