@@ -16,7 +16,7 @@ export default function Login() {
   const isMobile = useMobile()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [mode, setMode] = useState<'login'|'signup'>('login')
+  const [mode, setMode] = useState<'login'|'signup'|'forgot'>('login')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -39,6 +39,22 @@ export default function Login() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true); setError(''); setSuccess('')
+
+    if (mode === 'forgot') {
+      log('password_reset_attempt', 'info', 'Password reset requested', email, { email })
+      const res = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      if (res.ok) {
+        setSuccess('If an account exists for that email, we\'ve sent a password reset link.')
+      } else {
+        setError('Something went wrong. Please try again.')
+      }
+      setLoading(false)
+      return
+    }
 
     if (mode === 'signup') {
       log('signup_attempt', 'info', `Signup attempted`, email, { email })
@@ -93,21 +109,32 @@ export default function Login() {
             <label style={s.label}>Email</label>
             <input type="email" value={email} onChange={handleEmailChange} placeholder="you@example.com" required style={s.input} />
           </div>
-          <div style={s.field}>
-            <label style={s.label}>Password</label>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={s.input} />
-          </div>
+          {mode !== 'forgot' && (
+            <div style={s.field}>
+              <label style={s.label}>Password</label>
+              <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required style={s.input} />
+              {mode === 'login' && (
+                <button type="button" onClick={()=>{setMode('forgot');setError('');setSuccess('')}} style={{...s.link, alignSelf:'flex-end', marginTop:4, fontSize:12}}>Forgot password?</button>
+              )}
+            </div>
+          )}
           {router.query.reason === 'timeout' && !error && !success && (
             <div style={s.timeout}>Your session expired. Please sign in again.</div>
           )}
           {error && <div style={s.err}>{error}</div>}
           {success && <div style={s.ok}>{success}</div>}
           <button type="submit" disabled={loading} style={s.btn}>
-            {loading ? 'Please wait...' : mode === 'login' ? 'Sign in' : 'Create account'}
+            {loading ? 'Please wait...' : mode === 'forgot' ? 'Send reset link' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
         </form>
         <div style={s.toggle}>
-          {mode === 'login' ? <>No account? <button onClick={()=>setMode('signup')} style={s.link}>Sign up</button></> : <>Have an account? <button onClick={()=>setMode('login')} style={s.link}>Sign in</button></>}
+          {mode === 'forgot' ? (
+            <button onClick={()=>{setMode('login');setError('');setSuccess('')}} style={s.link}>Back to sign in</button>
+          ) : mode === 'login' ? (
+            <>No account? <button onClick={()=>{setMode('signup');setError('');setSuccess('')}} style={s.link}>Sign up</button></>
+          ) : (
+            <>Have an account? <button onClick={()=>{setMode('login');setError('');setSuccess('')}} style={s.link}>Sign in</button></>
+          )}
         </div>
       </div>
     </div>
