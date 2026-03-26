@@ -7,9 +7,15 @@ import { loadProjectFiles, saveFile, deleteFile, buildFileTree, getFileType } fr
 import type { ProjectFile, FileTreeNode } from '../../lib/virtualFS'
 import FileTree from '../../components/FileTree'
 import DeployButton from '../../components/DeployButton'
+import PreviewFrame from '../../components/PreviewFrame'
 import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../../lib/welcomeConfig'
 import type { WelcomeConfig } from '../../lib/welcomeConfig'
 import GitHubConnect from '../../components/GitHubConnect'
+import SupabaseConnect from '../../components/SupabaseConnect'
+import DiffViewer from '../../components/DiffViewer'
+import PackageManager from '../../components/PackageManager'
+import EnvVarManager from '../../components/EnvVarManager'
+import SchemaViewer from '../../components/SchemaViewer'
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
 
@@ -46,10 +52,20 @@ export default function ProjectBuilder() {
   const [showPlanModal, setShowPlanModal] = useState(false)
   const [planModalContent, setPlanModalContent] = useState('')
   const [welcomeHtml, setWelcomeHtml] = useState<string | null>(null)
+  const [buildTrigger, setBuildTrigger] = useState(0)
+  const [showSupabaseConnect, setShowSupabaseConnect] = useState(false)
+  const [projectSupabaseUrl, setProjectSupabaseUrl] = useState<string | null>(null)
+  const [projectSupabaseAnonKey, setProjectSupabaseAnonKey] = useState<string | null>(null)
+  const [showDiff, setShowDiff] = useState(false)
+  const [diffChanges, setDiffChanges] = useState<Array<{ path: string; action: 'create' | 'edit' | 'delete'; previousContent: string; newContent: string }>>([])
+  const preBuiltFilesRef = useRef<Map<string, string>>(new Map())
+  const [extraPackages, setExtraPackages] = useState<Record<string, string>>({})
+  const [projectEnvVars, setProjectEnvVars] = useState<Record<string, string>>({})
+  const [showSchemaViewer, setShowSchemaViewer] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
+
 
   // Auth
   useEffect(() => {
@@ -95,6 +111,9 @@ export default function ProjectBuilder() {
     const { data } = await supabase.from('projects').select('*').eq('id', projectId).eq('user_id', user.id).single()
     if (!data) { router.push('/home'); return }
     setProject(data)
+    // Load Supabase connection
+    if (data.supabase_url) setProjectSupabaseUrl(data.supabase_url)
+    if (data.supabase_anon_key) setProjectSupabaseAnonKey(data.supabase_anon_key)
     // Load latest deployment URL
     const { data: dep } = await supabase.from('deployments').select('url').eq('project_id', projectId as string).order('created_at', { ascending: false }).limit(1).single()
     if (dep?.url) setDeployUrl(dep.url)
@@ -291,6 +310,13 @@ export default function ProjectBuilder() {
 
       const fileOps: Array<{ action: string; path: string }> = []
 
+      // Snapshot current files for diff comparison
+      const preMap = new Map<string, string>()
+      for (const f of files) {
+        if (f.content !== null) preMap.set(f.path, f.content)
+      }
+      preBuiltFilesRef.current = preMap
+
       // Stream a single build call and return continuation data if the server signals one
       const streamBuild = async (extraBody: Record<string, unknown> = {}): Promise<{ continuation?: { partialRaw: string; continuationCount: number; accumulatedApiCost: number } }> => {
         const res = await fetch('/api/claude', {
@@ -347,6 +373,29 @@ export default function ProjectBuilder() {
                 return { continuation: { partialRaw: event.partialRaw, continuationCount: event.continuationCount, accumulatedApiCost: event.accumulatedApiCost } }
               } else if (event.type === 'done') {
                 await loadFiles()
+                setBuildTrigger(prev => prev + 1)
+
+                // Compute diffs for changed files
+                if (fileOps.length > 0) {
+                  const { data: newFiles } = await supabase
+                    .from('project_files')
+                    .select('path, content')
+                    .eq('project_id', projectId as string)
+                  const newMap = new Map<string, string>()
+                  for (const f of newFiles || []) {
+                    if (f.content !== null) newMap.set(f.path, f.content)
+                  }
+                  const changes = fileOps.map(op => ({
+                    path: op.path,
+                    action: op.action as 'create' | 'edit' | 'delete',
+                    previousContent: preBuiltFilesRef.current.get(op.path) || '',
+                    newContent: newMap.get(op.path) || '',
+                  }))
+                  setDiffChanges(changes)
+                  // Save snapshots for undo
+                  const buildId = `build_${Date.now()}`
+                  saveFileSnapshots(fileOps.map(op => op.path), buildId)
+                }
 
                 if (planOnly && event.message) {
                   setPendingPlan(event.message)
@@ -399,6 +448,80 @@ export default function ProjectBuilder() {
     }
   }
 
+  // Handle "Fix this" from preview error console
+  function handleFixError(errorText: string) {
+    setInput(errorText)
+    setMode('build')
+    if (isMobile) setMobilePanel('chat')
+    setSidebarTab('chat')
+  }
+
+  // Save file snapshots to DB for undo capability
+  async function saveFileSnapshots(changedPaths: string[], buildId: string) {
+    const snapshots = changedPaths
+      .filter(path => preBuiltFilesRef.current.has(path) || files.some(f => f.path === path))
+      .map(path => ({
+        project_id: projectId as string,
+        user_id: user.id,
+        file_path: path,
+        content: preBuiltFilesRef.current.get(path) || null,
+        build_id: buildId,
+      }))
+    if (snapshots.length > 0) {
+      await supabase.from('project_file_versions').insert(snapshots)
+    }
+  }
+
+  // Undo last build — restore files from the most recent snapshot
+  async function undoLastBuild() {
+    try {
+      // Get the latest build_id
+      const { data: latest } = await supabase
+        .from('project_file_versions')
+        .select('build_id')
+        .eq('project_id', projectId as string)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (!latest) return
+
+      // Get all snapshots for that build
+      const { data: snapshots } = await supabase
+        .from('project_file_versions')
+        .select('file_path, content')
+        .eq('project_id', projectId as string)
+        .eq('build_id', latest.build_id)
+
+      if (!snapshots || snapshots.length === 0) return
+
+      // Restore each file
+      for (const snap of snapshots) {
+        if (snap.content === null) {
+          // File was created by the build — delete it
+          await deleteFile(projectId as string, snap.file_path)
+        } else {
+          // File was edited — restore previous content
+          await saveFile(projectId as string, user.id, snap.file_path, snap.content, getFileType(snap.file_path.split('.').pop() || ''))
+        }
+      }
+
+      // Delete the used snapshots
+      await supabase
+        .from('project_file_versions')
+        .delete()
+        .eq('project_id', projectId as string)
+        .eq('build_id', latest.build_id)
+
+      // Reload files and refresh preview
+      await loadFiles()
+      setBuildTrigger(prev => prev + 1)
+      setMessages(prev => [...prev, { role: 'assistant', content: '↩️ Build undone — files restored to previous state.' }])
+    } catch (err: any) {
+      setLastError(err.message || 'Undo failed')
+    }
+  }
+
   // Plan approval
   function approvePlan() {
     if (!pendingPlan) return
@@ -429,6 +552,27 @@ export default function ProjectBuilder() {
   // Mobile panel visibility
   const showLeft = !isMobile || mobilePanel === 'chat'
   const showRight = !isMobile || mobilePanel === 'preview'
+
+  // Render preview panel
+  const previewEnvVars = {
+    ...projectEnvVars,
+    ...(projectSupabaseUrl ? { VITE_SUPABASE_URL: projectSupabaseUrl } : {}),
+    ...(projectSupabaseAnonKey ? { VITE_SUPABASE_ANON_KEY: projectSupabaseAnonKey } : {}),
+  }
+
+  const renderPreview = () => (
+    <PreviewFrame
+      files={files}
+      projectType={project.project_type || 'react'}
+      projectName={project.name}
+      deployUrl={deployUrl}
+      welcomeHtml={welcomeHtml}
+      onFixError={handleFixError}
+      buildTrigger={buildTrigger}
+      envVars={previewEnvVars}
+      extraPackages={extraPackages}
+    />
+  )
 
   // Render editor with tabs
   const renderEditor = () => (
@@ -493,6 +637,20 @@ export default function ProjectBuilder() {
               <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Code</button>
               <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Split</button>
             </div>
+            <button
+              onClick={() => setShowSupabaseConnect(true)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${projectSupabaseUrl ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-transparent border-white/[0.08] text-[#666] hover:text-[#aaa]'}`}
+              title={projectSupabaseUrl ? 'Supabase connected' : 'Connect Supabase'}
+            >
+              ⚡ {projectSupabaseUrl ? 'DB' : 'Supabase'}
+            </button>
+            <button
+              onClick={() => setShowSchemaViewer(true)}
+              className="px-2 py-1 rounded-md text-[11px] cursor-pointer border bg-transparent border-white/[0.08] text-[#666] hover:text-[#aaa]"
+              title="View database schema"
+            >
+              🗄
+            </button>
             <GitHubConnect projectId={projectId as string} userId={user.id} projectName={project.name} />
             <DeployButton projectId={projectId as string} userId={user.id} />
             <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full">
@@ -565,6 +723,22 @@ export default function ProjectBuilder() {
                                   {op.action === 'create' ? '+' : op.action === 'edit' ? '~' : '-'} {op.path.split('/').pop()}
                                 </button>
                               ))}
+                              {diffChanges.length > 0 && (
+                                <>
+                                  <button
+                                    onClick={() => setShowDiff(true)}
+                                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border bg-white/5 border-white/10 text-[#aaa] hover:text-white hover:bg-white/10"
+                                  >
+                                    View Changes
+                                  </button>
+                                  <button
+                                    onClick={undoLastBuild}
+                                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border bg-amber-500/5 border-amber-500/15 text-amber-400/70 hover:text-amber-300 hover:bg-amber-500/10"
+                                  >
+                                    ↩ Undo
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                           {msg.isPlan && (
@@ -669,6 +843,22 @@ export default function ProjectBuilder() {
                   onNewFile={() => setShowNewFile(true)}
                   onDeleteFile={handleDeleteFile}
                 />
+
+                {/* Package Manager */}
+                <div className="border-t border-white/[0.05] mt-2 pt-1">
+                  <PackageManager
+                    projectId={projectId as string}
+                    onPackagesChange={setExtraPackages}
+                  />
+                </div>
+
+                {/* Env Vars Manager */}
+                <div className="border-t border-white/[0.05] mt-2 pt-1 pb-3">
+                  <EnvVarManager
+                    projectId={projectId as string}
+                    onEnvChange={setProjectEnvVars}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -735,13 +925,7 @@ export default function ProjectBuilder() {
                 {renderEditor()}
               </div>
               <div className="flex-1 flex flex-col overflow-hidden">
-                {deployUrl ? (
-                  <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
-                ) : welcomeHtml ? (
-                  <iframe srcDoc={welcomeHtml} sandbox="allow-scripts" className="flex-1 border-none bg-surface w-full h-full" title="welcome" />
-                ) : (
-                  <div className="flex-1 flex items-center justify-center text-[#666] text-[13px]">Loading...</div>
-                )}
+                {renderPreview()}
               </div>
             </div>
           ) : viewMode === 'code' ? (
@@ -765,13 +949,7 @@ export default function ProjectBuilder() {
             </div>
           ) : (
             /* Preview mode */
-            deployUrl ? (
-              <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
-            ) : welcomeHtml ? (
-              <iframe srcDoc={welcomeHtml} sandbox="allow-scripts" className="flex-1 border-none bg-surface w-full h-full" title="welcome" />
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-[#666] text-[13px]">Loading...</div>
-            )
+            renderPreview()
           )}
         </div>
       </div>
@@ -813,6 +991,31 @@ export default function ProjectBuilder() {
       )}
 
       {/* View Plan Modal */}
+      {/* Schema Viewer Modal */}
+      {showSchemaViewer && (
+        <SchemaViewer projectId={projectId as string} onClose={() => setShowSchemaViewer(false)} />
+      )}
+
+      {/* Diff Viewer Modal */}
+      {showDiff && diffChanges.length > 0 && (
+        <DiffViewer changes={diffChanges} onClose={() => setShowDiff(false)} />
+      )}
+
+      {/* Supabase Connect Modal */}
+      {showSupabaseConnect && (
+        <SupabaseConnect
+          projectId={projectId as string}
+          supabaseUrl={projectSupabaseUrl}
+          supabaseAnonKey={projectSupabaseAnonKey}
+          onSaved={(url, key) => {
+            setProjectSupabaseUrl(url || null)
+            setProjectSupabaseAnonKey(key || null)
+            setBuildTrigger(prev => prev + 1) // Refresh preview with new env vars
+          }}
+          onClose={() => setShowSupabaseConnect(false)}
+        />
+      )}
+
       {showPlanModal && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowPlanModal(false)}>
           <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-[600px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>

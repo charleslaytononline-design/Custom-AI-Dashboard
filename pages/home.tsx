@@ -24,6 +24,8 @@ export default function Dashboard() {
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
   const [limitMsg, setLimitMsg] = useState<string | null>(null)
+  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string; category: string }>>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
 
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -35,10 +37,16 @@ export default function Dashboard() {
       setUser(data.user)
       loadProfile(data.user.id)
       loadProjects(data.user.id)
+      loadTemplates()
     })
 
     return () => authListener.subscription.unsubscribe()
   }, [])
+
+  async function loadTemplates() {
+    const { data } = await supabase.from('project_templates').select('id, name, description, category').eq('is_active', true).order('sort_order')
+    if (data) setTemplates(data)
+  }
 
   async function loadProfile(userId: string) {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
@@ -85,6 +93,7 @@ export default function Dashboard() {
           name: newName.trim(),
           description: newDesc.trim(),
           projectType: 'react',
+          templateId: selectedTemplate || undefined,
         }),
       })
       const result = await res.json()
@@ -235,6 +244,39 @@ export default function Dashboard() {
               <label style={s.label}>Description (optional)</label>
               <input value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="What will you build?" style={s.input} />
             </div>
+            {templates.length > 0 && (
+              <div style={s.field}>
+                <label style={s.label}>Start from template</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <button
+                    onClick={() => setSelectedTemplate(null)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid',
+                      background: !selectedTemplate ? 'rgba(124,110,247,0.15)' : 'transparent',
+                      borderColor: !selectedTemplate ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)',
+                      color: !selectedTemplate ? '#9d92f5' : '#666',
+                    }}
+                  >
+                    Blank
+                  </button>
+                  {templates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setSelectedTemplate(t.id)}
+                      title={t.description}
+                      style={{
+                        padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid',
+                        background: selectedTemplate === t.id ? 'rgba(124,110,247,0.15)' : 'transparent',
+                        borderColor: selectedTemplate === t.id ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)',
+                        color: selectedTemplate === t.id ? '#9d92f5' : '#666',
+                      }}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div style={s.modalActions}>
               <button onClick={() => { setShowNew(false); setNewName(''); setNewDesc('') }} style={s.cancelBtn}>Cancel</button>
               <button onClick={createProject} disabled={creating || !newName.trim()} style={s.createBtn}>

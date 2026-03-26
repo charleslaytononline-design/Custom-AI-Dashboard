@@ -735,6 +735,20 @@ RULES:
       const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
       if (messageMatch) message = messageMatch[1].trim()
 
+      // Parse ADD_PACKAGE tags and save to project_packages
+      const addPkgRegex = /<ADD_PACKAGE\s+name="([^"]+)"\s+version="([^"]*)"(?:\s*\/>)/gi
+      let pkgMatch: RegExpExecArray | null
+      const pkgInserts: Array<{ project_id: string; name: string; version: string }> = []
+      while ((pkgMatch = addPkgRegex.exec(fullRaw)) !== null) {
+        pkgInserts.push({ project_id: projectId, name: pkgMatch[1].trim(), version: pkgMatch[2].trim() || 'latest' })
+      }
+      if (pkgInserts.length > 0) {
+        await Promise.allSettled(pkgInserts.map(pkg =>
+          supabase.from('project_packages').upsert(pkg, { onConflict: 'project_id,name' })
+        ))
+        sendSSE({ type: 'status', text: `Added ${pkgInserts.length} package(s)` })
+      }
+
       // Parse all FILE_OP tags first, then save in parallel
       const fileOpRegex = /<FILE_OP\s+action="(\w+)"\s+path="([^"]+)"(?:\s*\/>|>([\s\S]*?)<\/FILE_OP>)/gi
       const parsedOps: Array<{ action: string; path: string; content: string }> = []

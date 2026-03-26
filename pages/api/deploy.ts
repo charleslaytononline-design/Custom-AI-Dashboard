@@ -35,6 +35,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .from('project_files').select('path, content').eq('project_id', projectId)
     if (!files || files.length === 0) return res.status(400).json({ error: 'No files to deploy' })
 
+    // Merge extra packages into package.json
+    const { data: extraPkgs } = await supabase
+      .from('project_packages').select('name, version').eq('project_id', projectId)
+    if (extraPkgs && extraPkgs.length > 0) {
+      const pkgFile = files.find(f => f.path === 'package.json')
+      if (pkgFile?.content) {
+        try {
+          const pkgJson = JSON.parse(pkgFile.content)
+          for (const pkg of extraPkgs) {
+            pkgJson.dependencies = pkgJson.dependencies || {}
+            pkgJson.dependencies[pkg.name] = pkg.version
+          }
+          pkgFile.content = JSON.stringify(pkgJson, null, 2)
+        } catch {}
+      }
+    }
+
+    // Include env vars for Vercel deployment
+    const { data: envVars } = await supabase
+      .from('project_env_vars').select('key, value').eq('project_id', projectId)
+    const vercelEnv: Record<string, string> = {}
+    if (envVars) {
+      for (const v of envVars) vercelEnv[v.key] = v.value
+    }
+    // Also include Supabase credentials if connected
+    if (project.supabase_url) vercelEnv.VITE_SUPABASE_URL = project.supabase_url
+    if (project.supabase_anon_key) vercelEnv.VITE_SUPABASE_ANON_KEY = project.supabase_anon_key
+
     try {
       const slug = project.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
       const vercelFiles = files
@@ -61,6 +89,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             installCommand: 'npm install',
           },
           target: 'production',
+          ...(Object.keys(vercelEnv).length > 0 ? {
+            env: vercelEnv,
+          } : {}),
         }),
       })
 

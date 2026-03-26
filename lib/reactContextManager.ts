@@ -4,6 +4,7 @@
  */
 
 import type { ProjectFile } from './virtualFS'
+import { generateFileSummaries } from './fileSummarizer'
 
 interface FileContext {
   path: string
@@ -13,6 +14,13 @@ interface FileContext {
 
 /** Files that are always included with full content */
 const CORE_FILES = ['src/App.tsx', 'src/lib/supabase.ts']
+
+/** Additional files to include as core when they exist (auth, context, etc.) */
+const CONDITIONAL_CORE_FILES = [
+  'src/contexts/AuthContext.tsx',
+  'src/hooks/useAuth.ts',
+  'src/components/ProtectedRoute.tsx',
+]
 
 /** Files to never send to the AI (template boilerplate) */
 const EXCLUDED_FILES = [
@@ -86,6 +94,15 @@ export function buildReactContext(
     }
   }
 
+  // 1b. Include conditional core files if they exist (auth context, etc.)
+  for (const condPath of CONDITIONAL_CORE_FILES) {
+    const file = fileMap.get(condPath)
+    if (file?.content && !includedPaths.has(condPath)) {
+      contextFiles.push({ path: condPath, content: file.content, role: 'core' })
+      includedPaths.add(condPath)
+    }
+  }
+
   // 2. Include active file
   if (activeFilePath) {
     const activeFile = fileMap.get(activeFilePath)
@@ -117,13 +134,30 @@ export function buildReactContext(
     if (fileName && promptLower.includes(fileName.toLowerCase())) {
       contextFiles.push({ path: file.path, content: file.content, role: 'referenced' })
       includedPaths.add(file.path)
+
+      // 4b. 2-level deep imports: also include imports of referenced files
+      const refImports = parseImports(file.content, file.path)
+      for (const refImport of refImports) {
+        if (includedPaths.has(refImport)) continue
+        const refFile = fileMap.get(refImport)
+        if (refFile?.content) {
+          contextFiles.push({ path: refImport, content: refFile.content, role: 'imported' })
+          includedPaths.add(refImport)
+        }
+      }
     }
   }
 
-  // 5. Build file tree (paths only, for all files)
+  // 5. Build file tree with summaries for non-included files
+  const summaries = generateFileSummaries(allFiles, includedPaths)
+  const summaryMap = new Map(summaries.map(s => [s.path, s.summary]))
+
   const fileTree = allFiles
     .filter(f => !EXCLUDED_FILES.includes(f.path))
-    .map(f => `  ${f.path}`)
+    .map(f => {
+      const summary = summaryMap.get(f.path)
+      return summary ? `  ${f.path}  — ${summary}` : `  ${f.path}`
+    })
     .join('\n')
 
   // 6. Extract route map from App.tsx

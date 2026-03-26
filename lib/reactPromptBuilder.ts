@@ -93,7 +93,56 @@ Use the Supabase client from src/lib/supabase.ts:
   await supabase.from('table_name').delete().eq('id', rowId)
 
 Use Supabase for persistent data. Use React state (useState) for UI state only.
+
+AUTHENTICATION SCAFFOLDING:
+When the user asks for login, signup, auth, or protected routes, generate these files:
+
+1. src/contexts/AuthContext.tsx — React context + provider wrapping <BrowserRouter>:
+   - Uses supabase.auth.getSession() on mount
+   - Listens to supabase.auth.onAuthStateChange()
+   - Exposes: user, session, loading, signIn(email, password), signUp(email, password), signOut()
+   - Export AuthProvider + useAuth hook
+
+2. src/pages/Login.tsx — Login page with:
+   - Email + password inputs using design system classes
+   - "Sign In" button calling useAuth().signIn()
+   - Link to /signup page
+   - Error display for invalid credentials
+   - Redirect to / on successful login
+
+3. src/pages/Signup.tsx — Signup page with:
+   - Email + password + confirm password inputs
+   - "Create Account" button calling useAuth().signUp()
+   - Link to /login page
+   - Success message after signup
+
+4. src/components/ProtectedRoute.tsx — Route guard:
+   - Uses useAuth() to check session
+   - Shows loading spinner while checking
+   - Redirects to /login if no session
+   - Renders <Outlet /> if authenticated
+
+5. Update src/App.tsx:
+   - Wrap app in <AuthProvider>
+   - Add /login and /signup routes (outside ProtectedRoute)
+   - Wrap protected routes in <ProtectedRoute> element
+
+6. Update src/main.tsx:
+   - Wrap BrowserRouter inside AuthProvider (AuthProvider must be inside BrowserRouter if using useNavigate)
+
+7. Update src/components/Layout.tsx:
+   - Add user email display in sidebar bottom
+   - Add Sign Out button calling useAuth().signOut()
+
+Always use the Supabase client from src/lib/supabase.ts for auth operations.
 ` : ''}
+PACKAGE MANAGEMENT:
+When you need npm packages beyond the defaults (react, react-dom, react-router-dom, @supabase/supabase-js, lucide-react), output ADD_PACKAGE tags BEFORE FILE_OP tags:
+<ADD_PACKAGE name="recharts" version="^2.13.0" />
+<ADD_PACKAGE name="framer-motion" version="^11.0.0" />
+Common packages: recharts, framer-motion, date-fns, zustand, react-hot-toast, @tanstack/react-query, clsx, zod, axios
+Only add packages when actually needed in the code.
+
 IMAGE GENERATION:
 Generate up to ${maxImagesPerBuild} AI images per build. Output BEFORE FILE_OP tags:
 <GENERATE_IMAGE>detailed prompt for image</GENERATE_IMAGE>
