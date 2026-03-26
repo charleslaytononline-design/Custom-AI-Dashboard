@@ -19,7 +19,7 @@ const clientsDb = process.env.CLIENTS_SUPABASE_URL && process.env.CLIENTS_SUPABA
 
 export const config = {
   api: { bodyParser: { sizeLimit: '10mb' } },
-  maxDuration: 60,
+  maxDuration: 300,
   // SSE streaming requires no response size limit
   responseLimit: false,
 }
@@ -110,13 +110,13 @@ async function getTrainingRules(userMessage: string) {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const SAFE_DURATION_MS = 45_000 // 45s safety cutoff, leaving 15s buffer before Vercel's 60s kill
+  const SAFE_DURATION_MS = 270_000 // 270s safety cutoff, leaving 30s buffer before Vercel's 300s kill
   const handlerStart = Date.now()
 
   const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0, accumulatedApiCost = 0 } = req.body
 
   // Reject if too many continuations
-  if (isContinuation && continuationCount > 3) {
+  if (isContinuation && continuationCount > 5) {
     return res.status(400).json({ error: 'Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.' })
   }
 
@@ -204,8 +204,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // React project prompt
     const activeFile = req.body.activeFilePath || null
     if (planOnly) {
-      const fileTreeStr = reactFiles.map(f => f.path).join('\n  ')
-      system = buildReactPlanPrompt(projectName, fileTreeStr)
+      system = buildReactPlanPrompt({
+        projectName,
+        allFiles: reactFiles,
+        hasClientsDb: !!clientsDb,
+      })
     } else {
       system = buildReactSystemPrompt({
         projectName,
@@ -413,7 +416,11 @@ RULES:
 
     // For continuations, override the last message to ask Claude to finish where it left off
     if (isContinuation && partialRaw) {
-      lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. WRAP UP CONCISELY — close remaining sections with minimal content, close all open HTML tags, and include </CODE> at the end. You must finish within this response. Do not add new sections — just complete what you started.`
+      if (projectType === 'react') {
+        lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any FILE_OP tags already generated. Complete the current FILE_OP if it was cut off, then output remaining FILE_OPs. Close all open tags. You must finish within this response.`
+      } else {
+        lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. WRAP UP CONCISELY — close remaining sections with minimal content, close all open HTML tags, and include </CODE> at the end. You must finish within this response. Do not add new sections — just complete what you started.`
+      }
     }
 
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
@@ -449,7 +456,7 @@ RULES:
     // Use streaming API
     const stream = client.messages.stream({
       model: settings.chatModel,
-      max_tokens: 9000,
+      max_tokens: 16000,
       system: contextualSystem,
       messages: apiMessages,
     })
@@ -555,9 +562,6 @@ RULES:
     const userCharge = totalApiCost * settings.markupMultiplier
     const stopReason = finalMessage.stop_reason
 
-    // Send processing status
-    sendSSE({ type: 'status', text: 'Processing build...' })
-
     // Extract image prompts — frontend will generate images after build completes (avoids timeout)
     const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
     const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
@@ -568,100 +572,111 @@ RULES:
     }
     const trimmedImagePrompts = imagePrompts.slice(0, settings.maxImagesPerBuild)
 
-    // Handle <CREATE_TABLE> tags — create real tables in Clients DB (supports multiple per build)
+    // --- Post-processing: run independent tasks in parallel ---
+    sendSSE({ type: 'status', text: 'Processing build...' })
+
+    // Parse all tags upfront (sync, fast)
     const tableDefsFound: RegExpExecArray[] = []
     const tableRegex = /<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/gi
     let tableMatch: RegExpExecArray | null
     while ((tableMatch = tableRegex.exec(raw)) !== null) tableDefsFound.push(tableMatch)
-    if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
-      sendSSE({ type: 'status', text: 'Creating database tables...' })
-      const schemaName = `proj_${projectId}`
-      const planId = profile.plan_id || null
-      const { data: plan } = planId
-        ? await supabase.from('plans').select('max_tables_per_project').eq('id', planId).single()
-        : await supabase.from('plans').select('max_tables_per_project').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
-      const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
-      let currentCount = usageRow?.table_count || 0
-      const tableLimit = plan?.max_tables_per_project ?? 5
-      let tablesCreated = 0
 
-      for (const match of tableDefsFound) {
-        if (currentCount >= tableLimit) {
-          sendSSE({ type: 'status', text: `Table limit reached (${tableLimit} tables). Upgrade your plan for more.` })
-          await log('builder_error', 'warn', `Table limit reached (${currentCount}/${tableLimit}), skipping remaining tables`, userEmail, { userId, projectId })
-          break
-        }
-        try {
-          const tableDef = JSON.parse(match[1].trim())
-          await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
-          currentCount++
-          tablesCreated++
-        } catch (tableErr: any) {
-          await log('builder_error', 'warn', `CREATE_TABLE failed: ${tableErr.message}`, userEmail, { userId, projectId })
-        }
-      }
-
-      if (tablesCreated > 0) {
-        await clientsDb.from('schema_registry').upsert(
-          { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
-          { onConflict: 'project_id' }
-        )
-        await clientsDb.from('schema_usage').upsert(
-          { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: currentCount, sampled_at: new Date().toISOString() },
-          { onConflict: 'project_id' }
-        )
-      }
-    }
-
-    // Handle <LAYOUT> tag — save shared layout to project
     const layoutMatch = raw.match(/<LAYOUT>([\s\S]*?)<\/LAYOUT>/i)
-    if (layoutMatch && projectId && !planOnly) {
-      const newLayout = layoutMatch[1].trim()
-      await supabase.from('projects').update({ layout_code: newLayout }).eq('id', projectId)
-    }
 
-    // Handle <CREATE_PAGE> tags — create new pages in the project
     const pageRegex = /<CREATE_PAGE>([\s\S]*?)<\/CREATE_PAGE>/gi
     const newPages: string[] = []
     let pageMatch: RegExpExecArray | null
     while ((pageMatch = pageRegex.exec(raw)) !== null) {
-      const match = pageMatch
-      const newPageName = match[1].trim()
+      const newPageName = pageMatch[1].trim()
       if (!newPageName) continue
       const existingNames = (allPages || []).map((p: any) => p.name.toLowerCase())
       if (existingNames.includes(newPageName.toLowerCase())) continue
       if (newPageName.toLowerCase() === (pageName || '').toLowerCase()) continue
       newPages.push(newPageName)
     }
-    if (newPages.length > 0 && projectId && !planOnly) {
-      for (const name of newPages) {
-        await supabase.from('pages').insert({
-          project_id: projectId,
-          user_id: userId,
-          name,
-          code: `<!-- Page: ${name} — build this page next -->`,
-        })
-      }
+
+    const sharedCodeMatch = raw.match(/<SHARED_CODE>([\s\S]*?)<\/SHARED_CODE>/i)
+
+    // Run all independent post-processing tasks in parallel
+    const postTasks: Promise<void>[] = []
+
+    // Task: Create database tables (parallel within this task too)
+    if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const schemaName = `proj_${projectId}`
+        const planId = profile.plan_id || null
+        const { data: plan } = planId
+          ? await supabase.from('plans').select('max_tables_per_project').eq('id', planId).single()
+          : await supabase.from('plans').select('max_tables_per_project').eq('price_monthly', 0).order('sort_order', { ascending: true }).limit(1).single()
+        const { data: usageRow } = await clientsDb.from('schema_usage').select('table_count').eq('project_id', projectId).single()
+        const currentCount = usageRow?.table_count || 0
+        const tableLimit = plan?.max_tables_per_project ?? 5
+
+        // Enforce limit, then create all allowed tables in parallel
+        const allowedDefs = tableDefsFound.slice(0, Math.max(0, tableLimit - currentCount))
+        if (allowedDefs.length < tableDefsFound.length) {
+          sendSSE({ type: 'status', text: `Table limit reached (${tableLimit} tables). Upgrade your plan for more.` })
+        }
+
+        const tableResults = await Promise.allSettled(allowedDefs.map(async (match) => {
+          const tableDef = JSON.parse(match[1].trim())
+          await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
+        }))
+
+        const tablesCreated = tableResults.filter(r => r.status === 'fulfilled').length
+        for (const r of tableResults) {
+          if (r.status === 'rejected') {
+            await log('builder_error', 'warn', `CREATE_TABLE failed: ${r.reason?.message}`, userEmail, { userId, projectId })
+          }
+        }
+
+        if (tablesCreated > 0) {
+          await Promise.all([
+            clientsDb.from('schema_registry').upsert(
+              { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
+              { onConflict: 'project_id' }
+            ),
+            clientsDb.from('schema_usage').upsert(
+              { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: currentCount + tablesCreated, sampled_at: new Date().toISOString() },
+              { onConflict: 'project_id' }
+            ),
+          ])
+        }
+      })())
     }
 
-    // Handle <SHARED_CODE> tag — save shared utility functions for the project
-    const sharedCodeMatch = raw.match(/<SHARED_CODE>([\s\S]*?)<\/SHARED_CODE>/i)
-    if (sharedCodeMatch && projectId && !planOnly) {
-      const newSharedCode = sharedCodeMatch[1].trim()
-      const { data: existing } = await supabase
-        .from('project_shared_code')
-        .select('id')
-        .eq('project_id', projectId)
-        .single()
-      if (existing) {
-        await supabase.from('project_shared_code')
-          .update({ code: newSharedCode, updated_at: new Date().toISOString() })
-          .eq('project_id', projectId)
-      } else {
-        await supabase.from('project_shared_code')
-          .insert({ project_id: projectId, user_id: userId, code: newSharedCode })
-      }
+    // Task: Save layout
+    if (layoutMatch && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const newLayout = layoutMatch[1].trim()
+        await supabase.from('projects').update({ layout_code: newLayout }).eq('id', projectId)
+      })())
     }
+
+    // Task: Create new pages (all in parallel)
+    if (newPages.length > 0 && projectId && !planOnly) {
+      postTasks.push((async () => {
+        await Promise.allSettled(newPages.map(name =>
+          supabase.from('pages').insert({ project_id: projectId, user_id: userId, name, code: `<!-- Page: ${name} — build this page next -->` })
+        ))
+      })())
+    }
+
+    // Task: Save shared code
+    if (sharedCodeMatch && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const newSharedCode = sharedCodeMatch[1].trim()
+        const { data: existing } = await supabase.from('project_shared_code').select('id').eq('project_id', projectId).single()
+        if (existing) {
+          await supabase.from('project_shared_code').update({ code: newSharedCode, updated_at: new Date().toISOString() }).eq('project_id', projectId)
+        } else {
+          await supabase.from('project_shared_code').insert({ project_id: projectId, user_id: userId, code: newSharedCode })
+        }
+      })())
+    }
+
+    // Wait for all post-processing to complete
+    await Promise.allSettled(postTasks)
 
     const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Loading+image...'
 
@@ -709,27 +724,36 @@ RULES:
       const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
       if (messageMatch) message = messageMatch[1].trim()
 
+      // Parse all FILE_OP tags first, then save in parallel
       const fileOpRegex = /<FILE_OP\s+action="(\w+)"\s+path="([^"]+)"(?:\s*\/>|>([\s\S]*?)<\/FILE_OP>)/gi
+      const parsedOps: Array<{ action: string; path: string; content: string }> = []
       let fileOpMatch: RegExpExecArray | null
       while ((fileOpMatch = fileOpRegex.exec(fullRaw)) !== null) {
-        const action = fileOpMatch[1].toLowerCase()
-        const filePath = fileOpMatch[2]
-        const fileContent = fileOpMatch[3]?.trim() || ''
+        parsedOps.push({ action: fileOpMatch[1].toLowerCase(), path: fileOpMatch[2], content: fileOpMatch[3]?.trim() || '' })
+      }
 
-        try {
-          if (action === 'create' || action === 'edit') {
-            const ext = filePath.split('.').pop()?.toLowerCase() || 'text'
-            const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
-            await saveFile(projectId, userId, filePath, fileContent, fileType)
-            fileOpsApplied.push({ action, path: filePath })
-            sendSSE({ type: 'file_op', action, path: filePath })
-          } else if (action === 'delete') {
-            await deleteFile(projectId, filePath)
-            fileOpsApplied.push({ action: 'delete', path: filePath })
-            sendSSE({ type: 'file_op', action: 'delete', path: filePath })
-          }
-        } catch (fileErr: any) {
-          await log('builder_error', 'warn', `FILE_OP ${action} failed for ${filePath}: ${fileErr.message}`, userEmail, { userId, projectId, filePath })
+      // Execute all file operations in parallel
+      const fileResults = await Promise.allSettled(parsedOps.map(async (op) => {
+        if (op.action === 'create' || op.action === 'edit') {
+          const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
+          const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+          await saveFile(projectId, userId, op.path, op.content, fileType)
+          return { action: op.action, path: op.path }
+        } else if (op.action === 'delete') {
+          await deleteFile(projectId, op.path)
+          return { action: 'delete', path: op.path }
+        }
+        return null
+      }))
+
+      for (let i = 0; i < fileResults.length; i++) {
+        const result = fileResults[i]
+        if (result.status === 'fulfilled' && result.value) {
+          fileOpsApplied.push(result.value)
+          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path })
+        } else if (result.status === 'rejected') {
+          const op = parsedOps[i]
+          await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { userId, projectId, filePath: op.path })
         }
       }
 
@@ -772,7 +796,7 @@ RULES:
 
             const retryStream = client.messages.stream({
               model: settings.chatModel,
-              max_tokens: 9000,
+              max_tokens: 16000,
               system: systemWithTraining + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 6000 tokens. Focus on core functionality only.',
               messages: apiMessages,
             })

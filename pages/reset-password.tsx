@@ -53,6 +53,18 @@ export default function ResetPassword() {
 
     setSuccess(true)
     setLoading(false)
+
+    // Log successful password reset
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_type: 'password_reset_completed',
+        severity: 'info',
+        message: 'Password reset completed successfully',
+      }),
+    }).catch(() => {})
+
     setTimeout(() => router.push('/home'), 2000)
   }
 

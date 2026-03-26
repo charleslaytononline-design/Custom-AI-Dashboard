@@ -143,17 +143,84 @@ RULES:
 - Build core functionality first, skip decorative extras on large requests
 - Decompose into components: if a section exceeds ~80 lines, extract to a component
 - Always handle loading and error states for async operations
-- Use proper TypeScript types — avoid 'any'`
+- Use proper TypeScript types — avoid 'any'
+
+COMPLETENESS:
+- Output ALL FILE_OPs needed for a feature in a single response — do not wait for follow-up prompts
+- If building a multi-page feature (e.g., dashboard with admin), create all pages, update App.tsx routes, update Layout.tsx nav, create sub-components, and CREATE_TABLE tags — all in one response
+- When the user message contains a plan to execute, follow it step-by-step and create all listed files
+- Prioritize completing each FILE_OP fully before starting the next — never leave a FILE_OP tag unclosed
+- If you have many files to generate, finish the most critical ones first (pages, then components, then hooks/types)`
 }
 
-export function buildReactPlanPrompt(projectName: string, fileTree: string): string {
-  return `You are an AI app builder planning a React + Vite + Tailwind application called "${projectName}".
-Write a clear bullet-point plan of what you will build. No code. Max 8 bullet points.
-The project already has a basic template with Layout, Home page, and Supabase integration.
+/* ── Plan prompt ──────────────────────────────────────────────────── */
 
-Current file structure:
-${fileTree}
+interface ReactPlanOptions {
+  projectName: string
+  allFiles: ProjectFile[]
+  hasClientsDb: boolean
+}
 
-Plan which pages, components, and data models you'll create.
-Respond in plain text only.`
+export function buildReactPlanPrompt(options: ReactPlanOptions): string {
+  const { projectName, allFiles, hasClientsDb } = options
+
+  const fileTree = allFiles.map(f => f.path).join('\n  ')
+
+  // Extract key template files so the planner can see what already exists
+  const layoutFile = allFiles.find(f => f.path === 'src/components/Layout.tsx')
+  const appFile = allFiles.find(f => f.path === 'src/App.tsx')
+
+  let existingCode = ''
+  if (appFile) existingCode += `\n--- src/App.tsx ---\n${appFile.content}\n`
+  if (layoutFile) existingCode += `\n--- src/components/Layout.tsx ---\n${layoutFile.content}\n`
+
+  return `You are an expert AI app builder planning a React + Vite + Tailwind application called "${projectName}".
+You must produce a context-aware plan that references the existing template and conventions.
+
+FILE STRUCTURE:
+  ${fileTree}
+
+EXISTING CODE (already built — modify, don't recreate):
+${existingCode}
+WHAT THE TEMPLATE ALREADY PROVIDES:
+- src/components/Layout.tsx — Sidebar navigation with Lucide icons, active state highlighting (bg-brand/10 text-brand), and <Outlet/> for page content
+- src/App.tsx — React Router v6 routes wrapped in Layout
+- src/lib/supabase.ts — Configured Supabase client (use for auth + database)
+- src/lib/utils.ts — cn() helper for conditional Tailwind classes
+- src/index.css — Tailwind base/components/utilities
+- Supabase Auth is built in: supabase.auth.signInWithPassword(), supabase.auth.signUp(), supabase.auth.getSession(), supabase.auth.onAuthStateChange()
+
+DESIGN SYSTEM (use these exact classes):
+- Page bg: bg-gray-950 | Cards: bg-gray-900 border border-white/5 rounded-xl p-5
+- Buttons: bg-brand hover:bg-brand/80 text-white rounded-lg px-4 py-2 text-sm font-medium
+- Inputs: bg-gray-900 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-brand
+- Tables: bg-gray-900 border border-white/5 rounded-xl overflow-hidden
+- Badges: bg-emerald-500/10 text-emerald-400 | bg-red-500/10 text-red-400 | bg-amber-500/10 text-amber-400
+- Text: text-white (primary), text-white/70 (secondary), text-white/40 (muted)
+
+COMPONENT CONVENTIONS:
+- Pages in src/pages/ (export default) — e.g., src/pages/Dashboard.tsx
+- Shared components in src/components/ (named exports) — e.g., src/components/StatsCard.tsx
+- Hooks in src/hooks/ — e.g., src/hooks/useAuth.ts
+- Types in src/types/ — e.g., src/types/index.ts
+- Icons from lucide-react (import { Home, Settings, Shield } from 'lucide-react')
+
+${hasClientsDb ? `DATABASE CAPABILITY:
+- CREATE_TABLE tags create real Supabase tables with columns (uuid, text, integer, boolean, timestamptz, jsonb)
+- Always include id (uuid PK) + created_at (timestamptz, default now())
+- Use supabase.from('table').select/insert/update/delete for CRUD
+- Use Supabase for persistent data, React state (useState) for UI-only state
+` : `DATABASE: Not available for this project. Use React state (useState/useContext) for data management.
+`}
+PLAN FORMAT — structure your plan with these sections:
+1. **Files to create/modify** — List each file path and what it does (reference existing files by name when modifying)
+2. **Database tables** (if needed) — Table name + key columns
+3. **Key features** — What the user will see and interact with
+
+RULES:
+- Max 10 bullet points total
+- Reference existing files by name when modifying them (e.g., "Update Layout.tsx sidebar to add Admin nav item")
+- Don't propose creating something that already exists — modify it instead
+- Be specific about Tailwind classes and component patterns from the design system
+- Respond in plain text only — no code blocks, no FILE_OP tags`
 }

@@ -250,84 +250,100 @@ export default function ProjectBuilder() {
         return msg
       })
 
-      const res = await fetch('/api/claude', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          messages: chatMessages,
-          userId: user.id,
-          projectId,
-          planOnly,
-          activeFilePath: activeTab,
-        }),
-      })
-
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || err.message || 'Build failed')
-      }
-
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error('No stream')
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let streamedText = ''
       const fileOps: Array<{ action: string; path: string }> = []
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      // Stream a single build call and return continuation data if the server signals one
+      const streamBuild = async (extraBody: Record<string, unknown> = {}): Promise<{ continuation?: { partialRaw: string; continuationCount: number; accumulatedApiCost: number } }> => {
+        const res = await fetch('/api/claude', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            messages: chatMessages,
+            userId: user.id,
+            projectId,
+            planOnly,
+            activeFilePath: activeTab,
+            ...extraBody,
+          }),
+        })
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const event = JSON.parse(line.slice(6))
-
-            if (event.type === 'delta') {
-              streamedText += event.text
-            } else if (event.type === 'status') {
-              setBuildStatus(event.text)
-            } else if (event.type === 'file_op') {
-              fileOps.push({ action: event.action, path: event.path })
-              setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
-              setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
-              setTimeout(() => {
-                setRecentlyChanged(prev => { const next = new Set(prev); next.delete(event.path); return next })
-              }, 3000)
-            } else if (event.type === 'done') {
-              await loadFiles()
-
-              if (planOnly && event.message) {
-                setPendingPlan(event.message)
-                setMessages(prev => [...prev, { role: 'assistant', content: event.message, isPlan: true }])
-              } else {
-                const assistantMsg = event.message || 'Build complete'
-                setMessages(prev => [...prev, { role: 'assistant', content: assistantMsg, fileOps }])
-              }
-
-              if (event.newBalance !== undefined) setCreditBalance(event.newBalance)
-
-              // Auto-open first changed file
-              if (fileOps.length > 0) {
-                const firstChanged = fileOps.find(op => op.action !== 'delete')
-                if (firstChanged) {
-                  if (!openTabs.includes(firstChanged.path)) {
-                    setOpenTabs(prev => [...prev, firstChanged.path])
-                  }
-                  setActiveTab(firstChanged.path)
-                }
-              }
-            } else if (event.type === 'error') {
-              setLastError(event.error || event.message)
-            }
-          } catch {}
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error || err.message || 'Build failed')
         }
+
+        const reader = res.body?.getReader()
+        if (!reader) throw new Error('No stream')
+
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const event = JSON.parse(line.slice(6))
+
+              if (event.type === 'delta') {
+                // delta streamed
+              } else if (event.type === 'status') {
+                setBuildStatus(event.text)
+              } else if (event.type === 'file_op') {
+                fileOps.push({ action: event.action, path: event.path })
+                setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
+                setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
+                setTimeout(() => {
+                  setRecentlyChanged(prev => { const next = new Set(prev); next.delete(event.path); return next })
+                }, 3000)
+              } else if (event.type === 'continue') {
+                // Server hit time limit — return continuation data so we can auto-retry
+                return { continuation: { partialRaw: event.partialRaw, continuationCount: event.continuationCount, accumulatedApiCost: event.accumulatedApiCost } }
+              } else if (event.type === 'done') {
+                await loadFiles()
+
+                if (planOnly && event.message) {
+                  setPendingPlan(event.message)
+                  setMessages(prev => [...prev, { role: 'assistant', content: event.message, isPlan: true }])
+                } else {
+                  const assistantMsg = event.message || 'Build complete'
+                  setMessages(prev => [...prev, { role: 'assistant', content: assistantMsg, fileOps }])
+                }
+
+                if (event.newBalance !== undefined) setCreditBalance(event.newBalance)
+
+                // Auto-open first changed file
+                if (fileOps.length > 0) {
+                  const firstChanged = fileOps.find(op => op.action !== 'delete')
+                  if (firstChanged) {
+                    if (!openTabs.includes(firstChanged.path)) {
+                      setOpenTabs(prev => [...prev, firstChanged.path])
+                    }
+                    setActiveTab(firstChanged.path)
+                  }
+                }
+              } else if (event.type === 'error') {
+                setLastError(event.error || event.message)
+              }
+            } catch {}
+          }
+        }
+        return {}
+      }
+
+      // Run build with automatic continuation
+      let result = await streamBuild()
+      while (result.continuation) {
+        const { partialRaw, continuationCount, accumulatedApiCost } = result.continuation
+        setBuildStatus(`Continuing build (part ${continuationCount + 1})...`)
+        result = await streamBuild({ isContinuation: true, partialRaw, continuationCount, accumulatedApiCost })
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
