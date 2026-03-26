@@ -967,7 +967,7 @@ RULES:
         if (result.status === 'fulfilled' && result.value) {
           fileOpsApplied.push(result.value)
           const op = parsedOps[i]
-          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: op.content || null })
+          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: op.content ?? null })
         } else if (result.status === 'rejected') {
           const op = parsedOps[i]
           await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { userId, projectId, filePath: op.path })

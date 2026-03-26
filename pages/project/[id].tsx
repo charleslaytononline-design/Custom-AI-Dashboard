@@ -134,6 +134,10 @@ export default function ProjectBuilder() {
         setActiveTab('src/App.tsx')
       }
     }
+    // Trigger preview render for existing projects with files
+    if (projectFiles.length > 0) {
+      setTimeout(() => setBuildTrigger(prev => prev + 1), 100)
+    }
   }
 
   async function loadProfile() {
@@ -419,7 +423,8 @@ export default function ProjectBuilder() {
                 }
                 // Also fetch from DB to ensure consistency (non-blocking)
                 loadFiles()
-                setBuildTrigger(prev => prev + 1)
+                // Defer build trigger to ensure files state has propagated
+                setTimeout(() => setBuildTrigger(prev => prev + 1), 50)
 
                 // Compute diffs for changed files
                 if (fileOps.length > 0) {

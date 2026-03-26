@@ -131,17 +131,10 @@ export default function PreviewFrame({
     }
   }, [isReactProject, fileMap, extraPackages, envVars, projectName, brandColor])
 
-  // Track whether the user has done at least one build in this session
-  const hasBuildHappened = useRef(false)
-  useEffect(() => {
-    if (buildTrigger > 0) hasBuildHappened.current = true
-  }, [buildTrigger])
-
   // Rebundle when files change (debounced) or buildTrigger changes
-  // Only starts bundling AFTER the first build — new projects show welcome page first
+  // Auto-bundles on page load if project has files — existing projects render immediately
   useEffect(() => {
     if (!isReactProject) return
-    if (!hasBuildHappened.current && buildTrigger === 0) return // Don't bundle on initial load
 
     if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     bundleTimerRef.current = setTimeout(() => {
