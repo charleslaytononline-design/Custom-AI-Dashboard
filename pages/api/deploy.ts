@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
 import { composePage } from '../../lib/composePage'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,8 +11,13 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { projectId, userId } = req.body
-  if (!userId || !projectId) return res.status(400).json({ error: 'Missing projectId or userId' })
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const { projectId } = req.body
+  const userId = sessionUserId
+  if (!projectId) return res.status(400).json({ error: 'Missing projectId' })
 
   // Verify user owns the project
   const { data: project } = await supabase

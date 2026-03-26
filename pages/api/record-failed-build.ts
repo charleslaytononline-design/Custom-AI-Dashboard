@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,11 +10,12 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { userId, pageName, errorMessage, estimatedCost, continuationCount } = req.body
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
 
-  if (!userId || typeof userId !== 'string') {
-    return res.status(400).json({ error: 'Missing userId' })
-  }
+  const { pageName, errorMessage, estimatedCost, continuationCount } = req.body
+  const userId = sessionUserId
 
   // Only record if there's an actual cost to track
   const cost = parseFloat(estimatedCost) || 0

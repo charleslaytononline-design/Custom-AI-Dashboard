@@ -40,7 +40,18 @@
       "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__get_deployment_build_logs",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(echo \"PATH: $PATH\")",
+      "Read(//c/Program Files/nodejs/**)",
+      "Read(//c/Users/charl/AppData/Roaming/**)",
+      "Read(//c/Users/charl/AppData/**)",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__get_deployment",
+      "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__search_docs",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" --version)",
+      "Bash(\"/c/Program Files \\(x86\\)/nodejs/node.exe\" --version)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/next/dist/bin/next build)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/typescript/bin/tsc --noEmit)",
+      "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__get_advisors"
     ]
   }
 }

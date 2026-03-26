@@ -5,6 +5,7 @@ import { buildPageContext, compactHistory } from '../../lib/contextManager'
 import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -113,14 +114,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const SAFE_DURATION_MS = 270_000 // 270s safety cutoff, leaving 30s buffer before Vercel's 300s kill
   const handlerStart = Date.now()
 
-  const { messages, pageCode, pageName, allPages, planOnly, userId, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0, accumulatedApiCost = 0 } = req.body
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const { messages, pageCode, pageName, allPages, planOnly, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0, accumulatedApiCost = 0 } = req.body
+  const userId = sessionUserId
 
   // Reject if too many continuations
   if (isContinuation && continuationCount > 5) {
     return res.status(400).json({ error: 'Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.' })
   }
-
-  if (!userId) return res.status(401).json({ error: 'Not authenticated' })
 
   // Look up user profile
   const { data: profile, error: profileError } = await supabase

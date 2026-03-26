@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,10 +10,11 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).end()
 
-  const { userId } = req.query
-  if (!userId || typeof userId !== 'string') {
-    return res.status(400).json({ error: 'Missing userId' })
-  }
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const userId = sessionUserId
 
   try {
     // Get configurable limit from settings (default: 5)

@@ -1,8 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).end()
+
+  // Only authenticated users can check DB status (admin panel uses this)
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
 
   const url = process.env.CLIENTS_SUPABASE_URL
   const key = process.env.CLIENTS_SUPABASE_SERVICE_ROLE_KEY

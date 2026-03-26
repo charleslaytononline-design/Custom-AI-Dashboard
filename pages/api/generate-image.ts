@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -140,9 +141,12 @@ async function runPrediction(model: string, prompt: string): Promise<string> {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { prompt, userId } = req.body
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
 
-  if (!userId) return res.status(401).json({ error: 'Not authenticated' })
+  const { prompt } = req.body
+  const userId = sessionUserId
 
   const [{ data: profile }, { data: modelSetting }, imageSettings] = await Promise.all([
     supabase.from('profiles').select('credit_balance, gift_balance, role, plan_id').eq('id', userId).single(),

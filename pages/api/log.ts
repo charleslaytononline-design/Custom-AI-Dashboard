@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,14 +10,19 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
+  // Auth is optional for logging (login page, error handlers fire before auth)
+  // but we tag the source so we can distinguish authenticated vs anonymous logs
+  const sessionUserId = await getAuthUser(req, res)
+
   const { event_type, severity = 'info', message, email, metadata } = req.body
 
   if (!event_type || !message) {
     return res.status(400).json({ error: 'event_type and message required' })
   }
 
-  // Insert the log entry
-  await supabase.from('platform_logs').insert({ event_type, severity, message, email: email || null, metadata: metadata || null })
+  // Insert the log entry (tag with authenticated userId if available)
+  const enrichedMetadata = { ...metadata, _authenticated: !!sessionUserId, _sessionUserId: sessionUserId || undefined }
+  await supabase.from('platform_logs').insert({ event_type, severity, message, email: email || null, metadata: enrichedMetadata })
 
   // Check if an email alert should fire for this event type
   const { data: setting } = await supabase

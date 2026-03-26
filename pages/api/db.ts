@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const appDb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,6 +17,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).end()
   if (!clientsDb) return res.status(503).json({ success: false, error: 'Clients database not configured' })
 
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ success: false, error: 'Not authenticated' })
+
   const { projectId, table, action, data, limit } = req.body
 
   if (!projectId || !table || !action) {
@@ -27,9 +32,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ success: false, error: 'Invalid table name' })
   }
 
-  // Verify project exists in App DB
-  const { data: project } = await appDb.from('projects').select('id, user_id').eq('id', projectId).single()
-  if (!project) return res.status(404).json({ success: false, error: 'Project not found' })
+  // Verify project exists AND the authenticated user owns it
+  const { data: project } = await appDb.from('projects').select('id, user_id').eq('id', projectId).eq('user_id', sessionUserId).single()
+  if (!project) return res.status(403).json({ success: false, error: 'Project not found or access denied' })
 
   const schemaName = `proj_${projectId}`
 

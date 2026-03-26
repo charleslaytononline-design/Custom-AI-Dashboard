@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
 import { generateReactTemplate } from '../../../lib/reactTemplate'
+import { getAuthUser } from '../../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,9 +11,14 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { userId, name, description, projectType = 'react' } = req.body
-  if (!userId || !name?.trim()) {
-    return res.status(400).json({ error: 'Missing userId or name' })
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const { name, description, projectType = 'react' } = req.body
+  const userId = sessionUserId
+  if (!name?.trim()) {
+    return res.status(400).json({ error: 'Missing name' })
   }
 
   try {

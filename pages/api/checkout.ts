@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import Stripe from 'stripe'
+import { getAuthUser } from '../../lib/apiAuth'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' })
 
@@ -13,7 +14,12 @@ const CREDIT_PACKS = [
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { packId, userId, userEmail } = req.body
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const { packId, userEmail } = req.body
+  const userId = sessionUserId
 
   const pack = CREDIT_PACKS.find(p => p.id === packId)
   if (!pack) return res.status(400).json({ error: 'Invalid pack' })

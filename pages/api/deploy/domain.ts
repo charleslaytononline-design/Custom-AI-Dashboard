@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import { getAuthUser } from '../../../lib/apiAuth'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,9 +10,14 @@ const supabase = createClient(
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { projectId, userId, domain, action = 'add' } = req.body
-  if (!userId || !projectId || !domain) {
-    return res.status(400).json({ error: 'Missing projectId, userId, or domain' })
+  // Verify server-side session
+  const sessionUserId = await getAuthUser(req, res)
+  if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
+
+  const { projectId, domain, action = 'add' } = req.body
+  const userId = sessionUserId
+  if (!projectId || !domain) {
+    return res.status(400).json({ error: 'Missing projectId or domain' })
   }
 
   const vercelToken = process.env.VERCEL_DEPLOY_TOKEN
