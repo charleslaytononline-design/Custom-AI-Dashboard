@@ -137,11 +137,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-/**
- * Calculate the next run time from a cron expression.
- * Simple implementation — adds 1 minute for */1, 1 hour for 0 *, etc.
- * For production, use a proper cron parser library.
- */
+// Calculate the next run time from a cron expression.
+// Simple implementation: adds 1 minute for every-N, 1 hour for hourly, etc.
 function calculateNextRun(schedule: string): string {
   const parts = schedule.trim().split(/\s+/)
   if (parts.length !== 5) return new Date(Date.now() + 3600_000).toISOString() // default 1hr
