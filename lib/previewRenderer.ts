@@ -120,7 +120,10 @@ export function generatePreviewHtml(options: PreviewOptions): string {
 
   <!-- Override navigator.locks for sandboxed iframes (Supabase auth uses it but it throws SecurityError) -->
   <script>
-    navigator.locks = { request: async function(_n, _o, cb) { return await (cb || _o)(); } };
+    Object.defineProperty(navigator, 'locks', {
+      value: { request: async function(_n, _o, cb) { return await (cb || _o)(); } },
+      configurable: true, writable: true
+    });
   </script>
 
   <!-- Error & console forwarding to parent -->
