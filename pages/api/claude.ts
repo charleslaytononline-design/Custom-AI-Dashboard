@@ -1060,17 +1060,19 @@ RULES:
     const { data: updatedProfile } = await supabase
       .from('profiles').select('credit_balance, gift_balance').eq('id', userId).single()
 
-    // Track daily usage for Platform Analytics
-    const today = new Date().toISOString().split('T')[0]
-    supabase.from('usage_daily').upsert({
-      date: today,
-      user_id: userId,
-      project_id: projectId || null,
-      builds: 1,
-      tokens_input: inputTokens,
-      tokens_output: outputTokens,
-      api_cost_anthropic: totalApiCost,
-    }, { onConflict: 'date,user_id,project_id', ignoreDuplicates: false }).then(() => {}, () => {})
+    // Track daily usage for Platform Analytics (fire-and-forget)
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      await supabase.from('usage_daily').upsert({
+        date: today,
+        user_id: userId,
+        project_id: projectId || null,
+        builds: 1,
+        tokens_input: inputTokens,
+        tokens_output: outputTokens,
+        api_cost_anthropic: totalApiCost,
+      }, { onConflict: 'date,user_id,project_id' })
+    } catch {}
 
     // Send the final done event with all metadata
     sendSSE({
