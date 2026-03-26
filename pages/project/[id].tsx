@@ -30,7 +30,7 @@ export default function ProjectBuilder() {
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [mode, setMode] = useState<AppMode>('build')
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'preview' | 'code' | 'split'>('code')
+  const [viewMode, setViewMode] = useState<'preview' | 'code' | 'split'>('preview')
   const [sidebarTab, setSidebarTab] = useState<'chat' | 'files'>('chat')
   const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('chat')
   const [showNewFile, setShowNewFile] = useState(false)
@@ -632,7 +632,7 @@ export default function ProjectBuilder() {
                   }}
                   className="bg-transparent border-none text-[#aaa] text-xs outline-none cursor-pointer max-w-[120px]"
                 >
-                  {files.map(f => <option key={f.path} value={f.path}>{f.path.split('/').pop()}</option>)}
+                  {files.filter(f => f.path.startsWith('src/pages/')).map(f => <option key={f.path} value={f.path}>{f.path.replace('src/pages/', '').replace(/\.tsx?$/, '')}</option>)}
                 </select>
               </div>
             )}
@@ -657,6 +657,20 @@ export default function ProjectBuilder() {
           {/* CONTENT AREA */}
           {viewMode === 'split' ? (
             <div className="flex flex-1 overflow-hidden">
+              {!isMobile && (
+                <div className="w-[180px] min-w-[180px] border-r border-white/[0.07] flex flex-col overflow-hidden bg-surface-1">
+                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[#555] font-semibold uppercase tracking-wider">Files</div>
+                  <div className="flex-1 overflow-y-auto">
+                    <FileTree
+                      nodes={fileTree}
+                      activeFilePath={activeTab}
+                      onFileSelect={openFile}
+                      onNewFile={() => setShowNewFile(true)}
+                      onDeleteFile={handleDeleteFile}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.07]">
                 {renderEditor()}
               </div>
