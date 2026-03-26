@@ -1483,6 +1483,8 @@ export default function Admin() {
           credits_error:   'Credits Error',
           auto_fix:        'Auto-Fix',
           auto_fix_error:  'Auto-Fix Error',
+          password_reset_attempt:   'Password Reset Attempt',
+          password_reset_requested: 'Password Reset Sent',
         }
 
         const filteredLogs = logs.filter(l => {
@@ -1502,6 +1504,7 @@ export default function Admin() {
           console_error: '#f09595', unhandled_error: '#f09595',
           builder_error: '#f09595', api_error: '#f09595', credits_error: '#f0a952',
           auto_fix: '#60a5fa', auto_fix_error: '#f09595',
+          password_reset_attempt: '#f0a952', password_reset_requested: '#f0a952',
         }
 
         return (

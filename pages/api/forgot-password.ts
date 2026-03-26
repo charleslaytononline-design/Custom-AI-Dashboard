@@ -65,12 +65,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }),
     })
 
-    await adminSupabase.from('platform_logs').insert({
-      event_type: 'password_reset_requested',
-      severity: 'info',
-      message: `Password reset requested for ${email}`,
-      email,
-      metadata: { emailSent: true },
+    const logUrl = `${process.env.NEXT_PUBLIC_SITE_URL || `https://${req.headers.host}`}/api/log`
+    await fetch(logUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_type: 'password_reset_requested',
+        severity: 'info',
+        message: `Password reset requested for ${email}`,
+        email,
+        metadata: { emailSent: true },
+      }),
     }).catch(() => {})
   } catch {
     // Swallow errors — always return success
