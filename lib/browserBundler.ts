@@ -170,8 +170,39 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
         {
           name: 'virtual-fs',
           setup(build) {
+            // IMPORTANT: Entry point resolver MUST come first.
+            // The entry point "src/main.tsx" starts with "s", not "." or "/",
+            // so the bare-module resolver would catch it and mark it external.
+            build.onResolve({ filter: /^src\/main\.tsx$/ }, () => {
+              return { path: 'src/main.tsx', namespace: 'virtual' }
+            })
+
+            // Resolve relative & alias imports to virtual files
+            // Also catches paths like "src/..." that exist in the file map
+            build.onResolve({ filter: /^(\.\/|\.\.\/|@\/|src\/)/ }, (args) => {
+              // Direct match in files map (e.g. "src/lib/supabase.ts")
+              if (files[args.path]) {
+                return { path: args.path, namespace: 'virtual' }
+              }
+              const resolved = resolveFilePath(args.importer, args.path, files)
+              if (resolved) {
+                return { path: resolved, namespace: 'virtual' }
+              }
+              return { errors: [{ text: `Could not resolve "${args.path}" from "${args.importer}"` }] }
+            })
+
             // Resolve bare module imports to CDN URLs
+            // This MUST come after the virtual file resolvers so project files aren't treated as packages
             build.onResolve({ filter: /^[^./]/ }, (args) => {
+              // Safety check: if this path exists in our virtual files, resolve it there
+              if (files[args.path]) {
+                return { path: args.path, namespace: 'virtual' }
+              }
+              const resolvedVirtual = resolveFilePath(args.importer, args.path, files)
+              if (resolvedVirtual) {
+                return { path: resolvedVirtual, namespace: 'virtual' }
+              }
+
               // Check exact match first, then try the package name
               const cdnUrl = cdnMap[args.path]
               if (cdnUrl) {
@@ -193,15 +224,6 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
               return { path: `https://esm.sh/${args.path}`, external: true }
             })
 
-            // Resolve relative & alias imports to virtual files
-            build.onResolve({ filter: /^(\.\/|\.\.\/|@\/)/ }, (args) => {
-              const resolved = resolveFilePath(args.importer, args.path, files)
-              if (resolved) {
-                return { path: resolved, namespace: 'virtual' }
-              }
-              return { errors: [{ text: `Could not resolve "${args.path}" from "${args.importer}"` }] }
-            })
-
             // Load virtual files from the in-memory file map
             build.onLoad({ filter: /.*/, namespace: 'virtual' }, (args) => {
               const content = files[args.path]
@@ -219,11 +241,6 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
                 return { contents: '', loader: 'js' }
               }
               return { contents: content, loader }
-            })
-
-            // Handle entry point resolution
-            build.onResolve({ filter: /^src\/main\.tsx$/ }, () => {
-              return { path: 'src/main.tsx', namespace: 'virtual' }
             })
           },
         },
