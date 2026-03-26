@@ -117,6 +117,17 @@ export default function ProjectBuilder() {
     // Load Supabase connection
     if (data.supabase_url) setProjectSupabaseUrl(data.supabase_url)
     if (data.supabase_anon_key) setProjectSupabaseAnonKey(data.supabase_anon_key)
+    // Backfill platform DB credentials for existing projects that don't have them saved
+    if (data.db_provider === 'platform' && !data.supabase_url) {
+      fetch('/api/projects/set-platform-db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId }),
+      }).then(r => r.json()).then(result => {
+        if (result.url) setProjectSupabaseUrl(result.url)
+        if (result.anonKey) setProjectSupabaseAnonKey(result.anonKey)
+      }).catch(() => {})
+    }
     // Load latest deployment URL
     const { data: dep } = await supabase.from('deployments').select('url').eq('project_id', projectId as string).order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (dep?.url) setDeployUrl(dep.url)
@@ -785,7 +796,9 @@ export default function ProjectBuilder() {
                               <button
                                 onClick={() => {
                                   setShowDbChoice(false)
-                                  supabase.from('projects').update({ db_provider: 'platform' }).eq('id', projectId as string).then(() => {
+                                  fetch('/api/projects/set-platform-db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId }) }).then(r => r.json()).then(data => {
+                                    if (data.url) setProjectSupabaseUrl(data.url)
+                                    if (data.anonKey) setProjectSupabaseAnonKey(data.anonKey)
                                     fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'server_activated', severity: 'info', message: `User activated platform server for project ${projectId}`, metadata: { projectId } }) }).catch(() => {})
                                     const lastUserMsg = messages.filter(m => m.role === 'user').pop()
                                     if (lastUserMsg) sendMessage(lastUserMsg.content, 'Use our secure server')

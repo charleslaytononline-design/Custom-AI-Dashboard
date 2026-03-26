@@ -22,7 +22,11 @@ export default function DatabaseChoiceModal({
 
   async function handlePlatform() {
     setSaving(true)
-    await supabase.from('projects').update({ db_provider: 'platform' }).eq('id', projectId)
+    await fetch('/api/projects/set-platform-db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+    })
 
     // Log server activation for analytics and email alerts
     fetch('/api/log', {
