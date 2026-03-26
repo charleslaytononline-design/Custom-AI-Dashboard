@@ -52,7 +52,11 @@
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/next/dist/bin/next build)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/typescript/bin/tsc --noEmit)",
       "mcp__9db5f2e7-b044-4e19-a898-f373967e5682__get_advisors",
-      "Bash(\"/c/Program Files/nodejs/npm.cmd\" install esbuild-wasm@latest)"
+      "Bash(\"/c/Program Files/nodejs/npm.cmd\" install esbuild-wasm@latest)",
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "WebFetch(domain:vercel.com)",
+      "Bash(\"/c/Program Files/nodejs/npx.cmd\" tsc --noEmit)",
+      "Bash(where.exe node:*)"
     ]
   }
 }

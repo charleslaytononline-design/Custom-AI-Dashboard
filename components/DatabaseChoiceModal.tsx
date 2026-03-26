@@ -23,6 +23,19 @@ export default function DatabaseChoiceModal({
   async function handlePlatform() {
     setSaving(true)
     await supabase.from('projects').update({ db_provider: 'platform' }).eq('id', projectId)
+
+    // Log server activation for analytics and email alerts
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_type: 'server_activated',
+        severity: 'info',
+        message: `User activated platform server for project ${projectId}`,
+        metadata: { projectId },
+      }),
+    }).catch(() => {})
+
     setSaving(false)
     onChoosePlatform()
   }

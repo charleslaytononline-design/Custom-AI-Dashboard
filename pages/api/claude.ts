@@ -209,7 +209,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // For React projects, load project files and build context differently
   let reactFiles: any[] = []
   if (projectType === 'react' && projectId) {
-    reactFiles = await loadProjectFiles(projectId)
+    reactFiles = await loadProjectFiles(projectId, supabase)
   }
 
   // HTML-specific context (only for html projects)
@@ -950,10 +950,10 @@ RULES:
         if (op.action === 'create' || op.action === 'edit') {
           const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
           const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
-          await saveFile(projectId, userId, op.path, op.content, fileType)
+          await saveFile(projectId, userId, op.path, op.content, fileType, supabase)
           return { action: op.action, path: op.path }
         } else if (op.action === 'delete') {
-          await deleteFile(projectId, op.path)
+          await deleteFile(projectId, op.path, supabase)
           return { action: 'delete', path: op.path }
         }
         return null

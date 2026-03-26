@@ -261,3 +261,45 @@ create policy "users manage own deployments" on deployments
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create index if not exists deployments_project_id_idx on deployments(project_id);
+
+-- ============================================
+-- usage_daily table (daily usage aggregates for analytics)
+-- Run this block if the table doesn't exist yet
+-- ============================================
+create table if not exists usage_daily (
+  id uuid default gen_random_uuid() primary key,
+  date date not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  project_id uuid references projects(id) on delete set null,
+  builds integer not null default 0,
+  tokens_input bigint not null default 0,
+  tokens_output bigint not null default 0,
+  api_cost_anthropic numeric(10,6) not null default 0,
+  api_cost_replicate numeric(10,6) not null default 0,
+  images_generated integer not null default 0,
+  function_executions integer not null default 0,
+  cron_executions integer not null default 0,
+  storage_bytes_added bigint not null default 0,
+  rows_inserted integer not null default 0,
+  unique(date, user_id, project_id)
+);
+
+alter table usage_daily enable row level security;
+
+create policy "users view own usage" on usage_daily
+  for select using (auth.uid() = user_id);
+
+create policy "admin views all usage" on usage_daily
+  for select using (
+    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  );
+
+create index if not exists usage_daily_date_idx on usage_daily(date);
+create index if not exists usage_daily_user_idx on usage_daily(user_id);
+
+-- ============================================
+-- Insert default alert for server_activated event
+-- ============================================
+insert into log_alert_settings (event_type, send_email)
+values ('server_activated', true)
+on conflict (event_type) do nothing;

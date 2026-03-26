@@ -277,7 +277,7 @@ export default function ProjectBuilder() {
 
 
   // Send message
-  async function sendMessage(overrideInput?: string) {
+  async function sendMessage(overrideInput?: string, displayText?: string) {
     const messageText = overrideInput || input.trim()
     if ((!messageText && !pendingImage) || loading || !user) return
     if (creditBalance <= 0) { setShowBuyCredits(true); return }
@@ -291,9 +291,11 @@ export default function ProjectBuilder() {
       })
     }
 
-    const userMsg: Message = { role: 'user', content: messageText, imageUrl }
+    // Show displayText in chat if provided, but send full messageText to API
+    const visibleText = displayText || messageText
+    const userMsg: Message = { role: 'user', content: visibleText, imageUrl }
     setMessages(prev => [...prev, userMsg])
-    saveChatMessage('user', messageText)
+    saveChatMessage('user', visibleText)
     setInput('')
     setPendingImage(null)
     setLoading(true)
@@ -540,7 +542,7 @@ export default function ProjectBuilder() {
     setMode('build')
     setPendingPlan(null)
     setInput('')
-    sendMessage(planText)
+    sendMessage(planText, 'Execute the plan')
   }
 
   // Buy credits
@@ -1011,10 +1013,11 @@ export default function ProjectBuilder() {
             setShowDbChoice(false)
             // Re-send the last user message to retry the build with db_provider now set
             const lastUserMsg = messages.filter(m => m.role === 'user').pop()
-            if (lastUserMsg) sendMessage(lastUserMsg.content)
+            if (lastUserMsg) sendMessage(lastUserMsg.content, 'Use our secure server')
           }}
           onChooseCustom={() => {
             setShowDbChoice(false)
+            setMessages(prev => [...prev, { role: 'user', content: 'Connect own Supabase' }])
             setShowSupabaseConnect(true)
           }}
           onClose={() => setShowDbChoice(false)}

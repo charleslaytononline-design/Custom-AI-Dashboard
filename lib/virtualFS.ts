@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 export interface ProjectFile {
   id: string
@@ -21,10 +22,12 @@ export interface FileTreeNode {
 }
 
 /**
- * Load all files for a project
+ * Load all files for a project.
+ * Pass a Supabase client to use server-side (service-role); omit for browser client.
  */
-export async function loadProjectFiles(projectId: string): Promise<ProjectFile[]> {
-  const { data, error } = await supabase
+export async function loadProjectFiles(projectId: string, client?: SupabaseClient): Promise<ProjectFile[]> {
+  const db = client || supabase
+  const { data, error } = await db
     .from('project_files')
     .select('*')
     .eq('project_id', projectId)
@@ -34,16 +37,19 @@ export async function loadProjectFiles(projectId: string): Promise<ProjectFile[]
 }
 
 /**
- * Create or update a file
+ * Create or update a file.
+ * Pass a Supabase client to use server-side (service-role); omit for browser client.
  */
 export async function saveFile(
   projectId: string,
   userId: string,
   path: string,
   content: string,
-  fileType: string = 'html'
+  fileType: string = 'html',
+  client?: SupabaseClient
 ): Promise<ProjectFile> {
-  const { data, error } = await supabase
+  const db = client || supabase
+  const { data, error } = await db
     .from('project_files')
     .upsert(
       {
@@ -63,10 +69,12 @@ export async function saveFile(
 }
 
 /**
- * Delete a file
+ * Delete a file.
+ * Pass a Supabase client to use server-side (service-role); omit for browser client.
  */
-export async function deleteFile(projectId: string, path: string): Promise<void> {
-  const { error } = await supabase
+export async function deleteFile(projectId: string, path: string, client?: SupabaseClient): Promise<void> {
+  const db = client || supabase
+  const { error } = await db
     .from('project_files')
     .delete()
     .eq('project_id', projectId)
@@ -75,15 +83,18 @@ export async function deleteFile(projectId: string, path: string): Promise<void>
 }
 
 /**
- * Rename a file (delete old, create new)
+ * Rename a file (delete old, create new).
+ * Pass a Supabase client to use server-side (service-role); omit for browser client.
  */
 export async function renameFile(
   projectId: string,
   userId: string,
   oldPath: string,
-  newPath: string
+  newPath: string,
+  client?: SupabaseClient
 ): Promise<ProjectFile> {
-  const { data: existing } = await supabase
+  const db = client || supabase
+  const { data: existing } = await db
     .from('project_files')
     .select('*')
     .eq('project_id', projectId)
@@ -92,8 +103,8 @@ export async function renameFile(
 
   if (!existing) throw new Error('File not found')
 
-  await deleteFile(projectId, oldPath)
-  return saveFile(projectId, userId, newPath, existing.content || '', existing.file_type)
+  await deleteFile(projectId, oldPath, client)
+  return saveFile(projectId, userId, newPath, existing.content || '', existing.file_type, client)
 }
 
 /**
@@ -179,6 +190,7 @@ export async function migratePagesToProjFiles(
   userId: string,
   pages: Array<{ name: string; code: string }>,
   layoutCode?: string | null,
+  client?: SupabaseClient
 ): Promise<void> {
   const files: Array<{ path: string; content: string; file_type: string }> = []
 
@@ -196,6 +208,6 @@ export async function migratePagesToProjFiles(
   }
 
   for (const f of files) {
-    await saveFile(projectId, userId, f.path, f.content, f.file_type)
+    await saveFile(projectId, userId, f.path, f.content, f.file_type, client)
   }
 }

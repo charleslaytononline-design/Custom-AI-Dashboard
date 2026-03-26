@@ -260,6 +260,7 @@ export default function Admin() {
   useEffect(() => {
     if (activeTab === 'actions') loadActionsData()
     if (activeTab === 'ai_training') loadTrainingRules()
+    if (activeTab === 'analytics' && !analyticsData) loadAnalytics()
   }, [activeTab])
 
   useEffect(() => {
