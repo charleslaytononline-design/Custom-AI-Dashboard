@@ -48,10 +48,9 @@ export default function DatabaseChoiceModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div
         className="bg-[#111] border border-white/10 rounded-2xl p-6 w-full max-w-[520px] flex flex-col gap-5"
-        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-brand/15 flex items-center justify-center text-xl">🗄</div>
@@ -114,12 +113,7 @@ export default function DatabaseChoiceModal({
           </button>
         </div>
 
-        <button
-          onClick={onClose}
-          className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer self-end"
-        >
-          Skip for now
-        </button>
+        <p className="text-[11px] text-[#555] text-center">You must choose an option to continue building</p>
       </div>
     </div>
   )

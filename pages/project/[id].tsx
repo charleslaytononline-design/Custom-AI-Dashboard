@@ -20,7 +20,7 @@ import DatabaseChoiceModal from '../../components/DatabaseChoiceModal'
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
 
-interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string; fileOps?: Array<{ action: string; path: string }> }
+interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; isDbChoice?: boolean; imageUrl?: string; fileOps?: Array<{ action: string; path: string }> }
 type AppMode = 'build' | 'plan'
 
 export default function ProjectBuilder() {
@@ -370,7 +370,8 @@ export default function ProjectBuilder() {
                 deltaCharCount += (event.text || '').length
                 const elapsed = Math.round((Date.now() - buildStartTime) / 1000)
                 const sizeLabel = deltaCharCount > 1000 ? `${(deltaCharCount / 1000).toFixed(1)}K` : `${deltaCharCount}`
-                setBuildStatus(`Generating code... ${sizeLabel} chars (${elapsed}s)`)
+                const genLabel = planOnly ? 'Generating plan' : 'Generating code'
+                setBuildStatus(`${genLabel}... ${sizeLabel} chars (${elapsed}s)`)
               } else if (event.type === 'status') {
                 setBuildStatus(event.text)
               } else if (event.type === 'file_op') {
@@ -468,6 +469,8 @@ export default function ProjectBuilder() {
                 // Project needs a database but user hasn't chosen where yet
                 setPendingDbTables(JSON.stringify(event.pendingTables || []))
                 setShowDbChoice(true)
+                // Add inline DB choice to chat so user can still pick if modal is dismissed
+                setMessages(prev => [...prev, { role: 'assistant', content: 'Your app needs a database. Choose where to store your data:', isDbChoice: true }])
                 setBuildStatus(null)
                 setLoading(false)
                 return {} // Stop processing this build
@@ -755,6 +758,44 @@ export default function ProjectBuilder() {
                             <img src={msg.imageUrl} alt="uploaded" className="w-full rounded-md mb-2 max-h-[150px] object-cover" />
                           )}
                           <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed">{msg.content}</div>
+                          {msg.isDbChoice && (
+                            <div className="flex flex-col gap-2 mt-3">
+                              <button
+                                onClick={() => {
+                                  setShowDbChoice(false)
+                                  supabase.from('projects').update({ db_provider: 'platform' }).eq('id', projectId as string).then(() => {
+                                    fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'server_activated', severity: 'info', message: `User activated platform server for project ${projectId}`, metadata: { projectId } }) }).catch(() => {})
+                                    const lastUserMsg = messages.filter(m => m.role === 'user').pop()
+                                    if (lastUserMsg) sendMessage(lastUserMsg.content, 'Use our secure server')
+                                  })
+                                }}
+                                className="w-full text-left p-3 bg-[#0a0a0a] border border-white/[0.08] rounded-xl hover:border-emerald-500/30 hover:bg-emerald-500/[0.03] transition-all cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="text-emerald-400 text-sm">⚡</span>
+                                  <span className="text-[13px] font-medium text-[#f0f0f0]">Use our secure server</span>
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">Recommended</span>
+                                </div>
+                                <p className="text-[11px] text-[#666] mt-1 ml-6">Instant setup, fully managed, secure & isolated</p>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowDbChoice(false)
+                                  supabase.from('projects').update({ db_provider: 'custom' }).eq('id', projectId as string).then(() => {
+                                    setMessages(prev => [...prev, { role: 'user', content: 'Connect own Supabase' }])
+                                    setShowSupabaseConnect(true)
+                                  })
+                                }}
+                                className="w-full text-left p-3 bg-[#0a0a0a] border border-white/[0.08] rounded-xl hover:border-white/20 hover:bg-white/[0.02] transition-all cursor-pointer"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[#888] text-sm">🔗</span>
+                                  <span className="text-[13px] font-medium text-[#ccc]">Connect your own Supabase</span>
+                                </div>
+                                <p className="text-[11px] text-[#555] mt-1 ml-6">Full control, own auth, requires setup</p>
+                              </button>
+                            </div>
+                          )}
                           {msg.fileOps && msg.fileOps.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-2">
                               {msg.fileOps.map((op, j) => (
