@@ -123,9 +123,11 @@ function getLoader(filePath: string): esbuild.Loader {
 function buildCdnMap(extraPackages?: Record<string, string>): Record<string, string> {
   const map = { ...CDN_PACKAGES }
   if (extraPackages) {
-    for (const [name, version] of Object.entries(extraPackages)) {
+    const pkgNames = Object.keys(extraPackages)
+    for (let i = 0; i < pkgNames.length; i++) {
+      const name = pkgNames[i]
+      const version = extraPackages[name]
       if (!map[name]) {
-        // External react to avoid duplicate copies
         const hasReactPeer = ['lucide-react', 'react-router-dom', 'react-icons', 'framer-motion', '@headlessui/react', '@radix-ui/react-dialog'].some(p => name.startsWith(p.split('/')[0]))
         map[name] = `https://esm.sh/${name}@${version}${hasReactPeer ? '?external=react,react-dom' : ''}`
       }
@@ -149,8 +151,9 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
     'import.meta.env.PROD': 'false',
     'import.meta.env.MODE': '"development"',
   }
-  for (const [key, value] of Object.entries(envVars)) {
-    define[`import.meta.env.${key}`] = JSON.stringify(value)
+  const envKeys = Object.keys(envVars)
+  for (let i = 0; i < envKeys.length; i++) {
+    define[`import.meta.env.${envKeys[i]}`] = JSON.stringify(envVars[envKeys[i]])
   }
 
   // Collect CSS imports to concatenate separately

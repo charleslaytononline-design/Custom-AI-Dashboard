@@ -15,7 +15,11 @@ function cleanup() {
   if (now - lastCleanup < CLEANUP_INTERVAL) return
   lastCleanup = now
   const cutoff = now - 300_000 // 5 minute max window
-  for (const [key, timestamps] of windows.entries()) {
+  const keys = Array.from(windows.keys())
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i]
+    const timestamps = windows.get(key)
+    if (!timestamps) continue
     const valid = timestamps.filter(t => t > cutoff)
     if (valid.length === 0) {
       windows.delete(key)
