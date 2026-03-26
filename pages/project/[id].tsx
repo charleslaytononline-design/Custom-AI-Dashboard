@@ -100,7 +100,7 @@ export default function ProjectBuilder() {
   // Load welcome page HTML for preview placeholder
   useEffect(() => {
     async function loadWelcome() {
-      const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
+      const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').maybeSingle()
       let config = DEFAULT_WELCOME_CONFIG
       if (data?.value) {
         try { config = JSON.parse(data.value) as WelcomeConfig } catch {}
@@ -118,7 +118,7 @@ export default function ProjectBuilder() {
     if (data.supabase_url) setProjectSupabaseUrl(data.supabase_url)
     if (data.supabase_anon_key) setProjectSupabaseAnonKey(data.supabase_anon_key)
     // Load latest deployment URL
-    const { data: dep } = await supabase.from('deployments').select('url').eq('project_id', projectId as string).order('created_at', { ascending: false }).limit(1).single()
+    const { data: dep } = await supabase.from('deployments').select('url').eq('project_id', projectId as string).order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (dep?.url) setDeployUrl(dep.url)
   }
 

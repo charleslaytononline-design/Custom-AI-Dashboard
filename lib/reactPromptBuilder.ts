@@ -200,17 +200,47 @@ When the user asks for login, signup, auth, or protected routes, generate these 
    - Redirects to /login if no session
    - Renders <Outlet /> if authenticated
 
-5. Update src/App.tsx:
-   - Wrap app in <AuthProvider>
-   - Add /login and /signup routes (outside ProtectedRoute)
+5. **CRITICAL — Update src/App.tsx (MUST be in the SAME response as auth files):**
+   - Wrap ALL routes in <AuthProvider>
+   - Add /login and /signup routes OUTSIDE ProtectedRoute
    - Wrap protected routes in <ProtectedRoute> element
+   - The app WILL CRASH with a blank screen if AuthProvider is missing
+
+   REQUIRED App.tsx structure when using auth:
+   \`\`\`
+   import { AuthProvider } from './contexts/AuthContext'
+   import ProtectedRoute from './components/ProtectedRoute'
+   // ...other imports
+   export default function App() {
+     return (
+       <AuthProvider>
+         <Routes>
+           <Route path="/login" element={<Login />} />
+           <Route path="/signup" element={<Signup />} />
+           <Route element={<ProtectedRoute />}>
+             <Route element={<Layout />}>
+               <Route path="/" element={<Home />} />
+               {/* other protected routes */}
+             </Route>
+           </Route>
+         </Routes>
+       </AuthProvider>
+     )
+   }
+   \`\`\`
 
 6. Update src/main.tsx:
-   - Wrap BrowserRouter inside AuthProvider (AuthProvider must be inside BrowserRouter if using useNavigate)
+   - Keep BrowserRouter wrapping App (AuthProvider goes inside App, not main.tsx)
 
 7. Update src/components/Layout.tsx:
    - Add user email display in sidebar bottom
    - Add Sign Out button calling useAuth().signOut()
+
+CRITICAL AUTH CHECKLIST — if you create AuthContext.tsx, you MUST ALSO in the same response:
+  ✓ Update App.tsx to wrap routes with <AuthProvider>
+  ✓ Add <ProtectedRoute> wrapper around authenticated routes
+  ✓ Add /login and /signup as public routes outside <ProtectedRoute>
+  Failure to update App.tsx causes useAuth() to crash with a blank screen.
 
 Always use the Supabase client from src/lib/supabase.ts for auth operations.
 ` : ''}
