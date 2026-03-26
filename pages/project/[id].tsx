@@ -616,18 +616,8 @@ export default function ProjectBuilder() {
     } catch {}
   }
 
-  if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[#555] font-sans">Loading...</div>
-
-  const balanceDisplay = `$${creditBalance.toFixed(2)}`
-  const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
-
-  // Mobile panel visibility
-  const showLeft = !isMobile || mobilePanel === 'chat'
-  const showRight = !isMobile || mobilePanel === 'preview'
-
-  // Render preview panel
   // Memoize env vars so the preview doesn't rebundle on every chat keystroke.
-  // Only recomputes when files, project env vars, or Supabase credentials actually change.
+  // Must be BEFORE the early return below — React hooks must run in the same order every render.
   const previewEnvVars = useMemo(() => {
     const dotEnvVars: Record<string, string> = {}
     const dotEnvFile = files.find(f => f.path === '.env')
@@ -648,6 +638,15 @@ export default function ProjectBuilder() {
       ...(projectSupabaseAnonKey ? { VITE_SUPABASE_ANON_KEY: projectSupabaseAnonKey } : {}),
     }
   }, [files, projectEnvVars, projectSupabaseUrl, projectSupabaseAnonKey])
+
+  if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[#555] font-sans">Loading...</div>
+
+  const balanceDisplay = `$${creditBalance.toFixed(2)}`
+  const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
+
+  // Mobile panel visibility
+  const showLeft = !isMobile || mobilePanel === 'chat'
+  const showRight = !isMobile || mobilePanel === 'preview'
 
   const renderPreview = () => (
     <PreviewFrame
