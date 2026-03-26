@@ -825,7 +825,7 @@ export default function ProjectBuilder() {
                   placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
                   rows={3} className="p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
                 />
-                <button onClick={sendMessage} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
+                <button onClick={() => sendMessage()} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
                   {loading ? 'Working...' : mode==='plan' ? 'Create Plan' : 'Build'}
                 </button>
               </div>
