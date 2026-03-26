@@ -7,6 +7,8 @@ import { loadProjectFiles, saveFile, deleteFile, buildFileTree, getFileType } fr
 import type { ProjectFile, FileTreeNode } from '../../lib/virtualFS'
 import FileTree from '../../components/FileTree'
 import DeployButton from '../../components/DeployButton'
+import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../../lib/welcomeConfig'
+import type { WelcomeConfig } from '../../lib/welcomeConfig'
 import GitHubConnect from '../../components/GitHubConnect'
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
@@ -43,6 +45,7 @@ export default function ProjectBuilder() {
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
   const [showPlanModal, setShowPlanModal] = useState(false)
   const [planModalContent, setPlanModalContent] = useState('')
+  const [welcomeHtml, setWelcomeHtml] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -74,6 +77,19 @@ export default function ProjectBuilder() {
 
   // Update file tree when files change
   useEffect(() => { setFileTree(buildFileTree(files)) }, [files])
+
+  // Load welcome page HTML for preview placeholder
+  useEffect(() => {
+    async function loadWelcome() {
+      const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
+      let config = DEFAULT_WELCOME_CONFIG
+      if (data?.value) {
+        try { config = JSON.parse(data.value) as WelcomeConfig } catch {}
+      }
+      setWelcomeHtml(generateWelcomeHtml(config))
+    }
+    loadWelcome()
+  }, [])
 
   async function loadProject() {
     const { data } = await supabase.from('projects').select('*').eq('id', projectId).eq('user_id', user.id).single()
@@ -721,11 +737,10 @@ export default function ProjectBuilder() {
               <div className="flex-1 flex flex-col overflow-hidden">
                 {deployUrl ? (
                   <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+                ) : welcomeHtml ? (
+                  <iframe srcDoc={welcomeHtml} sandbox="allow-scripts" className="flex-1 border-none bg-surface w-full h-full" title="welcome" />
                 ) : (
-                  <div className="flex-1 flex items-center justify-center text-[#666] text-[13px] flex-col gap-3">
-                    <div className="text-2xl opacity-40">⚡</div>
-                    <p>Deploy your project to see a preview</p>
-                  </div>
+                  <div className="flex-1 flex items-center justify-center text-[#666] text-[13px]">Loading...</div>
                 )}
               </div>
             </div>
@@ -752,11 +767,10 @@ export default function ProjectBuilder() {
             /* Preview mode */
             deployUrl ? (
               <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+            ) : welcomeHtml ? (
+              <iframe srcDoc={welcomeHtml} sandbox="allow-scripts" className="flex-1 border-none bg-surface w-full h-full" title="welcome" />
             ) : (
-              <div className="flex-1 flex items-center justify-center text-[#444] text-[13px] flex-col gap-3">
-                <div className="text-2xl opacity-20">⚡</div>
-                <p>Deploy your project to see a preview</p>
-              </div>
+              <div className="flex-1 flex items-center justify-center text-[#666] text-[13px]">Loading...</div>
             )
           )}
         </div>
