@@ -615,7 +615,24 @@ export default function ProjectBuilder() {
   const showRight = !isMobile || mobilePanel === 'preview'
 
   // Render preview panel
+  // Parse .env file from project files for preview env vars (base layer).
+  // This ensures Supabase credentials set at project creation (from CLIENTS_SUPABASE_URL)
+  // reach the bundler even when projects.supabase_url is not explicitly set.
+  const dotEnvVars: Record<string, string> = {}
+  const dotEnvFile = files.find(f => f.path === '.env')
+  if (dotEnvFile?.content) {
+    for (const line of dotEnvFile.content.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const eqIdx = trimmed.indexOf('=')
+      if (eqIdx > 0) {
+        dotEnvVars[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1)
+      }
+    }
+  }
+
   const previewEnvVars = {
+    ...dotEnvVars,
     ...projectEnvVars,
     ...(projectSupabaseUrl ? { VITE_SUPABASE_URL: projectSupabaseUrl } : {}),
     ...(projectSupabaseAnonKey ? { VITE_SUPABASE_ANON_KEY: projectSupabaseAnonKey } : {}),
