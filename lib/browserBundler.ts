@@ -148,7 +148,16 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
   const cdnMap = buildCdnMap(extraPackages)
 
   // Build define map for import.meta.env.*
+  // Individual keys get replaced at build time (most specific match).
+  // The catch-all import.meta.env object prevents TypeError when code
+  // accesses env vars that aren't in the define map (e.g. VITE_SUPABASE_URL
+  // when Supabase isn't connected yet).
+  const envObject: Record<string, any> = {
+    DEV: true, PROD: false, MODE: 'development',
+    ...envVars,
+  }
   const define: Record<string, string> = {
+    'import.meta.env': JSON.stringify(envObject),
     'import.meta.env.DEV': 'true',
     'import.meta.env.PROD': 'false',
     'import.meta.env.MODE': '"development"',
