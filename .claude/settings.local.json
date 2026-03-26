@@ -56,7 +56,9 @@
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
       "WebFetch(domain:vercel.com)",
       "Bash(\"/c/Program Files/nodejs/npx.cmd\" tsc --noEmit)",
-      "Bash(where.exe node:*)"
+      "Bash(where.exe node:*)",
+      "Bash(npx.cmd tsc:*)",
+      "Bash(node -e \"require\\(''''child_process''''\\).execSync\\(''''npx tsc --noEmit'''', {stdio: ''''inherit''''}\\)\")"
     ]
   }
 }
