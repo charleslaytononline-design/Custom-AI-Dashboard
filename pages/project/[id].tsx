@@ -301,6 +301,8 @@ export default function ProjectBuilder() {
     setLoading(true)
     setLastError(null)
     setBuildStatus('Starting build...')
+    const buildStartTime = Date.now()
+    let deltaCharCount = 0
 
     const controller = new AbortController()
     abortControllerRef.current = controller
@@ -315,6 +317,7 @@ export default function ProjectBuilder() {
       })
 
       const fileOps: Array<{ action: string; path: string }> = []
+      const fileContentUpdates: Array<{ action: string; path: string; content: string | null }> = []
 
       // Snapshot current files for diff comparison
       const preMap = new Map<string, string>()
@@ -364,11 +367,15 @@ export default function ProjectBuilder() {
               const event = JSON.parse(line.slice(6))
 
               if (event.type === 'delta') {
-                // delta streamed
+                deltaCharCount += (event.text || '').length
+                const elapsed = Math.round((Date.now() - buildStartTime) / 1000)
+                const sizeLabel = deltaCharCount > 1000 ? `${(deltaCharCount / 1000).toFixed(1)}K` : `${deltaCharCount}`
+                setBuildStatus(`Generating code... ${sizeLabel} chars (${elapsed}s)`)
               } else if (event.type === 'status') {
                 setBuildStatus(event.text)
               } else if (event.type === 'file_op') {
                 fileOps.push({ action: event.action, path: event.path })
+                fileContentUpdates.push({ action: event.action, path: event.path, content: event.content || null })
                 setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
                 setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
                 setTimeout(() => {
@@ -378,7 +385,39 @@ export default function ProjectBuilder() {
                 // Server hit time limit — return continuation data so we can auto-retry
                 return { continuation: { partialRaw: event.partialRaw, continuationCount: event.continuationCount, accumulatedApiCost: event.accumulatedApiCost } }
               } else if (event.type === 'done') {
-                await loadFiles()
+                // Apply file changes directly from streamed file_op events for instant preview
+                if (fileContentUpdates.length > 0) {
+                  setFiles(prev => {
+                    let updated = [...prev]
+                    for (const op of fileContentUpdates) {
+                      if (op.action === 'delete') {
+                        updated = updated.filter(f => f.path !== op.path)
+                      } else if (op.action === 'create' || op.action === 'edit') {
+                        const existing = updated.findIndex(f => f.path === op.path)
+                        const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
+                        const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+                        const fileEntry = {
+                          id: existing >= 0 ? updated[existing].id : `local_${Date.now()}_${op.path}`,
+                          project_id: projectId as string,
+                          user_id: user.id,
+                          path: op.path,
+                          content: op.content,
+                          file_type: fileType,
+                          created_at: existing >= 0 ? updated[existing].created_at : new Date().toISOString(),
+                          updated_at: new Date().toISOString(),
+                        }
+                        if (existing >= 0) {
+                          updated[existing] = fileEntry
+                        } else {
+                          updated.push(fileEntry)
+                        }
+                      }
+                    }
+                    return updated
+                  })
+                }
+                // Also fetch from DB to ensure consistency (non-blocking)
+                loadFiles()
                 setBuildTrigger(prev => prev + 1)
 
                 // Compute diffs for changed files

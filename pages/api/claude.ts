@@ -946,6 +946,9 @@ RULES:
       }
 
       // Execute all file operations in parallel
+      if (parsedOps.length > 0) {
+        sendSSE({ type: 'status', text: `Saving ${parsedOps.length} file(s)...` })
+      }
       const fileResults = await Promise.allSettled(parsedOps.map(async (op) => {
         if (op.action === 'create' || op.action === 'edit') {
           const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
@@ -963,7 +966,8 @@ RULES:
         const result = fileResults[i]
         if (result.status === 'fulfilled' && result.value) {
           fileOpsApplied.push(result.value)
-          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path })
+          const op = parsedOps[i]
+          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: op.content || null })
         } else if (result.status === 'rejected') {
           const op = parsedOps[i]
           await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { userId, projectId, filePath: op.path })
