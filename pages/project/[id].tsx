@@ -210,11 +210,6 @@ export default function ProjectBuilder() {
     setBuildStatus(null)
   }
 
-  // Clear chat
-  function clearChatHistory() {
-    setMessages([])
-    setPendingPlan(null)
-  }
 
   // Send message
   async function sendMessage() {
@@ -488,9 +483,6 @@ export default function ProjectBuilder() {
                   </div>
                 ) : (
                   <>
-                    <div className="flex justify-end mb-1">
-                      <button onClick={clearChatHistory} className="text-[10px] text-[#444] bg-transparent border-none cursor-pointer px-1.5 py-0.5">Clear history</button>
-                    </div>
                     {messages.map((msg, i) => (
                       <div key={i} className={`flex flex-col ${msg.role==='user' ? 'items-end' : ''}`}>
                         <div className={`max-w-[92%] px-3 py-2 rounded-[10px] ${
