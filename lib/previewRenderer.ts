@@ -127,6 +127,8 @@ export function generatePreviewHtml(options: PreviewOptions): string {
     });
     // Prevent native form submissions (React handles forms via JS, native submit is blocked in sandbox)
     document.addEventListener('submit', function(e) { e.preventDefault(); }, true);
+    // Also override programmatic form.submit() which bypasses addEventListener
+    HTMLFormElement.prototype.submit = function() {};
   </script>
 
   <!-- Error & console forwarding to parent -->

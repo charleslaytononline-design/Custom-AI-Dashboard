@@ -298,7 +298,7 @@ export default function PreviewFrame({
               <iframe
                 ref={iframeRef}
                 srcDoc={srcdoc!}
-                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-top-navigation-by-user-activation"
                 className="w-full h-full border-none"
                 title="live preview"
               />
