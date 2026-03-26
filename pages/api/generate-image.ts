@@ -159,6 +159,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
 
+  // Role permission check: can this user build?
+  const { data: rolePerms } = await supabase.from('roles').select('can_build').eq('name', profile.role).single()
+  if (rolePerms && !rolePerms.can_build) {
+    return res.status(403).json({ error: 'Your account role does not allow image generation.' })
+  }
+
   if ((profile.credit_balance + (profile.gift_balance || 0)) < chargePerImage) {
     return res.status(402).json({ error: 'insufficient_credits', message: 'Not enough credits to generate an image.' })
   }

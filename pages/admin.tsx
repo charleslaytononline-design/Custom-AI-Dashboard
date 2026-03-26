@@ -103,8 +103,15 @@ interface Role {
   can_access_admin: boolean
   can_build: boolean
   can_create_projects: boolean
-  bypass_credits: boolean
   is_system: boolean
+}
+
+interface PageAccess {
+  id: string
+  role_id: string
+  page_path: string
+  page_label: string
+  can_access: boolean
 }
 
 interface PlatformLog {
@@ -156,7 +163,7 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5', max_images_per_build: '5' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training' | 'security'>('users')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -192,7 +199,14 @@ export default function Admin() {
   const [roles, setRoles] = useState<Role[]>([])
   const [editingRole, setEditingRole] = useState<Role | null>(null)
   const [showNewRole, setShowNewRole] = useState(false)
-  const [newRoleForm, setNewRoleForm] = useState<Omit<Role, 'id' | 'is_system'>>({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true, bypass_credits: false })
+  const [newRoleForm, setNewRoleForm] = useState<Omit<Role, 'id' | 'is_system'>>({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true })
+  const [pageAccessMap, setPageAccessMap] = useState<PageAccess[]>([])
+  const [showNewPage, setShowNewPage] = useState(false)
+  const [newPagePath, setNewPagePath] = useState('')
+  const [newPageLabel, setNewPageLabel] = useState('')
+  const [securityNotes, setSecurityNotes] = useState('')
+  const [securityEvents, setSecurityEvents] = useState<PlatformLog[]>([])
+  const [suspiciousUsers, setSuspiciousUsers] = useState<{ email: string; reason: string; count: number }[]>([])
   const [roleMsg, setRoleMsg] = useState('')
   const OWNER_EMAIL = 'charleslayton.online@gmail.com'
 
@@ -261,7 +275,9 @@ export default function Admin() {
   }, [])
 
   async function loadAll() {
-    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadChatHistory(), loadAlertSettings(), loadWelcomeConfig(), loadAiConnections()])
+    await Promise.all([loadUsers(), loadSettings(), loadRevenue(), loadPlans(), loadRoles(), loadLogs(), loadChatHistory(), loadAlertSettings(), loadWelcomeConfig(), loadAiConnections(), loadSecurityData()])
+    // Load page access after roles are loaded (needs role IDs)
+    await loadPageAccess()
     setLoading(false)
   }
 
@@ -347,6 +363,102 @@ export default function Admin() {
   async function loadRoles() {
     const { data } = await supabase.from('roles').select('*').order('created_at')
     if (data) setRoles(data)
+  }
+
+  async function loadPageAccess() {
+    const { data } = await supabase.from('role_page_access').select('*').order('page_path')
+    if (data) {
+      setPageAccessMap(data)
+      // Seed default pages if table is empty
+      if (data.length === 0 && roles.length > 0) {
+        await seedDefaultPages()
+      }
+    }
+  }
+
+  async function seedDefaultPages() {
+    const defaults = [
+      { page_path: '/home', page_label: 'Projects Dashboard' },
+      { page_path: '/profile', page_label: 'User Profile' },
+      { page_path: '/project', page_label: 'Project Builder' },
+      { page_path: '/admin', page_label: 'Admin Panel' },
+    ]
+    const inserts: { role_id: string; page_path: string; page_label: string; can_access: boolean }[] = []
+    for (const role of roles) {
+      for (const pg of defaults) {
+        const canAccess = pg.page_path === '/admin' ? role.can_access_admin : true
+        inserts.push({ role_id: role.id, page_path: pg.page_path, page_label: pg.page_label, can_access: canAccess })
+      }
+    }
+    await supabase.from('role_page_access').insert(inserts)
+    await loadPageAccess()
+  }
+
+  async function togglePageAccess(accessId: string, canAccess: boolean) {
+    await supabase.from('role_page_access').update({ can_access: canAccess }).eq('id', accessId)
+    setPageAccessMap(prev => prev.map(pa => pa.id === accessId ? { ...pa, can_access: canAccess } : pa))
+  }
+
+  async function registerNewPage() {
+    if (!newPagePath.trim() || !newPageLabel.trim()) return
+    const path = newPagePath.startsWith('/') ? newPagePath : '/' + newPagePath
+    const inserts = roles.map(role => ({
+      role_id: role.id,
+      page_path: path,
+      page_label: newPageLabel.trim(),
+      can_access: role.can_access_admin || !path.startsWith('/admin'),
+    }))
+    await supabase.from('role_page_access').insert(inserts)
+    setNewPagePath('')
+    setNewPageLabel('')
+    setShowNewPage(false)
+    await loadPageAccess()
+  }
+
+  async function loadSecurityData() {
+    // Load security events
+    const securityTypes = ['login_failed', 'signup', 'password_reset_completed', 'password_reset_requested', 'credits_error', 'builder_failed_untracked', 'suspension_toggled', 'role_changed']
+    const { data: events } = await supabase
+      .from('platform_logs')
+      .select('*')
+      .in('event_type', securityTypes)
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (events) setSecurityEvents(events)
+
+    // Load security notes
+    const { data: notesSetting } = await supabase.from('settings').select('value').eq('key', 'security_audit_notes').single()
+    if (notesSetting?.value) setSecurityNotes(notesSetting.value)
+
+    // Detect suspicious activity from logs
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const { data: recentLogs } = await supabase
+      .from('platform_logs')
+      .select('*')
+      .in('event_type', ['login_failed', 'credits_error', 'builder_failed_untracked'])
+      .gte('created_at', oneHourAgo)
+    if (recentLogs) {
+      const userCounts: Record<string, { email: string; failed_logins: number; credits_errors: number }> = {}
+      for (const log of recentLogs) {
+        const email = log.email || (log.metadata as any)?.email || 'unknown'
+        if (!userCounts[email]) userCounts[email] = { email, failed_logins: 0, credits_errors: 0 }
+        if (log.event_type === 'login_failed') userCounts[email].failed_logins++
+        if (log.event_type === 'credits_error') userCounts[email].credits_errors++
+      }
+      const suspicious = Object.values(userCounts)
+        .filter(u => u.failed_logins >= 3 || u.credits_errors >= 3)
+        .map(u => ({
+          email: u.email,
+          reason: u.failed_logins >= 3 ? `${u.failed_logins} failed logins in last hour` : `${u.credits_errors} credit errors in last hour`,
+          count: u.failed_logins + u.credits_errors,
+        }))
+      setSuspiciousUsers(suspicious)
+    }
+  }
+
+  async function saveSecurityNotes(notes: string) {
+    setSecurityNotes(notes)
+    await supabase.from('settings').upsert({ key: 'security_audit_notes', value: notes, updated_at: new Date().toISOString() })
   }
 
   async function loadLogs() {
@@ -625,7 +737,7 @@ export default function Admin() {
   }
 
   async function saveRole(role: Role) {
-    const { error } = await supabase.from('roles').update({ name: role.name, description: role.description, can_access_admin: role.can_access_admin, can_build: role.can_build, can_create_projects: role.can_create_projects, bypass_credits: role.bypass_credits }).eq('id', role.id)
+    const { error } = await supabase.from('roles').update({ name: role.name, description: role.description, can_access_admin: role.can_access_admin, can_build: role.can_build, can_create_projects: role.can_create_projects }).eq('id', role.id)
     if (error) { setRoleMsg('Error: ' + error.message); return }
     setRoleMsg('Role saved!')
     setEditingRole(null)
@@ -638,7 +750,7 @@ export default function Admin() {
     const { error } = await supabase.from('roles').insert({ ...newRoleForm, is_system: false })
     if (error) { setRoleMsg('Error: ' + error.message); return }
     setRoleMsg('Role created!')
-    setNewRoleForm({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true, bypass_credits: false })
+    setNewRoleForm({ name: '', description: '', can_access_admin: false, can_build: true, can_create_projects: true })
     setShowNewRole(false)
     loadRoles()
     setTimeout(() => setRoleMsg(''), 3000)
@@ -804,9 +916,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions', 'security'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab === 'security' ? 'Security Audit' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1383,8 +1495,7 @@ export default function Admin() {
                         {role.can_access_admin && <span style={{ ...s.badge, ...s.badgePurple }}>Admin Panel</span>}
                         {role.can_build && <span style={{ ...s.badge, ...s.badgeGreen }}>Can Build</span>}
                         {role.can_create_projects && <span style={{ ...s.badge, ...s.badgeGreen }}>Create Projects</span>}
-                        {role.bypass_credits && <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952' }}>Bypass Credits</span>}
-                        {!role.can_build && !role.can_create_projects && !role.can_access_admin && !role.bypass_credits && (
+                        {!role.can_build && !role.can_create_projects && !role.can_access_admin && (
                           <span style={{ ...s.badge, ...s.badgeGray }}>No permissions</span>
                         )}
                       </div>
@@ -1432,7 +1543,6 @@ export default function Admin() {
                       ['can_access_admin', 'Can Access Admin Panel'],
                       ['can_build', 'Can Build with AI'],
                       ['can_create_projects', 'Can Create Projects'],
-                      ['bypass_credits', 'Bypass Credits Requirement'],
                     ] as [keyof Omit<Role, 'id' | 'name' | 'description' | 'is_system'>, string][]).map(([key, label]) => {
                       const checked = editingRole ? editingRole[key] as boolean : newRoleForm[key] as boolean
                       return (
@@ -1460,6 +1570,199 @@ export default function Admin() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Page Access Management */}
+          <div style={{ marginTop: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Page Access by Role</h3>
+              <button onClick={() => setShowNewPage(true)} style={{ ...s.actionBtn, ...s.actionPurple, fontSize: 11, padding: '6px 12px' }}>+ Register New Page</button>
+            </div>
+
+            {showNewPage && (
+              <div style={{ ...s.settingsCard, marginBottom: 12, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ ...s.field, flex: 1 }}>
+                  <label style={s.label}>Page Path</label>
+                  <input style={s.input} value={newPagePath} onChange={e => setNewPagePath(e.target.value)} placeholder="/reports" />
+                </div>
+                <div style={{ ...s.field, flex: 1 }}>
+                  <label style={s.label}>Page Label</label>
+                  <input style={s.input} value={newPageLabel} onChange={e => setNewPageLabel(e.target.value)} placeholder="Reports Dashboard" />
+                </div>
+                <button onClick={registerNewPage} style={s.saveBtn}>Add</button>
+                <button onClick={() => setShowNewPage(false)} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+              </div>
+            )}
+
+            {(() => {
+              const uniquePaths = Array.from(new Set(pageAccessMap.map(pa => pa.page_path))).sort()
+              if (uniquePaths.length === 0) return <p style={{ fontSize: 12, color: '#555' }}>No pages registered yet. Click "+ Register New Page" to add pages, or they will be seeded automatically on next load.</p>
+              return (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Role</th>
+                        {uniquePaths.map(path => {
+                          const label = pageAccessMap.find(pa => pa.page_path === path)?.page_label || path
+                          return <th key={path} style={{ ...s.th, textAlign: 'center' as const }}>{label}</th>
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {roles.map(role => (
+                        <tr key={role.id}>
+                          <td style={s.td}><span style={{ fontSize: 12, color: '#f0f0f0' }}>{role.name}</span></td>
+                          {uniquePaths.map(path => {
+                            const access = pageAccessMap.find(pa => pa.role_id === role.id && pa.page_path === path)
+                            return (
+                              <td key={path} style={{ ...s.td, textAlign: 'center' as const }}>
+                                {access ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={access.can_access}
+                                    onChange={e => togglePageAccess(access.id, e.target.checked)}
+                                    style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }}
+                                  />
+                                ) : <span style={{ color: '#333' }}>-</span>}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* SECURITY AUDIT TAB */}
+      {activeTab === 'security' && (
+        <div style={s.section}>
+          <h2 style={s.sectionTitle}>Security Audit</h2>
+
+          {/* System Health */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            <div style={s.settingsCard}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Clients DB</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'error' ? '#f09595' : '#888' }}>
+                {clientsDbStatus === 'connected' ? 'Connected' : clientsDbStatus === 'error' ? 'Error' : 'Checking...'}
+              </div>
+            </div>
+            <div style={s.settingsCard}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Total Users</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{users.length}</div>
+            </div>
+            <div style={s.settingsCard}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Active Roles</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{roles.length}</div>
+            </div>
+            <div style={s.settingsCard}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Suspicious Activity</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: suspiciousUsers.length > 0 ? '#f09595' : '#5DCAA5' }}>
+                {suspiciousUsers.length > 0 ? `${suspiciousUsers.length} alerts` : 'None detected'}
+              </div>
+            </div>
+          </div>
+
+          {/* Suspicious Activity Alerts */}
+          {suspiciousUsers.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f09595', marginBottom: 12 }}>Suspicious Activity (Last Hour)</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {suspiciousUsers.map((su, i) => (
+                  <div key={i} style={{ ...s.settingsCard, borderColor: 'rgba(163,45,45,0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
+                    <div>
+                      <span style={{ fontSize: 13, color: '#f0f0f0' }}>{su.email}</span>
+                      <span style={{ fontSize: 11, color: '#f09595', marginLeft: 12 }}>{su.reason}</span>
+                    </div>
+                    <span style={{ ...s.badge, ...s.badgeRed }}>{su.count} events</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Access Matrix */}
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Role Access Overview</h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Role</th>
+                    <th style={{ ...s.th, textAlign: 'center' as const }}>Admin Panel</th>
+                    <th style={{ ...s.th, textAlign: 'center' as const }}>Build with AI</th>
+                    <th style={{ ...s.th, textAlign: 'center' as const }}>Create Projects</th>
+                    <th style={{ ...s.th, textAlign: 'center' as const }}>System Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roles.map(role => (
+                    <tr key={role.id}>
+                      <td style={s.td}><span style={{ fontSize: 12, color: '#f0f0f0' }}>{role.name}</span></td>
+                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_access_admin ? '#5DCAA5' : '#f09595' }}>{role.can_access_admin ? '✓' : '✗'}</span></td>
+                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_build ? '#5DCAA5' : '#f09595' }}>{role.can_build ? '✓' : '✗'}</span></td>
+                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_create_projects ? '#5DCAA5' : '#f09595' }}>{role.can_create_projects ? '✓' : '✗'}</span></td>
+                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.is_system ? '#f0a952' : '#555' }}>{role.is_system ? '🔒' : '-'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Security Events */}
+          <div style={{ marginBottom: 24 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Security Events (Recent 100)</h3>
+            <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10 }}>
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    <th style={s.th}>Time</th>
+                    <th style={s.th}>Event</th>
+                    <th style={s.th}>Severity</th>
+                    <th style={s.th}>Email</th>
+                    <th style={s.th}>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {securityEvents.map(event => (
+                    <tr key={event.id}>
+                      <td style={s.td}><span style={s.num}>{new Date(event.created_at).toLocaleString()}</span></td>
+                      <td style={s.td}><span style={{ ...s.badge, ...s.badgePurple }}>{event.event_type}</span></td>
+                      <td style={s.td}>
+                        <span style={{ ...s.badge, ...(event.severity === 'error' ? s.badgeRed : event.severity === 'warn' ? { background: 'rgba(240,169,82,0.12)', color: '#f0a952' } : s.badgeGreen) }}>
+                          {event.severity}
+                        </span>
+                      </td>
+                      <td style={s.td}><span style={s.num}>{event.email || '-'}</span></td>
+                      <td style={s.td}><span style={{ fontSize: 11, color: '#888' }}>{event.message?.slice(0, 100)}</span></td>
+                    </tr>
+                  ))}
+                  {securityEvents.length === 0 && (
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center' as const, color: '#555' }}>No security events found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Admin Notes */}
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Security Notes</h3>
+            <div style={s.settingsCard}>
+              <textarea
+                value={securityNotes}
+                onChange={e => saveSecurityNotes(e.target.value)}
+                placeholder="Add security observations, audit notes, or reminders here. This is saved automatically and persists across sessions."
+                style={{ ...s.input, width: '100%', minHeight: 150, resize: 'vertical' as const, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}
+              />
+              <p style={{ fontSize: 10, color: '#444', marginTop: 8 }}>Auto-saved. Use this to track security observations, audit findings, and follow-up items.</p>
+            </div>
           </div>
         </div>
       )}

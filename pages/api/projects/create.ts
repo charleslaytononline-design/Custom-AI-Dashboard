@@ -21,6 +21,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'Missing name' })
   }
 
+  // Role permission check: can this user create projects?
+  const { data: userProfile } = await supabase.from('profiles').select('role').eq('id', userId).single()
+  if (userProfile?.role) {
+    const { data: rolePerms } = await supabase.from('roles').select('can_create_projects').eq('name', userProfile.role).single()
+    if (rolePerms && !rolePerms.can_create_projects) {
+      return res.status(403).json({ error: 'Your account role does not allow creating projects.' })
+    }
+  }
+
   try {
     // Create the project record
     const { data: project, error: projectError } = await supabase

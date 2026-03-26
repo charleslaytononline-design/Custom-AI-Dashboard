@@ -137,6 +137,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const userEmail = profile.email || null
 
+  // Role permission check: can this user build?
+  const { data: rolePerms } = await supabase.from('roles').select('can_build').eq('name', profile.role).single()
+  if (rolePerms && !rolePerms.can_build) {
+    await log('role_blocked', 'warn', `Build blocked — role "${profile.role}" cannot build`, userEmail, { userId })
+    return res.status(403).json({ error: 'Your account role does not allow building. Contact an administrator.' })
+  }
+
   // Credit check (purchased + gift combined)
   const totalBalance = (profile.credit_balance || 0) + (profile.gift_balance || 0)
   if (totalBalance <= 0) {

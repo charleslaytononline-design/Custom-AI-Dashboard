@@ -18,11 +18,6 @@ const PUBLIC_API_ROUTES = [
   '/api/preview/',        // Page previews
 ]
 
-// Routes that require admin role
-const ADMIN_ROUTES = [
-  '/admin',
-]
-
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
   const { pathname } = req.nextUrl
@@ -62,11 +57,44 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // Admin route protection
-  if (ADMIN_ROUTES.some(route => pathname.startsWith(route))) {
-    // For admin pages, the page itself checks the role via getServerSideProps
-    // This middleware just ensures there IS a session. The page handles role check.
-    // API admin routes are protected by their own verifyAdmin() function.
+  // Skip page access checks for API routes (they handle their own auth)
+  if (pathname.startsWith('/api/')) {
+    return res
+  }
+
+  // Role-based page access enforcement
+  // Look up user's profile to get their role, then check page access
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', session.user.id)
+    .single()
+
+  if (profile?.role) {
+    // Get role record
+    const { data: role } = await supabase
+      .from('roles')
+      .select('id, can_access_admin')
+      .eq('name', profile.role)
+      .single()
+
+    if (role) {
+      // Check page access for this role
+      // Normalize path: /project/abc123 -> /project
+      const basePath = '/' + pathname.split('/').filter(Boolean)[0]
+      const { data: access } = await supabase
+        .from('role_page_access')
+        .select('can_access')
+        .eq('role_id', role.id)
+        .eq('page_path', basePath)
+        .single()
+
+      // If this page is registered and access is denied, redirect
+      if (access && !access.can_access) {
+        const homeUrl = new URL('/home', req.url)
+        return NextResponse.redirect(homeUrl)
+      }
+    }
   }
 
   return res
