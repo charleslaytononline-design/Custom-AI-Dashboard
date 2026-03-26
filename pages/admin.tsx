@@ -163,7 +163,10 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5', max_images_per_build: '5' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training' | 'security'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training' | 'security' | 'analytics'>('users')
+  const [analyticsData, setAnalyticsData] = useState<any>(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<'7d' | '30d' | '90d' | 'all'>('30d')
   const [giftUserId, setGiftUserId] = useState('')
   const [giftAmount, setGiftAmount] = useState('')
   const [giftMsg, setGiftMsg] = useState('')
@@ -459,6 +462,120 @@ export default function Admin() {
   async function saveSecurityNotes(notes: string) {
     setSecurityNotes(notes)
     await supabase.from('settings').upsert({ key: 'security_audit_notes', value: notes, updated_at: new Date().toISOString() })
+  }
+
+  async function loadAnalytics() {
+    setAnalyticsLoading(true)
+    try {
+      const daysMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90, 'all': 3650 }
+      const days = daysMap[analyticsPeriod] || 30
+      const since = new Date(Date.now() - days * 86400_000).toISOString().split('T')[0]
+
+      // Fetch usage_daily data
+      const { data: usage } = await supabase
+        .from('usage_daily')
+        .select('*')
+        .gte('date', since)
+        .order('date', { ascending: false })
+
+      // Fetch transactions for revenue
+      const { data: txns } = await supabase
+        .from('transactions')
+        .select('user_id, amount, api_cost, type, tokens_used, created_at')
+        .gte('created_at', new Date(Date.now() - days * 86400_000).toISOString())
+
+      // Fetch user profiles for per-user breakdown
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, email, credit_balance, gift_balance, role, plan_id, created_at')
+
+      // Fetch projects
+      const { data: projects } = await supabase
+        .from('projects')
+        .select('id, name, user_id, project_type, db_provider, created_at')
+
+      // Aggregate totals
+      const totals = {
+        builds: 0, tokensInput: 0, tokensOutput: 0,
+        costAnthropic: 0, costReplicate: 0,
+        images: 0, functionExecs: 0, cronExecs: 0,
+        storageBytes: 0, rowsInserted: 0,
+      }
+      const dailyStats: Record<string, typeof totals> = {}
+      const perUser: Record<string, typeof totals & { email: string; revenue: number; projects: number }> = {}
+      const perProject: Record<string, typeof totals & { name: string; ownerEmail: string }> = {}
+
+      for (const row of usage || []) {
+        totals.builds += row.builds || 0
+        totals.tokensInput += Number(row.tokens_input) || 0
+        totals.tokensOutput += Number(row.tokens_output) || 0
+        totals.costAnthropic += Number(row.api_cost_anthropic) || 0
+        totals.costReplicate += Number(row.api_cost_replicate) || 0
+        totals.images += row.images_generated || 0
+        totals.functionExecs += row.function_executions || 0
+        totals.cronExecs += row.cron_executions || 0
+        totals.storageBytes += Number(row.storage_bytes_added) || 0
+        totals.rowsInserted += row.rows_inserted || 0
+
+        // Daily
+        if (!dailyStats[row.date]) dailyStats[row.date] = { builds: 0, tokensInput: 0, tokensOutput: 0, costAnthropic: 0, costReplicate: 0, images: 0, functionExecs: 0, cronExecs: 0, storageBytes: 0, rowsInserted: 0 }
+        dailyStats[row.date].builds += row.builds || 0
+        dailyStats[row.date].costAnthropic += Number(row.api_cost_anthropic) || 0
+        dailyStats[row.date].costReplicate += Number(row.api_cost_replicate) || 0
+
+        // Per user
+        if (row.user_id) {
+          if (!perUser[row.user_id]) {
+            const profile = (profiles || []).find((p: any) => p.id === row.user_id)
+            perUser[row.user_id] = { ...{ builds: 0, tokensInput: 0, tokensOutput: 0, costAnthropic: 0, costReplicate: 0, images: 0, functionExecs: 0, cronExecs: 0, storageBytes: 0, rowsInserted: 0 }, email: profile?.email || 'unknown', revenue: 0, projects: 0 }
+          }
+          perUser[row.user_id].builds += row.builds || 0
+          perUser[row.user_id].tokensInput += Number(row.tokens_input) || 0
+          perUser[row.user_id].tokensOutput += Number(row.tokens_output) || 0
+          perUser[row.user_id].costAnthropic += Number(row.api_cost_anthropic) || 0
+          perUser[row.user_id].costReplicate += Number(row.api_cost_replicate) || 0
+          perUser[row.user_id].images += row.images_generated || 0
+        }
+
+        // Per project
+        if (row.project_id) {
+          if (!perProject[row.project_id]) {
+            const proj = (projects || []).find((p: any) => p.id === row.project_id)
+            const owner = (profiles || []).find((p: any) => p.id === proj?.user_id)
+            perProject[row.project_id] = { ...{ builds: 0, tokensInput: 0, tokensOutput: 0, costAnthropic: 0, costReplicate: 0, images: 0, functionExecs: 0, cronExecs: 0, storageBytes: 0, rowsInserted: 0 }, name: proj?.name || 'Unknown', ownerEmail: owner?.email || 'unknown' }
+          }
+          perProject[row.project_id].builds += row.builds || 0
+          perProject[row.project_id].costAnthropic += Number(row.api_cost_anthropic) || 0
+          perProject[row.project_id].tokensInput += Number(row.tokens_input) || 0
+        }
+      }
+
+      // Revenue from transactions
+      let totalRevenue = 0
+      for (const tx of txns || []) {
+        if (tx.type === 'purchase') totalRevenue += Number(tx.amount) || 0
+        if (tx.user_id && perUser[tx.user_id] && tx.type === 'purchase') {
+          perUser[tx.user_id].revenue += Number(tx.amount) || 0
+        }
+      }
+
+      // Project counts per user
+      for (const proj of projects || []) {
+        if (proj.user_id && perUser[proj.user_id]) perUser[proj.user_id].projects++
+      }
+
+      const totalApiCost = totals.costAnthropic + totals.costReplicate
+      setAnalyticsData({
+        totals, dailyStats, perUser, perProject, totalRevenue, totalApiCost,
+        profit: totalRevenue - totalApiCost,
+        margin: totalRevenue > 0 ? ((totalRevenue - totalApiCost) / totalRevenue * 100) : 0,
+        userCount: (profiles || []).length,
+        projectCount: (projects || []).length,
+      })
+    } catch (err) {
+      console.error('Analytics load error:', err)
+    }
+    setAnalyticsLoading(false)
   }
 
   async function loadLogs() {
@@ -916,9 +1033,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions', 'security'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions', 'security', 'analytics'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab === 'security' ? 'Security Audit' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab === 'security' ? 'Security Audit' : tab === 'analytics' ? '📊 Analytics' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1764,6 +1881,166 @@ export default function Admin() {
               <p style={{ fontSize: 10, color: '#444', marginTop: 8 }}>Auto-saved. Use this to track security observations, audit findings, and follow-up items.</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* PLATFORM ANALYTICS TAB */}
+      {activeTab === 'analytics' && (
+        <div style={s.section}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: '#f0f0f0' }}>Platform Analytics</h2>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {(['7d', '30d', '90d', 'all'] as const).map(p => (
+                <button key={p} onClick={() => { setAnalyticsPeriod(p); loadAnalytics() }} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid', background: analyticsPeriod === p ? 'rgba(124,110,247,0.15)' : 'transparent', borderColor: analyticsPeriod === p ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)', color: analyticsPeriod === p ? '#9d92f5' : '#666' }}>{p === 'all' ? 'All Time' : p}</button>
+              ))}
+              <button onClick={loadAnalytics} style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: '#888' }}>Refresh</button>
+            </div>
+          </div>
+
+          {analyticsLoading ? (
+            <div style={{ textAlign: 'center' as const, color: '#555', padding: 40 }}>Loading analytics...</div>
+          ) : !analyticsData ? (
+            <div style={{ textAlign: 'center' as const, padding: 40 }}>
+              <button onClick={loadAnalytics} style={{ padding: '10px 24px', borderRadius: 8, fontSize: 13, cursor: 'pointer', border: 'none', background: '#7c6ef7', color: 'white' }}>Load Analytics</button>
+            </div>
+          ) : (
+            <>
+              {/* Revenue Overview */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+                {[
+                  { label: 'Revenue', value: `$${analyticsData.totalRevenue.toFixed(2)}`, color: '#5DCAA5' },
+                  { label: 'API Costs', value: `$${analyticsData.totalApiCost.toFixed(4)}`, color: '#f09595' },
+                  { label: 'Profit', value: `$${analyticsData.profit.toFixed(2)}`, color: analyticsData.profit >= 0 ? '#5DCAA5' : '#f09595' },
+                  { label: 'Margin', value: `${analyticsData.margin.toFixed(1)}%`, color: analyticsData.margin >= 50 ? '#5DCAA5' : '#f5a623' },
+                  { label: 'Users', value: String(analyticsData.userCount), color: '#9d92f5' },
+                ].map(stat => (
+                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: stat.color }}>{stat.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Build & Usage Stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
+                {[
+                  { label: 'Total Builds', value: String(analyticsData.totals.builds) },
+                  { label: 'Tokens (Input)', value: `${(analyticsData.totals.tokensInput / 1000).toFixed(0)}K` },
+                  { label: 'Tokens (Output)', value: `${(analyticsData.totals.tokensOutput / 1000).toFixed(0)}K` },
+                  { label: 'Images Generated', value: String(analyticsData.totals.images) },
+                  { label: 'Projects', value: String(analyticsData.projectCount) },
+                ].map(stat => (
+                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: '#f0f0f0' }}>{stat.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Computed metrics */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+                {[
+                  { label: 'Avg Cost/Build', value: analyticsData.totals.builds > 0 ? `$${(analyticsData.totalApiCost / analyticsData.totals.builds).toFixed(4)}` : '$0' },
+                  { label: 'Avg Tokens/Build', value: analyticsData.totals.builds > 0 ? `${Math.round((analyticsData.totals.tokensInput + analyticsData.totals.tokensOutput) / analyticsData.totals.builds)}` : '0' },
+                  { label: 'Fn Executions', value: String(analyticsData.totals.functionExecs) },
+                  { label: 'Cron Runs', value: String(analyticsData.totals.cronExecs) },
+                ].map(stat => (
+                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: '#ccc' }}>{stat.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Per-User Breakdown */}
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: '#f0f0f0', marginBottom: 12 }}>Per-User Breakdown</h3>
+              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, marginBottom: 24 }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Email</th>
+                      <th style={s.th}>Projects</th>
+                      <th style={s.th}>Builds</th>
+                      <th style={s.th}>Tokens</th>
+                      <th style={s.th}>API Cost</th>
+                      <th style={s.th}>Revenue</th>
+                      <th style={s.th}>Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(analyticsData.perUser as Record<string, any>)
+                      .sort((a: any, b: any) => (b[1].costAnthropic + b[1].costReplicate) - (a[1].costAnthropic + a[1].costReplicate))
+                      .map(([uid, u]: [string, any]) => {
+                        const cost = u.costAnthropic + u.costReplicate
+                        const profit = u.revenue - cost
+                        return (
+                          <tr key={uid}>
+                            <td style={s.td}><span style={{ fontSize: 11, color: '#ccc' }}>{u.email}</span></td>
+                            <td style={s.td}>{u.projects}</td>
+                            <td style={s.td}>{u.builds}</td>
+                            <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{((u.tokensInput + u.tokensOutput) / 1000).toFixed(0)}K</span></td>
+                            <td style={s.td}><span style={{ color: '#f09595', fontSize: 11 }}>${cost.toFixed(4)}</span></td>
+                            <td style={s.td}><span style={{ color: '#5DCAA5', fontSize: 11 }}>${u.revenue.toFixed(2)}</span></td>
+                            <td style={s.td}><span style={{ color: profit >= 0 ? '#5DCAA5' : '#f09595', fontSize: 11, fontWeight: 600 }}>${profit.toFixed(2)}</span></td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Per-Project Breakdown */}
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: '#f0f0f0', marginBottom: 12 }}>Per-Project Breakdown</h3>
+              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, marginBottom: 24 }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr>
+                      <th style={s.th}>Project</th>
+                      <th style={s.th}>Owner</th>
+                      <th style={s.th}>Builds</th>
+                      <th style={s.th}>Tokens</th>
+                      <th style={s.th}>API Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(analyticsData.perProject as Record<string, any>)
+                      .sort((a: any, b: any) => b[1].costAnthropic - a[1].costAnthropic)
+                      .map(([pid, p]: [string, any]) => (
+                        <tr key={pid}>
+                          <td style={s.td}><span style={{ fontSize: 11, color: '#ccc' }}>{p.name}</span></td>
+                          <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{p.ownerEmail}</span></td>
+                          <td style={s.td}>{p.builds}</td>
+                          <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{((p.tokensInput || 0) / 1000).toFixed(0)}K</span></td>
+                          <td style={s.td}><span style={{ color: '#f09595', fontSize: 11 }}>${(p.costAnthropic || 0).toFixed(4)}</span></td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Cost Alerts */}
+              {(() => {
+                const alerts: Array<{ type: string; message: string }> = []
+                Object.entries(analyticsData.perUser as Record<string, any>).forEach(([, u]: [string, any]) => {
+                  const cost = u.costAnthropic + u.costReplicate
+                  if (cost > u.revenue && cost > 0.01) alerts.push({ type: 'loss', message: `${u.email}: costing $${cost.toFixed(4)} but only paid $${u.revenue.toFixed(2)}` })
+                })
+                if (alerts.length === 0) return null
+                return (
+                  <div style={{ marginBottom: 24 }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 600, color: '#f5a623', marginBottom: 12 }}>Cost Alerts ({alerts.length})</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+                      {alerts.map((a, i) => (
+                        <div key={i} style={{ padding: '8px 12px', background: 'rgba(245,166,35,0.05)', border: '1px solid rgba(245,166,35,0.15)', borderRadius: 8, fontSize: 12, color: '#f5a623' }}>
+                          {a.message}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </>
+          )}
         </div>
       )}
 

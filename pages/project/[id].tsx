@@ -16,6 +16,7 @@ import DiffViewer from '../../components/DiffViewer'
 import PackageManager from '../../components/PackageManager'
 import EnvVarManager from '../../components/EnvVarManager'
 import SchemaViewer from '../../components/SchemaViewer'
+import DatabaseChoiceModal from '../../components/DatabaseChoiceModal'
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
 
@@ -62,6 +63,8 @@ export default function ProjectBuilder() {
   const [extraPackages, setExtraPackages] = useState<Record<string, string>>({})
   const [projectEnvVars, setProjectEnvVars] = useState<Record<string, string>>({})
   const [showSchemaViewer, setShowSchemaViewer] = useState(false)
+  const [showDbChoice, setShowDbChoice] = useState(false)
+  const [pendingDbTables, setPendingDbTables] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -274,8 +277,9 @@ export default function ProjectBuilder() {
 
 
   // Send message
-  async function sendMessage() {
-    if ((!input.trim() && !pendingImage) || loading || !user) return
+  async function sendMessage(overrideInput?: string) {
+    const messageText = overrideInput || input.trim()
+    if ((!messageText && !pendingImage) || loading || !user) return
     if (creditBalance <= 0) { setShowBuyCredits(true); return }
 
     let imageUrl: string | undefined
@@ -287,9 +291,9 @@ export default function ProjectBuilder() {
       })
     }
 
-    const userMsg: Message = { role: 'user', content: input.trim(), imageUrl }
+    const userMsg: Message = { role: 'user', content: messageText, imageUrl }
     setMessages(prev => [...prev, userMsg])
-    saveChatMessage('user', input.trim())
+    saveChatMessage('user', messageText)
     setInput('')
     setPendingImage(null)
     setLoading(true)
@@ -419,6 +423,13 @@ export default function ProjectBuilder() {
                     setActiveTab(firstChanged.path)
                   }
                 }
+              } else if (event.type === 'db_choice_required') {
+                // Project needs a database but user hasn't chosen where yet
+                setPendingDbTables(JSON.stringify(event.pendingTables || []))
+                setShowDbChoice(true)
+                setBuildStatus(null)
+                setLoading(false)
+                return {} // Stop processing this build
               } else if (event.type === 'error') {
                 setLastError(event.error || event.message)
               }
@@ -525,10 +536,11 @@ export default function ProjectBuilder() {
   // Plan approval
   function approvePlan() {
     if (!pendingPlan) return
-    setInput(`Execute this plan:\n${pendingPlan}`)
+    const planText = `Execute this plan:\n${pendingPlan}`
     setMode('build')
     setPendingPlan(null)
-    setTimeout(() => sendMessage(), 100)
+    setInput('')
+    sendMessage(planText)
   }
 
   // Buy credits
@@ -991,6 +1003,24 @@ export default function ProjectBuilder() {
       )}
 
       {/* View Plan Modal */}
+      {/* Database Choice Modal */}
+      {showDbChoice && (
+        <DatabaseChoiceModal
+          projectId={projectId as string}
+          onChoosePlatform={() => {
+            setShowDbChoice(false)
+            // Re-send the last user message to retry the build with db_provider now set
+            const lastUserMsg = messages.filter(m => m.role === 'user').pop()
+            if (lastUserMsg) sendMessage(lastUserMsg.content)
+          }}
+          onChooseCustom={() => {
+            setShowDbChoice(false)
+            setShowSupabaseConnect(true)
+          }}
+          onClose={() => setShowDbChoice(false)}
+        />
+      )}
+
       {/* Schema Viewer Modal */}
       {showSchemaViewer && (
         <SchemaViewer projectId={projectId as string} onClose={() => setShowSchemaViewer(false)} />

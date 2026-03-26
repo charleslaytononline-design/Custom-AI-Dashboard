@@ -198,7 +198,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let projectName = ''
   let layoutCode: string | null = null
   if (projectId) {
-    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name').eq('id', projectId).eq('user_id', userId).single()
+    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name, db_provider').eq('id', projectId).eq('user_id', userId).single()
     projectType = proj?.project_type || 'html'
     projectName = proj?.name || ''
     layoutCode = proj?.layout_code || null
@@ -651,6 +651,18 @@ RULES:
     const postTasks: Promise<void>[] = []
 
     // Task: Create database tables (parallel within this task too)
+    // If tables are needed but user hasn't chosen a database provider yet, ask them
+    if (tableDefsFound.length > 0 && projectId && !planOnly && !proj?.db_provider) {
+      const pendingTables = tableDefsFound.map(m => {
+        try { return JSON.parse(m[1].trim()).name } catch { return 'unknown' }
+      })
+      sendSSE({ type: 'db_choice_required', pendingTables })
+      // Stop processing — the frontend will show the choice modal and retry
+      sendSSE({ type: 'done', message: 'Please choose where to store your data, then I\'ll create the tables.' })
+      res.end()
+      return
+    }
+
     if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
       postTasks.push((async () => {
         const schemaName = `proj_${projectId}`
@@ -1047,6 +1059,18 @@ RULES:
 
     const { data: updatedProfile } = await supabase
       .from('profiles').select('credit_balance, gift_balance').eq('id', userId).single()
+
+    // Track daily usage for Platform Analytics
+    const today = new Date().toISOString().split('T')[0]
+    supabase.from('usage_daily').upsert({
+      date: today,
+      user_id: userId,
+      project_id: projectId || null,
+      builds: 1,
+      tokens_input: inputTokens,
+      tokens_output: outputTokens,
+      api_cost_anthropic: totalApiCost,
+    }, { onConflict: 'date,user_id,project_id', ignoreDuplicates: false }).then(() => {}, () => {})
 
     // Send the final done event with all metadata
     sendSSE({
