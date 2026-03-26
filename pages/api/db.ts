@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
 import { getAuthUser } from '../../lib/apiAuth'
+import { isValidUUID, isValidTableName, sanitizeError } from '../../lib/validation'
+import { checkRateLimit } from '../../lib/rateLimit'
 
 const appDb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,14 +23,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const sessionUserId = await getAuthUser(req, res)
   if (!sessionUserId) return res.status(401).json({ success: false, error: 'Not authenticated' })
 
+  // SECURITY: rate limit — max 60 DB operations per minute per user
+  if (!checkRateLimit(`db:${sessionUserId}`, 60, 60_000)) {
+    return res.status(429).json({ success: false, error: 'Too many database requests. Please slow down.' })
+  }
+
   const { projectId, table, action, data, limit } = req.body
 
   if (!projectId || !table || !action) {
     return res.status(400).json({ success: false, error: 'projectId, table, and action are required' })
   }
 
+  // SECURITY: validate projectId UUID format
+  if (!isValidUUID(projectId)) {
+    return res.status(400).json({ success: false, error: 'Invalid project ID' })
+  }
+
   // Validate table name to prevent SQL injection
-  if (!TABLE_NAME_RE.test(table)) {
+  if (!isValidTableName(table)) {
     return res.status(400).json({ success: false, error: 'Invalid table name' })
   }
 
@@ -46,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         p_table: table,
         p_limit: rowLimit,
       })
-      if (error) return res.status(200).json({ success: false, error: error.message, data: [] })
+      if (error) return res.status(200).json({ success: false, error: sanitizeError(error), data: [] })
       return res.status(200).json({ success: true, data: result || [] })
     }
 
@@ -71,7 +83,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         p_table: table,
         p_data: data,
       })
-      if (error) return res.status(200).json({ success: false, error: error.message })
+      if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
+      // Audit log: insert
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `insert on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'insert' } }).catch(() => {})
       return res.status(200).json({ success: true, data: result })
     }
 
@@ -84,7 +98,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         p_id: id,
         p_data: updateFields,
       })
-      if (error) return res.status(200).json({ success: false, error: error.message })
+      if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
+      // Audit log: update
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `update on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'update', rowId: id } }).catch(() => {})
       return res.status(200).json({ success: true, data: result })
     }
 
@@ -95,12 +111,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         p_table: table,
         p_id: data.id,
       })
-      if (error) return res.status(200).json({ success: false, error: error.message })
+      if (error) return res.status(200).json({ success: false, error: sanitizeError(error) })
+      // Audit log: delete
+      appDb.from('platform_logs').insert({ event_type: 'db_mutation', severity: 'info', message: `delete on ${table}`, metadata: { userId: sessionUserId, projectId, table, action: 'delete', rowId: data.id } }).catch(() => {})
       return res.status(200).json({ success: true, data: { deleted: result } })
     }
 
     return res.status(400).json({ success: false, error: `Unknown action: ${action}` })
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message })
+    return res.status(500).json({ success: false, error: sanitizeError(err) })
   }
 }

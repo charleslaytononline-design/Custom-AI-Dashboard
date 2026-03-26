@@ -6,6 +6,8 @@ import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPro
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
 import { getAuthUser } from '../../lib/apiAuth'
+import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule } from '../../lib/validation'
+import { checkRateLimit } from '../../lib/rateLimit'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -95,11 +97,11 @@ async function getTrainingRules(userMessage: string) {
 
   for (const rule of rules) {
     if (rule.type === 'global') {
-      matched.push(rule.instructions)
+      matched.push(sanitizeTrainingRule(rule.instructions))
     } else if (rule.type === 'keyword' && rule.keywords) {
       const keywords = rule.keywords.split(',').map((k: string) => k.trim().toLowerCase())
       if (keywords.some((kw: string) => kw && msg.includes(kw))) {
-        matched.push(rule.instructions)
+        matched.push(sanitizeTrainingRule(rule.instructions))
       }
     }
   }
@@ -120,6 +122,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { messages, pageCode, pageName, allPages, planOnly, imageBase64, imageMediaType, projectId, retryCount = 0, isAutoFix = false, isContinuation = false, partialRaw = '', continuationCount = 0, accumulatedApiCost = 0 } = req.body
   const userId = sessionUserId
+
+  // SECURITY: validate projectId format
+  if (projectId && !isValidUUID(projectId)) {
+    return res.status(400).json({ error: 'Invalid project ID' })
+  }
+
+  // SECURITY: rate limit — max 10 builds per minute per user
+  if (!checkRateLimit(`build:${userId}`, 10, 60_000)) {
+    return res.status(429).json({ error: 'Rate limit exceeded. Please wait before building again.' })
+  }
 
   // Reject if too many continuations
   if (isContinuation && continuationCount > 5) {
@@ -186,7 +198,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let projectName = ''
   let layoutCode: string | null = null
   if (projectId) {
-    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name').eq('id', projectId).single()
+    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name').eq('id', projectId).eq('user_id', userId).single()
     projectType = proj?.project_type || 'html'
     projectName = proj?.name || ''
     layoutCode = proj?.layout_code || null
@@ -588,9 +600,36 @@ RULES:
 
     // Parse all tags upfront (sync, fast)
     const tableDefsFound: RegExpExecArray[] = []
-    const tableRegex = /<CREATE_TABLE>([\s\S]*?)<\/CREATE_TABLE>/gi
+    const tableRegex = /<CREATE_TABLE(?:\s+realtime="true")?>([\s\S]*?)<\/CREATE_TABLE>/gi
     let tableMatch: RegExpExecArray | null
     while ((tableMatch = tableRegex.exec(raw)) !== null) tableDefsFound.push(tableMatch)
+
+    // Parse ALTER_TABLE tags
+    const alterTableDefs: RegExpExecArray[] = []
+    const alterRegex = /<ALTER_TABLE>([\s\S]*?)<\/ALTER_TABLE>/gi
+    let alterMatch: RegExpExecArray | null
+    while ((alterMatch = alterRegex.exec(raw)) !== null) alterTableDefs.push(alterMatch)
+
+    // Parse ENABLE_RLS tags
+    const rlsOps: Array<{ table: string; column: string }> = []
+    const rlsRegex = /<ENABLE_RLS\s+table="([^"]+)"\s+column="([^"]+)"\s*\/>/gi
+    let rlsMatch: RegExpExecArray | null
+    while ((rlsMatch = rlsRegex.exec(raw)) !== null) {
+      if (isValidTableName(rlsMatch[1]) && isValidColumnName(rlsMatch[2])) {
+        rlsOps.push({ table: rlsMatch[1], column: rlsMatch[2] })
+      }
+    }
+
+    // Parse ENABLE_REALTIME tags
+    const realtimeOps: string[] = []
+    const rtRegex = /<ENABLE_REALTIME\s+table="([^"]+)"\s*\/>/gi
+    let rtMatch: RegExpExecArray | null
+    while ((rtMatch = rtRegex.exec(raw)) !== null) {
+      if (isValidTableName(rtMatch[1])) realtimeOps.push(rtMatch[1])
+    }
+
+    // Parse SETUP_STORAGE tags
+    const setupStorage = /<SETUP_STORAGE\s*\/>/.test(raw)
 
     const layoutMatch = raw.match(/<LAYOUT>([\s\S]*?)<\/LAYOUT>/i)
 
@@ -631,6 +670,11 @@ RULES:
 
         const tableResults = await Promise.allSettled(allowedDefs.map(async (match) => {
           const tableDef = JSON.parse(match[1].trim())
+          // SECURITY: validate table definition before sending to RPC
+          const validation = validateTableDef(tableDef)
+          if (!validation.valid) {
+            throw new Error(`Invalid table definition: ${validation.error}`)
+          }
           await clientsDb.rpc('create_project_table', { schema_name: schemaName, table_def: tableDef })
         }))
 
@@ -652,6 +696,95 @@ RULES:
               { onConflict: 'project_id' }
             ),
           ])
+        }
+      })())
+    }
+
+    // Task: ALTER TABLE operations
+    if (alterTableDefs.length > 0 && clientsDb && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const schemaName = `proj_${projectId}`
+        for (const match of alterTableDefs) {
+          try {
+            const alterDef = JSON.parse(match[1].trim())
+            if (!isValidTableName(alterDef.table)) {
+              await log('builder_security', 'warn', `ALTER_TABLE blocked: invalid table name`, userEmail, { userId, projectId })
+              continue
+            }
+            const validation = validateAlterOps(alterDef.operations)
+            if (!validation.valid) {
+              await log('builder_security', 'warn', `ALTER_TABLE blocked: ${validation.error}`, userEmail, { userId, projectId })
+              continue
+            }
+            await clientsDb.rpc('alter_project_table', {
+              p_schema: schemaName,
+              p_table: alterDef.table,
+              p_operations: alterDef.operations,
+            })
+            sendSSE({ type: 'status', text: `Altered table ${alterDef.table}` })
+            await log('db_alter_table', 'info', `ALTER TABLE ${alterDef.table}`, userEmail, { userId, projectId, operations: alterDef.operations })
+          } catch (err: any) {
+            await log('builder_error', 'warn', `ALTER_TABLE failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+          }
+        }
+      })())
+    }
+
+    // Task: ENABLE_RLS on tables
+    if (rlsOps.length > 0 && clientsDb && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const schemaName = `proj_${projectId}`
+        for (const op of rlsOps) {
+          try {
+            // Enable RLS and create 4 policies (SELECT, INSERT, UPDATE, DELETE)
+            const commands = ['SELECT', 'INSERT', 'UPDATE', 'DELETE']
+            for (const cmd of commands) {
+              await clientsDb.rpc('create_project_rls_policy', {
+                p_schema: schemaName,
+                p_table: op.table,
+                p_policy_name: `${op.table}_${cmd.toLowerCase()}_own`,
+                p_command: cmd,
+                p_using_expr: `${op.column} = auth.uid()`,
+                p_check_expr: cmd === 'INSERT' || cmd === 'UPDATE' ? `${op.column} = auth.uid()` : null,
+              })
+            }
+            sendSSE({ type: 'status', text: `Enabled RLS on ${op.table}` })
+            await log('db_enable_rls', 'info', `RLS enabled on ${op.table}`, userEmail, { userId, projectId, table: op.table, column: op.column })
+          } catch (err: any) {
+            await log('builder_error', 'warn', `ENABLE_RLS failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+          }
+        }
+      })())
+    }
+
+    // Task: ENABLE_REALTIME on tables
+    if (realtimeOps.length > 0 && clientsDb && projectId && !planOnly) {
+      postTasks.push((async () => {
+        const schemaName = `proj_${projectId}`
+        for (const table of realtimeOps) {
+          try {
+            await clientsDb.rpc('enable_realtime_for_table', {
+              p_schema: schemaName,
+              p_table: table,
+            })
+            sendSSE({ type: 'status', text: `Enabled realtime on ${table}` })
+            await log('db_enable_realtime', 'info', `Realtime enabled on ${table}`, userEmail, { userId, projectId, table })
+          } catch (err: any) {
+            await log('builder_error', 'warn', `ENABLE_REALTIME failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+          }
+        }
+      })())
+    }
+
+    // Task: SETUP_STORAGE for the project
+    if (setupStorage && clientsDb && projectId && !planOnly) {
+      postTasks.push((async () => {
+        try {
+          await clientsDb.rpc('create_project_storage_bucket', { p_project_id: projectId })
+          sendSSE({ type: 'status', text: 'Storage bucket created' })
+          await log('db_setup_storage', 'info', `Storage bucket created`, userEmail, { userId, projectId })
+        } catch (err: any) {
+          await log('builder_error', 'warn', `SETUP_STORAGE failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
         }
       })())
     }
@@ -749,12 +882,49 @@ RULES:
         sendSSE({ type: 'status', text: `Added ${pkgInserts.length} package(s)` })
       }
 
+      // Parse SERVER_FUNCTION tags and save to project_functions
+      const serverFnRegex = /<SERVER_FUNCTION\s+name="([^"]+)">([\s\S]*?)<\/SERVER_FUNCTION>/gi
+      let fnMatch: RegExpExecArray | null
+      while ((fnMatch = serverFnRegex.exec(fullRaw)) !== null) {
+        const fnName = fnMatch[1].trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        const fnCode = fnMatch[2].trim()
+        if (fnName && fnCode && fnCode.length <= 10240) { // 10KB max
+          await supabase.from('project_functions').upsert({
+            project_id: projectId, user_id: userId, name: fnName, code: fnCode, updated_at: new Date().toISOString(),
+          }, { onConflict: 'project_id,name' }).catch(() => {})
+          sendSSE({ type: 'status', text: `Saved server function: ${fnName}` })
+        }
+      }
+
+      // Parse CRON_JOB tags and save to project_cron_jobs
+      const cronRegex = /<CRON_JOB\s+name="([^"]+)"\s+schedule="([^"]+)"\s+function="([^"]+)"\s*\/>/gi
+      let cronMatch: RegExpExecArray | null
+      while ((cronMatch = cronRegex.exec(fullRaw)) !== null) {
+        const cronName = cronMatch[1].trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        const schedule = cronMatch[2].trim()
+        const funcName = cronMatch[3].trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        // Validate cron expression (basic 5-field check)
+        if (cronName && schedule.split(/\s+/).length === 5 && funcName) {
+          await supabase.from('project_cron_jobs').upsert({
+            project_id: projectId, user_id: userId, name: cronName, schedule, function_name: funcName,
+            next_run_at: new Date().toISOString(),
+          }, { onConflict: 'project_id,name' }).catch(() => {})
+          sendSSE({ type: 'status', text: `Saved cron job: ${cronName}` })
+        }
+      }
+
       // Parse all FILE_OP tags first, then save in parallel
       const fileOpRegex = /<FILE_OP\s+action="(\w+)"\s+path="([^"]+)"(?:\s*\/>|>([\s\S]*?)<\/FILE_OP>)/gi
       const parsedOps: Array<{ action: string; path: string; content: string }> = []
       let fileOpMatch: RegExpExecArray | null
       while ((fileOpMatch = fileOpRegex.exec(fullRaw)) !== null) {
-        parsedOps.push({ action: fileOpMatch[1].toLowerCase(), path: fileOpMatch[2], content: fileOpMatch[3]?.trim() || '' })
+        const opPath = fileOpMatch[2]
+        // SECURITY: validate file path before accepting
+        if (!isValidFilePath(opPath)) {
+          await log('builder_security', 'warn', `FILE_OP blocked: invalid path "${opPath}"`, userEmail, { userId, projectId, path: opPath })
+          continue
+        }
+        parsedOps.push({ action: fileOpMatch[1].toLowerCase(), path: opPath, content: fileOpMatch[3]?.trim() || '' })
       }
 
       // Execute all file operations in parallel

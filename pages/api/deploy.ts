@@ -2,6 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
 import { composePage } from '../../lib/composePage'
 import { getAuthUser } from '../../lib/apiAuth'
+import { isValidUUID } from '../../lib/validation'
+import { checkRateLimit } from '../../lib/rateLimit'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -18,6 +20,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { projectId } = req.body
   const userId = sessionUserId
   if (!projectId) return res.status(400).json({ error: 'Missing projectId' })
+
+  // SECURITY: validate projectId + rate limit
+  if (!isValidUUID(projectId)) return res.status(400).json({ error: 'Invalid project ID' })
+  if (!checkRateLimit(`deploy:${userId}`, 5, 60_000)) return res.status(429).json({ error: 'Deploy rate limit exceeded' })
 
   // Verify user owns the project
   const { data: project } = await supabase
