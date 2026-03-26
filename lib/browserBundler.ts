@@ -249,9 +249,11 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
               }
               // Swap BrowserRouter → MemoryRouter for preview (srcdoc iframes
               // have pathname "srcdoc" instead of "/", breaking BrowserRouter)
+              // Also inject future flags to silence React Router v7 deprecation warnings
               if ((loader === 'tsx' || loader === 'ts' || loader === 'jsx' || loader === 'js') && content.includes('BrowserRouter')) {
                 content = content
                   .replace(/\bBrowserRouter\b/g, 'MemoryRouter')
+                  .replace(/<MemoryRouter>/g, '<MemoryRouter future={{v7_startTransition:true,v7_relativeSplatPath:true}}>')
               }
               return { contents: content, loader }
             })
