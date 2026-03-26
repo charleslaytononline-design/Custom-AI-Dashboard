@@ -197,11 +197,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let projectType = 'html'
   let projectName = ''
   let layoutCode: string | null = null
+  let dbProvider: string | null = null
   if (projectId) {
     const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name, db_provider').eq('id', projectId).eq('user_id', userId).single()
     projectType = proj?.project_type || 'html'
     projectName = proj?.name || ''
     layoutCode = proj?.layout_code || null
+    dbProvider = proj?.db_provider || null
   }
 
   // For React projects, load project files and build context differently
@@ -652,7 +654,7 @@ RULES:
 
     // Task: Create database tables (parallel within this task too)
     // If tables are needed but user hasn't chosen a database provider yet, ask them
-    if (tableDefsFound.length > 0 && projectId && !planOnly && !proj?.db_provider) {
+    if (tableDefsFound.length > 0 && projectId && !planOnly && !dbProvider) {
       const pendingTables = tableDefsFound.map(m => {
         try { return JSON.parse(m[1].trim()).name } catch { return 'unknown' }
       })
