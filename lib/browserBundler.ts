@@ -260,7 +260,15 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
       ],
     })
 
-    const js = result.outputFiles?.find(f => f.path.endsWith('.js'))?.text || ''
+    // Find the JS output — try .js extension first, then fall back to first output file
+    // (esbuild-wasm may use paths like "<stdout>" when outdir/outfile aren't set)
+    const outputPaths = (result.outputFiles || []).map(f => `${f.path} (${f.text.length} chars)`)
+    if (typeof console !== 'undefined') {
+      console.log('[Bundler] outputFiles:', outputPaths.join(', ') || 'none')
+    }
+    const jsFile = result.outputFiles?.find(f => f.path.endsWith('.js'))
+      || result.outputFiles?.[0]
+    const js = jsFile?.text || ''
     const css = collectedCss
     const warnings = result.warnings.map(w => `${w.text} (${w.location?.file}:${w.location?.line})`)
     const errors = result.errors.map(e => `${e.text} (${e.location?.file}:${e.location?.line})`)
