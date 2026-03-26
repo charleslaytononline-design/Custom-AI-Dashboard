@@ -64,6 +64,7 @@ export default function ProjectBuilder() {
       loadProject()
       loadFiles()
       loadProfile()
+      loadChatHistory()
     }
   }, [projectId, user])
 
@@ -99,6 +100,30 @@ export default function ProjectBuilder() {
     if (!user) return
     const { data } = await supabase.from('profiles').select('credit_balance, gift_balance').eq('id', user.id).single()
     if (data) setCreditBalance((data.credit_balance || 0) + (data.gift_balance || 0))
+  }
+
+  async function loadChatHistory() {
+    if (!projectId || !user) return
+    const { data } = await supabase
+      .from('chat_history')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true })
+    if (data && data.length > 0) {
+      setMessages(data.map((m: any) => ({ id: m.id, role: m.role, content: m.content, isPlan: m.is_plan })))
+    }
+  }
+
+  async function saveChatMessage(role: 'user' | 'assistant', content: string, isPlan = false) {
+    if (!user || !projectId) return
+    await supabase.from('chat_history').insert({
+      project_id: projectId,
+      user_id: user.id,
+      role,
+      content,
+      is_plan: isPlan,
+    })
   }
 
   // Get active file content
@@ -227,6 +252,7 @@ export default function ProjectBuilder() {
 
     const userMsg: Message = { role: 'user', content: input.trim(), imageUrl }
     setMessages(prev => [...prev, userMsg])
+    saveChatMessage('user', input.trim())
     setInput('')
     setPendingImage(null)
     setLoading(true)
@@ -307,9 +333,11 @@ export default function ProjectBuilder() {
                 if (planOnly && event.message) {
                   setPendingPlan(event.message)
                   setMessages(prev => [...prev, { role: 'assistant', content: event.message, isPlan: true }])
+                  saveChatMessage('assistant', event.message, true)
                 } else {
                   const assistantMsg = event.message || 'Build complete'
                   setMessages(prev => [...prev, { role: 'assistant', content: assistantMsg, fileOps }])
+                  saveChatMessage('assistant', assistantMsg)
                 }
 
                 if (event.newBalance !== undefined) setCreditBalance(event.newBalance)
@@ -344,6 +372,7 @@ export default function ProjectBuilder() {
       if (err.name !== 'AbortError') {
         setLastError(err.message)
         setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
+        saveChatMessage('assistant', `Error: ${err.message}`)
       }
     } finally {
       setLoading(false)

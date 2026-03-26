@@ -165,7 +165,7 @@ create table if not exists chat_history (
   id uuid default gen_random_uuid() primary key,
   project_id uuid references projects(id) on delete cascade not null,
   user_id uuid references auth.users(id) on delete cascade not null,
-  page_id uuid references pages(id) on delete cascade not null,
+  page_id uuid references pages(id) on delete cascade,
   role text not null check (role in ('user', 'assistant')),
   content text not null default '',
   is_plan boolean not null default false,
