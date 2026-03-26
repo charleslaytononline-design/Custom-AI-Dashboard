@@ -118,12 +118,15 @@ export function generatePreviewHtml(options: PreviewOptions): string {
     </div>
   </div>
 
-  <!-- Override navigator.locks for sandboxed iframes (Supabase auth uses it but it throws SecurityError) -->
+  <!-- Polyfills for sandboxed iframe compatibility -->
   <script>
+    // Override navigator.locks (Supabase auth uses it but it throws SecurityError in sandboxed iframes)
     Object.defineProperty(navigator, 'locks', {
       value: { request: async function(name, _o, cb) { var fn = cb || _o; return await fn({ name: name, mode: 'exclusive' }); } },
       configurable: true, writable: true
     });
+    // Prevent native form submissions (React handles forms via JS, native submit is blocked in sandbox)
+    document.addEventListener('submit', function(e) { e.preventDefault(); }, true);
   </script>
 
   <!-- Error & console forwarding to parent -->
