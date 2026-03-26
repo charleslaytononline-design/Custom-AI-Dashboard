@@ -3,15 +3,15 @@ import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../../lib/supabase'
 import { useMobile } from '../../hooks/useMobile'
-import { composePage } from '../../lib/composePage'
-
-const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
-import VersionHistory from '../../components/VersionHistory'
+import { loadProjectFiles, saveFile, deleteFile, buildFileTree, getFileType } from '../../lib/virtualFS'
+import type { ProjectFile, FileTreeNode } from '../../lib/virtualFS'
+import FileTree from '../../components/FileTree'
 import DeployButton from '../../components/DeployButton'
 import GitHubConnect from '../../components/GitHubConnect'
 
-interface Page { id: string; name: string; code: string; updated_at: string }
-interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string }
+const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
+
+interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; imageUrl?: string; fileOps?: Array<{ action: string; path: string }> }
 type AppMode = 'build' | 'plan'
 
 export default function ProjectBuilder() {
@@ -20,901 +20,347 @@ export default function ProjectBuilder() {
   const { id: projectId } = router.query
   const [user, setUser] = useState<any>(null)
   const [project, setProject] = useState<any>(null)
-  const [pages, setPages] = useState<Page[]>([])
-  const [activePage, setActivePage] = useState<Page | null>(null)
+  const [files, setFiles] = useState<ProjectFile[]>([])
+  const [fileTree, setFileTree] = useState<FileTreeNode[]>([])
+  const [openTabs, setOpenTabs] = useState<string[]>([])
+  const [activeTab, setActiveTab] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [creditBalance, setCreditBalance] = useState<number>(0)
-  const [newPageName, setNewPageName] = useState('')
-  const [showNewPage, setShowNewPage] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<'chat' | 'pages'>('chat')
   const [mode, setMode] = useState<AppMode>('build')
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'preview' | 'code' | 'split'>('preview')
+  const [viewMode, setViewMode] = useState<'preview' | 'code' | 'split'>('code')
+  const [sidebarTab, setSidebarTab] = useState<'chat' | 'files'>('chat')
+  const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('chat')
+  const [showNewFile, setShowNewFile] = useState(false)
+  const [newFilePath, setNewFilePath] = useState('')
+  const [recentlyChanged, setRecentlyChanged] = useState<Set<string>>(new Set())
+  const [buildStatus, setBuildStatus] = useState<string | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+  const [pendingImage, setPendingImage] = useState<{ file: File; preview: string } | null>(null)
   const [showBuyCredits, setShowBuyCredits] = useState(false)
-  const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null)
-  const [showHistory, setShowHistory] = useState(false)
-  const [autoFixAttempts, setAutoFixAttempts] = useState(0)
-  const [isAutoFixing, setIsAutoFixing] = useState(false)
-  const [sharedCode, setSharedCode] = useState<string | null>(null)
-  const MAX_AUTO_FIX_ATTEMPTS = 2
-  // Mobile: which panel is visible ('chat' or 'preview')
-  const [mobilePanel, setMobilePanel] = useState<'chat' | 'preview'>('preview')
+  const [deployUrl, setDeployUrl] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
+  // Auth
   useEffect(() => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) { router.push('/'); return }
+    })
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
-      loadProfile(data.user.id)
-      // balance loaded from profile
     })
+    return () => authListener.subscription.unsubscribe()
   }, [])
 
+  // Load project + files
   useEffect(() => {
     if (projectId && user) {
       loadProject()
-      loadPages()
+      loadFiles()
+      loadProfile()
     }
   }, [projectId, user])
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  const renderIframe = useCallback((code: string, pageNameOverride?: string) => {
-    if (!iframeRef.current) return
-    const layout = project?.layout_code || null
-    const pName = pageNameOverride || activePage?.name || 'Page'
-    const composed = composePage(layout, code, pages, pName, projectId as string, sharedCode)
-
-    const errorCatcher = `<script>
-(function(){
-  var errors = [];
-  var timer = null;
-  function report() {
-    if (errors.length === 0) return;
-    var batch = errors.splice(0, 5);
-    window.parent.postMessage({ type: 'iframe-error', errors: batch }, '*');
-  }
-  function collect(err) {
-    errors.push(err);
-    clearTimeout(timer);
-    timer = setTimeout(report, 1000);
-  }
-  window.onerror = function(msg, source, line, col, error) {
-    collect({ message: String(msg), source: source || '', line: line, col: col, stack: error && error.stack ? error.stack.slice(0, 500) : '' });
-  };
-  window.addEventListener('unhandledrejection', function(e) {
-    var reason = e.reason;
-    var msg = reason instanceof Error ? reason.message : String(reason);
-    var stack = reason instanceof Error && reason.stack ? reason.stack.slice(0, 500) : '';
-    collect({ message: 'Unhandled Promise Rejection: ' + msg, stack: stack });
-  });
-})();
-<\/script>`
-
-    const guard = `<script>
-(function(){
-  document.addEventListener('click', function(e) {
-    var a = e.target && e.target.closest ? e.target.closest('a') : null;
-    if (!a) return;
-    // data-page links are handled by composePage nav script
-    if (a.hasAttribute('data-page')) return;
-    var href = a.getAttribute('href') || '';
-    if (!href || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (href.startsWith('#')) {
-      var id = href.slice(1);
-      var el = document.getElementById(id);
-      if (el) el.scrollIntoView({behavior:'smooth'});
-    } else if (href.startsWith('http://') || href.startsWith('https://')) {
-      window.open(href, '_blank', 'noopener,noreferrer');
-    }
-  }, true);
-  try {
-    var _push = history.pushState.bind(history);
-    var _replace = history.replaceState.bind(history);
-    history.pushState = function(s,t,u){ if(u && String(u).startsWith('#')) _push(s,t,u); };
-    history.replaceState = function(s,t,u){ if(u && String(u).startsWith('#')) _replace(s,t,u); };
-  } catch(e){}
-})();
-<\/script>`
-    const injected = composed.replace(/(<head[^>]*>)/i, '$1' + errorCatcher + guard)
-    iframeRef.current.srcdoc = injected || composed
-  }, [project?.layout_code, pages, activePage?.name, projectId, sharedCode])
-
-  useEffect(() => { if (activePage) renderIframe(activePage.code) }, [activePage, renderIframe])
-
-  // Re-render iframe when project loads or layout changes
-  useEffect(() => { if (project && activePage) renderIframe(activePage.code) }, [project, activePage, renderIframe])
-
-  // Re-render iframe when code view is closed (iframe remounts empty)
-  useEffect(() => { if (viewMode !== 'code' && activePage) renderIframe(activePage.code) }, [viewMode])
-
-  // Ref to always access latest handleIframeErrors without re-registering listener
-  const handleIframeErrorsRef = useRef<(errors: any[]) => void>(() => {})
-
-  // Listen for page navigation + iframe error messages
-  useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      if (e.data?.type === 'navigate' && e.data.page) {
-        const target = pages.find(p => p.name === e.data.page)
-        if (target) setActivePage(target)
-      }
-      if (e.data?.type === 'iframe-error' && e.data.errors?.length > 0) {
-        handleIframeErrorsRef.current(e.data.errors)
-      }
-    }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [pages])
-
-  // Load chat history when page changes
-  useEffect(() => {
-    if (activePage && user) loadChatHistory(activePage.id)
-    setAutoFixAttempts(0)
-  }, [activePage?.id])
-
-  async function loadProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('credit_balance, gift_balance, role').eq('id', userId).single()
-    if (data) {
-      setCreditBalance((data.credit_balance || 0) + (data.gift_balance || 0))
-    }
-  }
-
-  async function loadChatHistory(pageId: string) {
-    const { data } = await supabase
-      .from('chat_history')
-      .select('*')
-      .eq('page_id', pageId)
-      .order('created_at', { ascending: true })
-    if (data && data.length > 0) {
-      setMessages(data.map((m: any) => ({ id: m.id, role: m.role, content: m.content, isPlan: m.is_plan })))
-    } else {
-      setMessages([])
-    }
-  }
-
-  async function saveChatMessage(role: 'user' | 'assistant', content: string, isPlan = false) {
-    if (!user || !activePage) return
-    const { data } = await supabase.from('chat_history').insert({
-      project_id: projectId,
-      user_id: user.id,
-      page_id: activePage.id,
-      role,
-      content,
-      is_plan: isPlan,
-    }).select().single()
-    return data?.id
-  }
+  // Update file tree when files change
+  useEffect(() => { setFileTree(buildFileTree(files)) }, [files])
 
   async function loadProject() {
     const { data } = await supabase.from('projects').select('*').eq('id', projectId).eq('user_id', user.id).single()
     if (!data) { router.push('/home'); return }
-    // Always use the React builder
-    router.replace(`/project/${projectId}/react-builder`)
-    return
     setProject(data)
-    // Load shared code for this project
-    const { data: sc } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
-    setSharedCode(sc?.code || null)
+    // Load latest deployment URL
+    const { data: dep } = await supabase.from('deployments').select('url').eq('project_id', projectId as string).order('created_at', { ascending: false }).limit(1).single()
+    if (dep?.url) setDeployUrl(dep.url)
   }
 
-  async function loadPages() {
-    const { data } = await supabase.from('pages').select('*').eq('project_id', projectId).order('created_at', { ascending: true })
-    if (data && data.length > 0) {
-      setPages(data)
-      // Keep the current active page if it still exists, otherwise default to first
-      setActivePage(prev => {
-        if (prev) {
-          const updated = data.find(p => p.id === prev.id)
-          if (updated) return updated
-        }
-        return data[0]
-      })
+  async function loadFiles() {
+    if (!projectId) return
+    const projectFiles = await loadProjectFiles(projectId as string)
+    setFiles(projectFiles)
+    // Auto-open App.tsx if no tabs open
+    if (openTabs.length === 0) {
+      const appFile = projectFiles.find(f => f.path === 'src/App.tsx')
+      if (appFile) {
+        setOpenTabs(['src/App.tsx'])
+        setActiveTab('src/App.tsx')
+      }
     }
   }
 
-  async function createPage(name: string) {
-    if (!name.trim() || !user) return
-    const { data, error } = await supabase.from('pages').insert({
-      project_id: projectId, user_id: user.id, name: name.trim(), code: getStarterCode(),
-    }).select().single()
-    if (!error && data) {
-      setPages(prev => [...prev, data])
-      setActivePage(data)
-      setMessages([])
-      setShowNewPage(false)
-      setNewPageName('')
-      setSidebarTab('chat')
+  async function loadProfile() {
+    if (!user) return
+    const { data } = await supabase.from('profiles').select('credit_balance, gift_balance').eq('id', user.id).single()
+    if (data) setCreditBalance((data.credit_balance || 0) + (data.gift_balance || 0))
+  }
+
+  // Get active file content
+  const activeFile = files.find(f => f.path === activeTab)
+  const activeCode = activeFile?.content || ''
+
+  // Open a file tab
+  function openFile(node: FileTreeNode) {
+    if (node.type !== 'file') return
+    if (!openTabs.includes(node.path)) {
+      setOpenTabs(prev => [...prev, node.path])
+    }
+    setActiveTab(node.path)
+    setSidebarTab('chat')
+  }
+
+  // Close a tab
+  function closeTab(path: string) {
+    setOpenTabs(prev => {
+      const next = prev.filter(p => p !== path)
+      if (activeTab === path) {
+        setActiveTab(next.length > 0 ? next[next.length - 1] : null)
+      }
+      return next
+    })
+  }
+
+  // Save file content
+  async function handleSave(code: string) {
+    if (!activeTab || !user || !projectId) return
+    const ft = getFileType(activeTab)
+    await saveFile(projectId as string, user.id, activeTab, code, ft)
+    setFiles(prev => prev.map(f => f.path === activeTab ? { ...f, content: code } : f))
+  }
+
+  // Code change handler (local only)
+  function handleCodeChange(code: string) {
+    setFiles(prev => prev.map(f => f.path === activeTab ? { ...f, content: code } : f))
+  }
+
+  // Create new file
+  async function handleNewFile() {
+    if (!newFilePath.trim() || !user || !projectId) return
+    const path = newFilePath.trim()
+    const ft = getFileType(path)
+    const content = ft === 'ts' ? `export default function ${path.split('/').pop()?.replace(/\.\w+$/, '') || 'Component'}() {\n  return <div></div>\n}\n` : ''
+    await saveFile(projectId as string, user.id, path, content, ft)
+    setFiles(prev => [...prev, { id: '', project_id: projectId as string, user_id: user.id, path, content, file_type: ft, created_at: '', updated_at: '' }])
+    setOpenTabs(prev => [...prev, path])
+    setActiveTab(path)
+    setShowNewFile(false)
+    setNewFilePath('')
+  }
+
+  // Delete file
+  async function handleDeleteFile(path: string) {
+    if (!confirm(`Delete ${path}?`)) return
+    if (!projectId) return
+    await deleteFile(projectId as string, path)
+    setFiles(prev => prev.filter(f => f.path !== path))
+    closeTab(path)
+  }
+
+  // Get language from file path
+  function getLanguage(path: string): string {
+    const ext = path.split('.').pop()?.toLowerCase()
+    switch (ext) {
+      case 'tsx': case 'jsx': return 'typescript'
+      case 'ts': return 'typescript'
+      case 'js': return 'javascript'
+      case 'css': return 'css'
+      case 'json': return 'json'
+      case 'html': return 'html'
+      case 'md': return 'markdown'
+      default: return 'plaintext'
     }
   }
 
-  async function savePage(code: string, source: 'ai_build' | 'manual_edit' | 'restore' = 'ai_build') {
-    if (!activePage || !user) return
-    // Save current code as a version snapshot before overwriting
-    if (activePage.code && activePage.code !== code) {
-      supabase.from('page_versions').insert({
-        page_id: activePage.id,
-        user_id: user.id,
-        code: activePage.code,
-        source,
-      }).then(() => {
-        // Cleanup: keep only last 30 versions per page
-        supabase.from('page_versions')
-          .select('id')
-          .eq('page_id', activePage.id)
-          .order('created_at', { ascending: false })
-          .range(30, 999)
-          .then(({ data: old }) => {
-            if (old && old.length > 0) {
-              supabase.from('page_versions').delete().in('id', old.map(v => v.id)).then(() => {})
-            }
-          })
-      })
-    }
-
-    const { data } = await supabase.from('pages')
-      .update({ code, updated_at: new Date().toISOString() })
-      .eq('id', activePage.id).select().single()
-    if (data) {
-      setActivePage(data)
-      setPages(prev => prev.map(p => p.id === data.id ? data : p))
-      renderIframe(data.code)
-      await supabase.from('projects').update({ updated_at: new Date().toISOString() }).eq('id', projectId)
-    }
-  }
-
-  // Generate images progressively after build — each image gets its own API call (no timeout pressure)
-  async function generateImagesProgressively(currentCode: string, prompts: string[]) {
-    let updatedCode = currentCode
-    const fallback = 'https://placehold.co/1024x768/141414/444444?text=Image+not+available'
-
-    const results = await Promise.allSettled(
-      prompts.map(async (prompt, i) => {
-        const res = await fetch('/api/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, userId: user?.id }),
-        })
-        const data = await res.json()
-        if (data.url) {
-          const num = i + 1
-          // Replace numbered loading placeholder for this specific image
-          const numberedLoading = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${num}...`
-          updatedCode = updatedCode.replace(new RegExp(numberedLoading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), data.url)
-          // Also replace generic loading placeholder (for __GENERATED_IMAGE_URL__ case)
-          if (i === 0) {
-            updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image\.\.\./g, data.url)
-          }
-          renderIframe(updatedCode)
-          if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
-        }
-        return data.url || null
-      })
-    )
-
-    // Replace any remaining loading placeholders with fallback
-    updatedCode = updatedCode.replace(/https:\/\/placehold\.co\/1024x768\/141414\/444444\?text=Loading\+image[^"]*/g, fallback)
-
-    // Save final code with all images
-    await savePage(updatedCode)
-  }
-
-  async function deletePage(pageId: string) {
-    if (pages.length === 1) return alert('Need at least one page.')
-    await supabase.from('pages').delete().eq('id', pageId)
-    const remaining = pages.filter(p => p.id !== pageId)
-    setPages(remaining)
-    if (activePage?.id === pageId) { setActivePage(remaining[0]); setMessages([]) }
-  }
-
+  // Image upload
   function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const result = ev.target?.result as string
-      const base64 = result.split(',')[1]
-      const mediaType = file.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
-      setPendingImage({ base64, mediaType, preview: result })
-    }
-    reader.readAsDataURL(file)
+    const preview = URL.createObjectURL(file)
+    setPendingImage({ file, preview })
     e.target.value = ''
   }
-
-
   function handlePaste(e: React.ClipboardEvent) {
     const items = e.clipboardData?.items
     if (!items) return
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith('image/')) {
-        e.preventDefault()
         const file = items[i].getAsFile()
-        if (!file) continue
-        const reader = new FileReader()
-        reader.onload = (ev) => {
-          const result = ev.target?.result as string
-          const base64 = result.split(',')[1]
-          const mediaType = file.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
-          setPendingImage({ base64, mediaType, preview: result })
+        if (file) {
+          const preview = URL.createObjectURL(file)
+          setPendingImage({ file, preview })
         }
-        reader.readAsDataURL(file)
         break
       }
     }
   }
 
-  // Fire-and-forget log helper
-  function logEvent(event_type: string, severity: string, message: string, metadata?: object) {
-    fetch('/api/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_type, severity, message, email: user?.email, metadata }),
-    }).catch(() => {})
+  // Stop build
+  function handleStop() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setLoading(false)
+    setBuildStatus(null)
   }
 
-  async function callAPI(
-    msgs: any[],
-    planOnly = false,
-    image?: { base64: string, mediaType: string } | null,
-    onDelta?: (text: string) => void,
-    onStatus?: (text: string) => void,
-    isAutoFix = false,
-  ) {
-    const basePayload: any = {
-      messages: msgs,
-      pageCode: activePage?.code,
-      pageName: activePage?.name,
-      allPages: pages,
-      planOnly,
-      userId: user?.id,
-      projectId,
-      isAutoFix,
+  // Clear chat
+  function clearChatHistory() {
+    setMessages([])
+    setPendingPlan(null)
+  }
+
+  // Send message
+  async function sendMessage() {
+    if ((!input.trim() && !pendingImage) || loading || !user) return
+    if (creditBalance <= 0) { setShowBuyCredits(true); return }
+
+    let imageUrl: string | undefined
+    if (pendingImage) {
+      const reader = new FileReader()
+      imageUrl = await new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(pendingImage.file)
+      })
     }
 
-    if (image) {
-      basePayload.imageBase64 = image.base64
-      basePayload.imageMediaType = image.mediaType
-    }
+    const userMsg: Message = { role: 'user', content: input.trim(), imageUrl }
+    setMessages(prev => [...prev, userMsg])
+    setInput('')
+    setPendingImage(null)
+    setLoading(true)
+    setLastError(null)
+    setBuildStatus('Starting build...')
 
-    // Continuation loop — handles automatic re-triggering when the server hits its time limit
-    let continuationCount = 0
-    let accumulatedPartialRaw = ''
-    let accumulatedApiCost = 0
-    const MAX_CONTINUATIONS = 3
+    const controller = new AbortController()
+    abortControllerRef.current = controller
 
-    while (true) {
-      const payload: any = { ...basePayload }
-      if (continuationCount > 0) {
-        payload.isContinuation = true
-        payload.partialRaw = accumulatedPartialRaw
-        payload.continuationCount = continuationCount
-        payload.accumulatedApiCost = accumulatedApiCost
+    const planOnly = mode === 'plan' && !pendingPlan
+
+    try {
+      const chatMessages = [...messages, userMsg].map(m => {
+        const msg: any = { role: m.role, content: m.content }
+        if (m.imageUrl) msg.imageUrl = m.imageUrl
+        return msg
+      })
+
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          messages: chatMessages,
+          userId: user.id,
+          projectId,
+          planOnly,
+          activeFilePath: activeTab,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || err.message || 'Build failed')
       }
 
-      let fetchRes: Response
-      const controller = new AbortController()
-      abortControllerRef.current = controller
-      try {
-        fetchRes = await fetch('/api/claude', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        })
-      } catch (networkErr: any) {
-        if (networkErr.name === 'AbortError') throw new Error('__USER_STOPPED__')
-        // If this was a continuation, record the accumulated cost as failed
-        if (continuationCount > 0 && accumulatedApiCost > 0) {
-          try {
-            await fetch('/api/record-failed-build', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId: basePayload.userId,
-                pageName: basePayload.pageName,
-                errorMessage: 'Network error during continuation',
-                estimatedCost: accumulatedApiCost,
-                continuationCount,
-              }),
-            })
-          } catch (_) {}
-        }
-        throw new Error('The builder timed out. Try a simpler request or try again.')
-      }
-
-      const contentType = fetchRes.headers.get('content-type') || ''
-
-      // Non-streaming error responses (pre-flight checks return JSON)
-      if (contentType.includes('application/json')) {
-        const data = await fetchRes.json()
-        if (data.error === 'insufficient_credits') {
-          setShowBuyCredits(true)
-          logEvent('credits_error', 'warn', `Insufficient credits when building`, { pageName: activePage?.name, balance: data.balance })
-          throw new Error(data.message || 'Insufficient credits')
-        }
-        if (data.error === 'build_limit_reached') {
-          setShowBuyCredits(true)
-          logEvent('credits_error', 'warn', `Build limit reached`, { pageName: activePage?.name, planName: data.planName })
-          throw new Error(data.message || 'Monthly build limit reached. Please upgrade.')
-        }
-        if (data.error) {
-          logEvent('builder_error', 'error', `Builder API returned error: ${data.error}`, { pageName: activePage?.name, projectId, error: data.error })
-          throw new Error(data.error)
-        }
-        if (data.newBalance !== undefined) setCreditBalance(data.newBalance)
-        return data
-      }
-
-      // SSE streaming response
-      if (!contentType.includes('text/event-stream')) {
-        throw new Error('The build timed out or the server encountered an error. Try a simpler request or try again.')
-      }
-
-      const reader = fetchRes.body?.getReader()
-      if (!reader) throw new Error('Failed to read stream')
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('No stream')
 
       const decoder = new TextDecoder()
       let buffer = ''
-      let result: any = null
-      let shouldContinue = false
+      let streamedText = ''
+      const fileOps: Array<{ action: string; path: string }> = []
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            try {
-              const event = JSON.parse(line.slice(6))
-              if (event.type === 'delta' && onDelta) {
-                onDelta(event.text)
-              } else if (event.type === 'status' && onStatus) {
-                onStatus(event.text)
-              } else if (event.type === 'done') {
-                result = event
-              } else if (event.type === 'continue') {
-                // Server hit its time limit — accumulate partial and auto-continue
-                accumulatedPartialRaw = event.partialRaw || ''
-                continuationCount = event.continuationCount || (continuationCount + 1)
-                accumulatedApiCost = event.accumulatedApiCost || 0
-                shouldContinue = true
-                if (onStatus) onStatus(`⏳ Build continuing (part ${continuationCount + 1})...`)
-              } else if (event.type === 'error') {
-                if (event.error === 'insufficient_credits') {
-                  setShowBuyCredits(true)
-                  throw new Error(event.message || 'Insufficient credits')
-                }
-                throw new Error(event.error || event.message || 'Build failed')
-              }
-            } catch (parseErr: any) {
-              if (parseErr.message?.includes('credits') || parseErr.message?.includes('Build failed')) throw parseErr
-            }
-          }
-        }
-      } catch (streamErr: any) {
-        if (streamErr.name === 'AbortError') throw new Error('__USER_STOPPED__')
-        throw streamErr
-      }
-
-      // If we received a 'continue' event, loop back for another API call
-      if (shouldContinue) {
-        if (continuationCount >= MAX_CONTINUATIONS) {
-          // Record the accumulated cost as a failed build before throwing
-          if (accumulatedApiCost > 0) {
-            try {
-              await fetch('/api/record-failed-build', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  userId: basePayload.userId,
-                  pageName: basePayload.pageName,
-                  errorMessage: 'Max continuations exceeded',
-                  estimatedCost: accumulatedApiCost,
-                  continuationCount,
-                }),
-              })
-            } catch (_) {}
-          }
-          throw new Error('Build is too complex to complete within server time limits. Please simplify your request or build one section at a time.')
-        }
-        continue // goes back to the while(true) loop for another fetch
-      }
-
-      if (!result) {
-        // Backend didn't send a terminal event — record the failure since the server couldn't
-        if (accumulatedApiCost > 0) {
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
           try {
-            await fetch('/api/record-failed-build', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId: basePayload.userId,
-                pageName: basePayload.pageName,
-                errorMessage: 'Build interrupted - no terminal event received',
-                estimatedCost: accumulatedApiCost,
-                continuationCount,
-              }),
-            })
-          } catch (_) {}
+            const event = JSON.parse(line.slice(6))
+
+            if (event.type === 'delta') {
+              streamedText += event.text
+            } else if (event.type === 'status') {
+              setBuildStatus(event.text)
+            } else if (event.type === 'file_op') {
+              fileOps.push({ action: event.action, path: event.path })
+              setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
+              setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
+              setTimeout(() => {
+                setRecentlyChanged(prev => { const next = new Set(prev); next.delete(event.path); return next })
+              }, 3000)
+            } else if (event.type === 'done') {
+              await loadFiles()
+
+              if (planOnly && event.message) {
+                setPendingPlan(event.message)
+                setMessages(prev => [...prev, { role: 'assistant', content: event.message, isPlan: true }])
+              } else {
+                const assistantMsg = event.message || 'Build complete'
+                setMessages(prev => [...prev, { role: 'assistant', content: assistantMsg, fileOps }])
+              }
+
+              if (event.newBalance !== undefined) setCreditBalance(event.newBalance)
+
+              // Auto-open first changed file
+              if (fileOps.length > 0) {
+                const firstChanged = fileOps.find(op => op.action !== 'delete')
+                if (firstChanged) {
+                  if (!openTabs.includes(firstChanged.path)) {
+                    setOpenTabs(prev => [...prev, firstChanged.path])
+                  }
+                  setActiveTab(firstChanged.path)
+                }
+              }
+            } else if (event.type === 'error') {
+              setLastError(event.error || event.message)
+            }
+          } catch {}
         }
-        throw new Error('The build was interrupted before finishing. This usually means it timed out. Try again or simplify your request.')
       }
-      if (result.newBalance !== undefined) setCreditBalance(result.newBalance)
-      return result
-    }
-  }
-
-  async function handleStop() {
-    try {
-      const res = await fetch(`/api/check-stop-limit?userId=${user?.id}`)
-      const data = await res.json()
-      if (!data.allowed) {
-        setLastError(`Stop limit reached (${data.limit} per hour). Build will continue and you will be charged.`)
-        return
-      }
-    } catch (_) {
-      // If rate limit check fails, still allow the stop
-    }
-    abortControllerRef.current?.abort()
-    abortControllerRef.current = null
-  }
-
-  async function getPlan() {
-    if (!input.trim() && !pendingImage || loading) return
-    const userMsg: Message = { role: 'user', content: input || '(sent an image)', imageUrl: pendingImage?.preview }
-    setMessages(prev => [...prev, userMsg])
-    await saveChatMessage('user', input || '(sent an image)')
-    const savedInput = input
-    const imgToSend = pendingImage
-    setInput(''); setPendingImage(null); setLoading(true); setLastError(null)
-
-    const streamingMsg: Message = { role: 'assistant', content: '', isPlan: true }
-    setMessages(prev => [...prev, streamingMsg])
-
-    try {
-      const data = await callAPI([{ role: 'user', content: savedInput || 'See the image above.' }], true, imgToSend, (delta) => {
-        streamingMsg.content += delta
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...streamingMsg }
-          return updated
-        })
-      })
-      const aiMsg: Message = { role: 'assistant', content: data.message, isPlan: true }
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = aiMsg
-        return updated
-      })
-      await saveChatMessage('assistant', data.message, true)
-      setPendingPlan(savedInput)
     } catch (err: any) {
-      if (err.message === '__USER_STOPPED__') {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Stopped by user.')
-        logEvent('builder_stopped', 'info', `Plan generation stopped by user`, { pageName: activePage?.name, projectId })
-      } else {
+      if (err.name !== 'AbortError') {
         setLastError(err.message)
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + err.message }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Error: ' + err.message)
-        logEvent('builder_error', 'error', `Plan generation failed: ${err.message}`, { pageName: activePage?.name, projectId })
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
       }
+    } finally {
+      setLoading(false)
+      setBuildStatus(null)
+      abortControllerRef.current = null
     }
-    setLoading(false)
   }
 
-  async function approvePlan() {
+  // Plan approval
+  function approvePlan() {
     if (!pendingPlan) return
-    const buildStartTime = Date.now()
-    const approveMsg: Message = { role: 'user', content: 'Plan approved. Build it now exactly as planned.' }
-    setMessages(prev => [...prev, approveMsg])
-    await saveChatMessage('user', approveMsg.content)
-    setPendingPlan(null); setLoading(true); setLastError(null)
-
-    const streamingMsg: Message = { role: 'assistant', content: '🤔 Thinking...' }
-    setMessages(prev => [...prev, streamingMsg])
-    let rawAccumulator = ''
-
-    try {
-      const allMsgs = [...messages, approveMsg].map(m => ({ role: m.role, content: m.content }))
-      const data = await callAPI(allMsgs, false, null, (delta) => {
-        rawAccumulator += delta
-        const status = getBuildStatus(rawAccumulator)
-        if (status !== streamingMsg.content) {
-          streamingMsg.content = status
-          setMessages(prev => {
-            const updated = [...prev]
-            updated[updated.length - 1] = { ...streamingMsg }
-            return updated
-          })
-        }
-      }, (status) => {
-        streamingMsg.content = `⏳ ${status}`
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...streamingMsg }
-          return updated
-        })
-      })
-
-      const aiMsg: Message = { role: 'assistant', content: data.message }
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = aiMsg
-        return updated
-      })
-      await saveChatMessage('assistant', data.message)
-      if (data.code) {
-        await savePage(data.code)
-        if (isMobile) setMobilePanel('preview')
-        // Generate images in background after page is saved/displayed
-        if (data.imagePrompts?.length > 0) {
-          generateImagesProgressively(data.code, data.imagePrompts)
-        }
-      } else {
-        logEvent('builder_error', 'error', `Build completed but returned no code: ${data.message}`, { pageName: activePage?.name, projectId, message: data.message })
-      }
-      if (data.layoutUpdated) await loadProject()
-      if (data.pagesCreated?.length > 0) await loadPages()
-      // Reload shared code in case <SHARED_CODE> was output during this build
-      const { data: sc } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
-      setSharedCode(sc?.code || null)
-    } catch (err: any) {
-      if (err.message === '__USER_STOPPED__') {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Stopped by user.')
-        logEvent('builder_stopped', 'info', `Build stopped by user during approvePlan`, { pageName: activePage?.name, projectId })
-      } else {
-        const phase = streamingMsg.content || 'starting'
-        const errDetail = `${err.message} (failed during: ${phase})`
-        setLastError(errDetail)
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Error: ' + errDetail)
-        const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
-        logEvent('builder_error', 'error', `approvePlan failed after ${elapsedSec}s: ${err.message}`, {
-          pageName: activePage?.name, projectId, phase, elapsedSeconds: elapsedSec,
-          partialResponseChars: rawAccumulator.length, userPromptPreview: pendingPlan?.slice(0, 200),
-          stack: err.stack?.slice(0, 300),
-        })
-      }
-    }
-    setLoading(false)
+    setInput(`Execute this plan:\n${pendingPlan}`)
+    setMode('build')
+    setPendingPlan(null)
+    setTimeout(() => sendMessage(), 100)
   }
 
-  // Detect build phase from accumulated raw AI output and return a friendly status
-  function getBuildStatus(raw: string): string {
-    if (raw.includes('<CODE>')) return '✨ Writing code...'
-    if (raw.includes('<MESSAGE>')) return '✨ Almost done...'
-    if (raw.includes('<CREATE_TABLE>')) return '🗄️ Setting up database...'
-    if (raw.includes('<GENERATE_IMAGE>')) return '🖼️ Preparing image...'
-    if (raw.includes('<LAYOUT>')) return '📐 Building layout...'
-    if (raw.includes('<CREATE_PAGE>')) return '📄 Creating pages...'
-    return '🤔 Thinking...'
-  }
-
-  // Auto-fix iframe runtime errors by sending them to Claude
-  async function handleIframeErrors(errors: Array<{message: string, source?: string, line?: number, col?: number, stack?: string}>) {
-    if (loading || isAutoFixing) return
-    if (autoFixAttempts >= MAX_AUTO_FIX_ATTEMPTS) return
-    if (!activePage?.code) return
-
-    // Filter out noise: CDN/framework errors, cross-origin script errors
-    const realErrors = errors.filter(e => {
-      const msg = (e.message || '').toLowerCase()
-      if (msg.includes('script error') && !e.source) return false
-      if (msg.includes('tailwind')) return false
-      if (msg.includes('alpine')) return false
-      if (msg.includes('favicon')) return false
-      return true
-    })
-    if (realErrors.length === 0) return
-
-    const errorSummary = realErrors.map(e => {
-      let s = e.message
-      if (e.line) s += ` (line ${e.line}${e.col ? ':' + e.col : ''})`
-      if (e.stack) s += `\nStack: ${e.stack}`
-      return s
-    }).join('\n---\n')
-
-    const attemptNum = autoFixAttempts + 1
-    setIsAutoFixing(true)
-    setAutoFixAttempts(attemptNum)
-
-    const statusMsg: Message = { role: 'assistant', content: `Auto-fixing error (attempt ${attemptNum}/${MAX_AUTO_FIX_ATTEMPTS})...` }
-    setMessages(prev => [...prev, statusMsg])
-
-    try {
-      const fixPrompt = `The code you generated has runtime JavaScript errors. Fix ONLY the errors — do not change the design or functionality.\n\nErrors:\n${errorSummary}`
-      const apiMsgs = [{ role: 'user' as const, content: fixPrompt }]
-      setLoading(true)
-
-      let rawAccumulator = ''
-      const data = await callAPI(apiMsgs, false, null, (delta) => {
-        rawAccumulator += delta
-        const status = getBuildStatus(rawAccumulator)
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: `Auto-fixing: ${status}` }
-          return updated
-        })
-      }, undefined, true)
-
-      const aiMsg: Message = { role: 'assistant', content: data.message || 'Auto-fix applied.' }
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = aiMsg
-        return updated
-      })
-      await saveChatMessage('assistant', `[Auto-fix] ${data.message || 'Fixed runtime error.'}`)
-
-      if (data.code) {
-        await savePage(data.code)
-        if (isMobile) setMobilePanel('preview')
-      }
-      logEvent('auto_fix', 'info', `Auto-fix attempt ${attemptNum} completed`, {
-        pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300), success: !!data.code,
-      })
-    } catch (err: any) {
-      if (err.message === '__USER_STOPPED__') {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Auto-fix stopped by user.' }
-          return updated
-        })
-      } else {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: `Auto-fix failed: ${err.message}` }
-          return updated
-        })
-        logEvent('auto_fix_error', 'error', `Auto-fix failed: ${err.message}`, {
-          pageName: activePage?.name, projectId, errorSummary: errorSummary.slice(0, 300),
-        })
-      }
-    }
-    setLoading(false)
-    setIsAutoFixing(false)
-  }
-
-  // Keep the ref in sync so the postMessage listener always calls the latest version
-  handleIframeErrorsRef.current = handleIframeErrors
-
-  async function sendMessage() {
-    if ((!input.trim() && !pendingImage) || loading || !activePage) return
-    if (mode === 'plan') { getPlan(); return }
-    setAutoFixAttempts(0)
-    const buildStartTime = Date.now()
-
-    const msgContent = input || (pendingImage ? '(sent an image)' : '')
-    const userMsg: Message = { role: 'user', content: msgContent, imageUrl: pendingImage?.preview }
-    const newMsgs = [...messages, userMsg]
-    setMessages(newMsgs)
-    await saveChatMessage('user', msgContent)
-    setInput(''); setLoading(true); setLastError(null)
-    const imgToSend = pendingImage
-    setPendingImage(null)
-
-    // Add a placeholder assistant message for build status
-    const streamingMsg: Message = { role: 'assistant', content: '🤔 Thinking...' }
-    setMessages(prev => [...prev, streamingMsg])
-    let rawAccumulator = ''
-
-    try {
-      const apiMsgs = newMsgs.map(m => ({ role: m.role, content: m.content }))
-      const data = await callAPI(apiMsgs, false, imgToSend, (delta) => {
-        rawAccumulator += delta
-        const status = getBuildStatus(rawAccumulator)
-        if (status !== streamingMsg.content) {
-          streamingMsg.content = status
-          setMessages(prev => {
-            const updated = [...prev]
-            updated[updated.length - 1] = { ...streamingMsg }
-            return updated
-          })
-        }
-      }, (status) => {
-        streamingMsg.content = `⏳ ${status}`
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...streamingMsg }
-          return updated
-        })
-      })
-
-      // Replace streaming message with final message
-      const aiMsg: Message = { role: 'assistant', content: data.message }
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[updated.length - 1] = aiMsg
-        return updated
-      })
-      await saveChatMessage('assistant', data.message)
-      if (data.code) {
-        await savePage(data.code)
-        if (isMobile) setMobilePanel('preview')
-        // Generate images in background after page is saved/displayed
-        if (data.imagePrompts?.length > 0) {
-          generateImagesProgressively(data.code, data.imagePrompts)
-        }
-      } else {
-        logEvent('builder_error', 'error', `sendMessage build returned no code: ${data.message}`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
-      }
-      if (data.layoutUpdated) await loadProject()
-      if (data.pagesCreated?.length > 0) await loadPages()
-      // Reload shared code in case <SHARED_CODE> was output during this build
-      const { data: sc2 } = await supabase.from('project_shared_code').select('code').eq('project_id', projectId as string).single()
-      setSharedCode(sc2?.code || null)
-    } catch (err: any) {
-      if (err.message === '__USER_STOPPED__') {
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Stopped by user.' }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Stopped by user.')
-        logEvent('builder_stopped', 'info', `Build stopped by user`, { pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200) })
-      } else {
-        const phase = streamingMsg.content || 'starting'
-        const errDetail = `${err.message} (failed during: ${phase})`
-        setLastError(errDetail)
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: 'Error: ' + errDetail }
-          return updated
-        })
-        await saveChatMessage('assistant', 'Error: ' + errDetail)
-        const elapsedSec = ((Date.now() - buildStartTime) / 1000).toFixed(1)
-        logEvent('builder_error', 'error', `sendMessage failed after ${elapsedSec}s: ${err.message}`, {
-          pageName: activePage?.name, projectId, prompt: msgContent.slice(0, 200), phase,
-          elapsedSeconds: elapsedSec, partialResponseChars: rawAccumulator.length,
-        })
-      }
-    }
-    setLoading(false)
-  }
-
-  async function clearChatHistory() {
-    if (!activePage) return
-    await supabase.from('chat_history').delete().eq('page_id', activePage.id)
-    setMessages([])
-  }
-
+  // Buy credits
   async function buyCredits(packId: string) {
-    const res = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ packId, userId: user.id, userEmail: user.email }),
-    })
-    const data = await res.json()
-    if (data.url) window.location.href = data.url
+    try {
+      const res = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packId, userId: user.id }),
+      })
+      const { url } = await res.json()
+      if (url) window.location.href = url
+    } catch {}
   }
 
   if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[#555] font-sans">Loading...</div>
@@ -925,6 +371,43 @@ export default function ProjectBuilder() {
   // Mobile panel visibility
   const showLeft = !isMobile || mobilePanel === 'chat'
   const showRight = !isMobile || mobilePanel === 'preview'
+
+  // Render editor with tabs
+  const renderEditor = () => (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* TABS */}
+      <div className="flex border-b border-white/[0.06] bg-surface-1 overflow-auto shrink-0">
+        {openTabs.map(tab => (
+          <div
+            key={tab}
+            className={`flex items-center gap-1.5 px-3 py-1.5 cursor-pointer whitespace-nowrap text-xs border-r border-white/[0.04] ${
+              tab === activeTab ? 'bg-surface-2 text-[#f0f0f0] border-b-2 border-b-brand' : 'text-[#666] border-b-2 border-b-transparent'
+            }`}
+            onClick={() => setActiveTab(tab)}
+          >
+            <span>{tab.split('/').pop()}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); closeTab(tab) }}
+              className="bg-transparent border-none text-[#555] cursor-pointer text-sm px-0.5 leading-none"
+            >×</button>
+          </div>
+        ))}
+      </div>
+      {activeTab ? (
+        <CodeEditor
+          code={activeCode}
+          onChange={handleCodeChange}
+          onSave={handleSave}
+          pageName={activeTab}
+          language={getLanguage(activeTab)}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-[#444] text-[13px]">
+          Select a file to start editing
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div className={`flex flex-col bg-surface overflow-hidden font-sans ${isMobile ? 'h-dvh' : 'h-screen'}`}>
@@ -947,13 +430,11 @@ export default function ProjectBuilder() {
           </div>
         ) : (
           <div className="flex items-center gap-3 shrink-0">
-            {activePage && (
-              <div className="flex gap-0.5 bg-surface-2 rounded-[7px] border border-white/[0.08] p-0.5">
-                <button onClick={() => setViewMode('preview')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='preview' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Preview</button>
-                <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Code</button>
-                <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Split</button>
-              </div>
-            )}
+            <div className="flex gap-0.5 bg-surface-2 rounded-[7px] border border-white/[0.08] p-0.5">
+              <button onClick={() => setViewMode('preview')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='preview' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Preview</button>
+              <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Code</button>
+              <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Split</button>
+            </div>
             <GitHubConnect projectId={projectId as string} userId={user.id} projectName={project.name} />
             <DeployButton projectId={projectId as string} userId={user.id} />
             <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full">
@@ -971,7 +452,7 @@ export default function ProjectBuilder() {
         <div className={`${isMobile ? 'w-full min-w-0' : 'w-[300px] min-w-[300px] border-r border-white/[0.07]'} flex flex-col bg-surface-1 overflow-hidden ${isMobile && !showLeft ? 'hidden' : ''}`}>
           <div className="flex border-b border-white/[0.07] shrink-0 items-center">
             <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='chat' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('chat')}>Chat</button>
-            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='pages' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('pages')}>Pages ({pages.length})</button>
+            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='files' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('files')}>Files ({files.length})</button>
           </div>
 
           {sidebarTab === 'chat' && (
@@ -1008,6 +489,29 @@ export default function ProjectBuilder() {
                             <img src={msg.imageUrl} alt="uploaded" className="w-full rounded-md mb-2 max-h-[150px] object-cover" />
                           )}
                           <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed">{msg.content}</div>
+                          {msg.fileOps && msg.fileOps.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {msg.fileOps.map((op, j) => (
+                                <button
+                                  key={j}
+                                  onClick={() => {
+                                    if (op.action !== 'delete') {
+                                      if (!openTabs.includes(op.path)) setOpenTabs(prev => [...prev, op.path])
+                                      setActiveTab(op.path)
+                                    }
+                                  }}
+                                  className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer border"
+                                  style={{
+                                    background: op.action === 'create' ? '#22c55e15' : op.action === 'edit' ? '#3b82f615' : '#ef444415',
+                                    borderColor: op.action === 'create' ? '#22c55e30' : op.action === 'edit' ? '#3b82f630' : '#ef444430',
+                                    color: op.action === 'create' ? '#4ade80' : op.action === 'edit' ? '#60a5fa' : '#f87171',
+                                  }}
+                                >
+                                  {op.action === 'create' ? '+' : op.action === 'edit' ? '~' : '-'} {op.path.split('/').pop()}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                           {msg.isPlan && pendingPlan && (
                             <div className="flex gap-2 mt-3">
                               <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
@@ -1019,7 +523,17 @@ export default function ProjectBuilder() {
                     ))}
                   </>
                 )}
-                {loading && messages.length > 0 && messages[messages.length - 1]?.role !== 'assistant' && (
+                {loading && buildStatus && (
+                  <div className="flex flex-col">
+                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[#e0e0e0]">
+                      <div className="flex gap-1.5 items-center">
+                        <span className="text-[#7c6ef7] text-xs inline-block animate-spin">⚙</span>
+                        <span className="text-[#555] text-xs">{buildStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {loading && !buildStatus && messages.length > 0 && messages[messages.length - 1]?.role !== 'assistant' && (
                   <div className="flex flex-col">
                     <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[#e0e0e0]">
                       <div className="flex gap-1.5 items-center">
@@ -1072,35 +586,29 @@ export default function ProjectBuilder() {
             </>
           )}
 
-          {sidebarTab === 'pages' && (
+          {sidebarTab === 'files' && (
             <div className="flex flex-col flex-1 overflow-hidden">
               <div className="p-3">
-                {showNewPage ? (
+                {showNewFile ? (
                   <div className="flex gap-1.5">
-                    <input autoFocus value={newPageName} onChange={e => setNewPageName(e.target.value)}
-                      onKeyDown={e => { if (e.key==='Enter') createPage(newPageName) }}
-                      placeholder="Page name..." className="flex-1 px-2.5 py-1.5 bg-surface-3 border border-white/10 rounded-md text-[#f0f0f0] text-[13px] outline-none" />
-                    <button onClick={() => createPage(newPageName)} className="px-3 py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Add</button>
-                    <button onClick={() => setShowNewPage(false)} className="px-2.5 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[#555] text-xs cursor-pointer">✕</button>
+                    <input autoFocus value={newFilePath} onChange={e => setNewFilePath(e.target.value)}
+                      onKeyDown={e => { if (e.key==='Enter') handleNewFile() }}
+                      placeholder="e.g. src/pages/Dashboard.tsx" className="flex-1 px-2.5 py-1.5 bg-surface-3 border border-white/10 rounded-md text-[#f0f0f0] text-[13px] outline-none" />
+                    <button onClick={handleNewFile} className="px-3 py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Add</button>
+                    <button onClick={() => { setShowNewFile(false); setNewFilePath('') }} className="px-2.5 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[#555] text-xs cursor-pointer">✕</button>
                   </div>
                 ) : (
-                  <button onClick={() => setShowNewPage(true)} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#666] text-[13px] cursor-pointer text-left px-3">+ New page</button>
+                  <button onClick={() => setShowNewFile(true)} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#666] text-[13px] cursor-pointer text-left px-3">+ New file</button>
                 )}
               </div>
               <div className="flex-1 overflow-y-auto">
-                {pages.map(page => (
-                  <div key={page.id} className={`flex items-center px-4 py-2.5 border-b border-white/[0.05] gap-2 ${activePage?.id===page.id ? 'bg-brand/[0.07]' : ''}`}>
-                    <div className="flex-1 cursor-pointer" onClick={() => {
-                      setActivePage(page);
-                      setSidebarTab('chat');
-                      if (isMobile) setMobilePanel('chat');
-                    }}>
-                      <div className="text-[13px] font-medium text-[#f0f0f0]">{page.name}</div>
-                      <div className="text-[11px] text-[#444] mt-0.5">{new Date(page.updated_at).toLocaleDateString()}</div>
-                    </div>
-                    {pages.length > 1 && <button onClick={() => deletePage(page.id)} className="bg-transparent border-none text-[#333] cursor-pointer text-[11px]">✕</button>}
-                  </div>
-                ))}
+                <FileTree
+                  nodes={fileTree}
+                  activeFilePath={activeTab}
+                  onFileSelect={openFile}
+                  onNewFile={() => setShowNewFile(true)}
+                  onDeleteFile={handleDeleteFile}
+                />
               </div>
             </div>
           )}
@@ -1108,64 +616,90 @@ export default function ProjectBuilder() {
 
         {/* RIGHT PANEL */}
         <div className={`flex-1 flex flex-col overflow-hidden ${isMobile && !showRight ? 'hidden' : ''} ${isMobile ? 'pb-[50px]' : ''}`}>
+          {/* SUB-TOPBAR */}
           <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.07] bg-surface-1 shrink-0">
-            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-[7px] shrink-0">
-              <span className="text-xs text-[#555]">⊞</span>
-              <select
-                value={activePage?.id || ''}
-                onChange={e => {
-                  const page = pages.find(p => p.id === e.target.value)
-                  if (page) { setActivePage(page); setSidebarTab('chat') }
-                }}
-                className="bg-transparent border-none text-[#aaa] text-xs outline-none cursor-pointer max-w-[120px]"
-              >
-                {pages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
+            {activeTab && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-[7px] shrink-0">
+                <span className="text-xs text-[#555]">⊞</span>
+                <select
+                  value={activeTab || ''}
+                  onChange={e => {
+                    const path = e.target.value
+                    if (path) {
+                      if (!openTabs.includes(path)) setOpenTabs(prev => [...prev, path])
+                      setActiveTab(path)
+                    }
+                  }}
+                  className="bg-transparent border-none text-[#aaa] text-xs outline-none cursor-pointer max-w-[120px]"
+                >
+                  {files.map(f => <option key={f.path} value={f.path}>{f.path.split('/').pop()}</option>)}
+                </select>
+              </div>
+            )}
             {!isMobile && (
               <div className="flex-1 flex items-center px-3 py-1 bg-surface-2 border border-white/[0.06] rounded-[7px] text-xs overflow-hidden">
                 <span className="text-[#333] select-none">customaidashboard.com / preview /</span>
                 <span className="text-[#666] ml-1.5">
-                  {activePage?.name?.toLowerCase().replace(/\s+/g, '-') || 'page'}
+                  {activeTab?.split('/').pop() || 'file'}
                 </span>
               </div>
             )}
-            {isMobile && activePage && (
+            {isMobile && (
               <button onClick={() => setViewMode(viewMode === 'code' ? 'preview' : 'code')} className={`px-3 py-1 rounded-[7px] text-xs cursor-pointer font-mono border ml-auto ${viewMode==='code' ? 'bg-brand/10 border-brand/30 text-[#9d92f5]' : 'bg-transparent border-white/10 text-[#666]'}`}>
                 {'</>'}
               </button>
             )}
-            {activePage && (
-              <button onClick={() => window.open(`/api/preview/${activePage.id}`, '_blank', 'noopener')} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Open preview in new tab">↗</button>
+            {deployUrl && (
+              <button onClick={() => window.open(`https://${deployUrl}`, '_blank', 'noopener')} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Open deployed site">↗</button>
             )}
-            {activePage && (
-              <button onClick={() => setShowHistory(true)} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Version history">⏱</button>
-            )}
-            <button onClick={() => activePage && renderIframe(activePage.code)} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Refresh preview">↺</button>
           </div>
-          {viewMode === 'split' && activePage ? (
+
+          {/* CONTENT AREA */}
+          {viewMode === 'split' ? (
             <div className="flex flex-1 overflow-hidden">
               <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.07]">
-                <CodeEditor
-                  code={activePage.code}
-                  pageName={activePage.name}
-                  onChange={(val) => renderIframe(val)}
-                  onSave={(val) => savePage(val, 'manual_edit')}
-                />
+                {renderEditor()}
               </div>
               <div className="flex-1 flex flex-col overflow-hidden">
-                <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+                {deployUrl ? (
+                  <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-[#444] text-[13px] flex-col gap-3">
+                    <div className="text-2xl opacity-20">⚡</div>
+                    <p>Deploy your project to see a preview</p>
+                  </div>
+                )}
               </div>
             </div>
-          ) : viewMode === 'code' && activePage ? (
-            <CodeEditor
-              code={activePage.code}
-              pageName={activePage.name}
-              onChange={(val) => renderIframe(val)}
-              onSave={(val) => savePage(val, 'manual_edit')}
-            />
+          ) : viewMode === 'code' ? (
+            <div className="flex flex-1 overflow-hidden">
+              {/* Inline file tree for code view */}
+              {!isMobile && (
+                <div className="w-[180px] min-w-[180px] border-r border-white/[0.07] flex flex-col overflow-hidden bg-surface-1">
+                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[#555] font-semibold uppercase tracking-wider">Files</div>
+                  <div className="flex-1 overflow-y-auto">
+                    <FileTree
+                      nodes={fileTree}
+                      activeFilePath={activeTab}
+                      onFileSelect={openFile}
+                      onNewFile={() => setShowNewFile(true)}
+                      onDeleteFile={handleDeleteFile}
+                    />
+                  </div>
+                </div>
+              )}
+              {renderEditor()}
+            </div>
           ) : (
-            <iframe ref={iframeRef} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+            /* Preview mode */
+            deployUrl ? (
+              <iframe ref={iframeRef} src={`https://${deployUrl}`} sandbox="allow-scripts allow-same-origin allow-forms allow-modals" className="flex-1 border-none bg-surface w-full h-full" title="preview" />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-[#444] text-[13px] flex-col gap-3">
+                <div className="text-2xl opacity-20">⚡</div>
+                <p>Deploy your project to see a preview</p>
+              </div>
+            )
           )}
         </div>
       </div>
@@ -1184,19 +718,6 @@ export default function ProjectBuilder() {
             </button>
           </div>
         </div>
-      )}
-
-      {/* Version History */}
-      {showHistory && activePage && (
-        <VersionHistory
-          pageId={activePage.id}
-          onClose={() => setShowHistory(false)}
-          onPreview={(code) => renderIframe(code)}
-          onRestore={(code) => {
-            savePage(code, 'restore')
-            setShowHistory(false)
-          }}
-        />
       )}
 
       {/* Buy Credits Modal */}
@@ -1218,11 +739,10 @@ export default function ProjectBuilder() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   )
 }
-
-function getStarterCode() {
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"><\/script><script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7'}}}}}<\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></head><body class="bg-[#0a0a0a] min-h-screen flex items-center justify-center p-10"><div class="text-center max-w-lg"><div class="w-14 h-14 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto mb-6"><i class="fa-solid fa-wand-magic-sparkles text-brand text-xl"></i></div><h1 class="text-white text-2xl font-semibold mb-3">Start building</h1><p class="text-white/50 text-sm leading-relaxed mb-8">Use the AI chat on the left to build anything you want.</p><div class="bg-brand/10 border border-brand/20 rounded-xl p-4 text-brand text-sm">Try: "Build an admin dashboard with a sidebar, stats and users table"</div></div></body></html>`
-}
-
