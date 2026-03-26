@@ -67,6 +67,9 @@ FILE_OP RULES:
 - Always update src/App.tsx routes when creating new pages
 - Always update src/components/Layout.tsx navigation when adding pages
 
+CRITICAL: You can ONLY use these tags: <MESSAGE>, <FILE_OP>, <CREATE_TABLE>, <ALTER_TABLE>, <ENABLE_RLS>, <ENABLE_REALTIME>, <SETUP_STORAGE>, <ADD_PACKAGE>, <SERVER_FUNCTION>, <CRON_JOB>.
+NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax. Those are NOT supported and will be ignored. Only the tags listed above work in this system.
+
 ${hasClientsDb ? `DATABASE CAPABILITY:
 Create real persistent tables. Output <CREATE_TABLE> tags BEFORE FILE_OP tags:
 <CREATE_TABLE>
@@ -412,5 +415,6 @@ RULES:
 - Reference existing files by name when modifying them (e.g., "Update Layout.tsx sidebar to add Admin nav item")
 - Don't propose creating something that already exists — modify it instead
 - Be specific about Tailwind classes and component patterns from the design system
-- Respond in plain text only — no code blocks, no FILE_OP tags`
+- Respond in plain text only — no code blocks, no FILE_OP tags
+- NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here`
 }
