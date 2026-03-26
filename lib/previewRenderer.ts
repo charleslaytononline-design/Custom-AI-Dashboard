@@ -125,9 +125,9 @@ export function generatePreviewHtml(options: PreviewOptions): string {
       value: { request: async function(name, _o, cb) { var fn = cb || _o; return await fn({ name: name, mode: 'exclusive' }); } },
       configurable: true, writable: true
     });
-    // Prevent native form submissions (React handles forms via JS, native submit is blocked in sandbox)
+    // Defense-in-depth: prevent native form submissions. Primary fix is blob URL origin in PreviewFrame.tsx.
     document.addEventListener('submit', function(e) { e.preventDefault(); }, true);
-    // Also override programmatic form.submit() which bypasses addEventListener
+    // Defense-in-depth: override programmatic form.submit() which bypasses addEventListener
     HTMLFormElement.prototype.submit = function() {};
   </script>
 

@@ -66,7 +66,8 @@ export default function PreviewFrame({
   buildTrigger = 0,
 }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [srcdoc, setSrcdoc] = useState<string | null>(null)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const blobUrlRef = useRef<string | null>(null)
   const [bundling, setBundling] = useState(false)
   const [bundleErrors, setBundleErrors] = useState<string[]>([])
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([])
@@ -89,6 +90,27 @@ export default function PreviewFrame({
 
   // Check if this is a React project with files to bundle
   const isReactProject = projectType === 'react' && files.length > 0 && !!fileMap['src/main.tsx']
+
+  // Convert HTML string to a blob URL for the preview iframe.
+  // Using blob URLs instead of srcdoc avoids Chrome blocking form submissions
+  // to about:srcdoc (which Chrome treats as an invalid form submission target).
+  const updateBlobUrl = useCallback((html: string) => {
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    blobUrlRef.current = url
+    setBlobUrl(url)
+  }, [])
+
+  // Revoke blob URL on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current)
+        blobUrlRef.current = null
+      }
+    }
+  }, [])
 
   // Bundle React project files
   const bundleAndRender = useCallback(async () => {
@@ -116,7 +138,7 @@ export default function PreviewFrame({
 
       if (result.errors.length > 0) {
         setBundleErrors(result.errors)
-        setSrcdoc(generateErrorHtml(result.errors))
+        updateBlobUrl(generateErrorHtml(result.errors))
       } else {
         const html = generatePreviewHtml({
           js: result.js,
@@ -126,18 +148,18 @@ export default function PreviewFrame({
           brandColor,
         })
         console.log(`[PreviewFrame] Preview HTML generated: ${html.length} chars`)
-        setSrcdoc(html)
+        updateBlobUrl(html)
       }
     } catch (err: any) {
       console.error('[PreviewFrame] Bundle error:', err)
       const errorMsg = err.message || 'Bundle failed'
       setBundleErrors([errorMsg])
       const { generateErrorHtml } = await import('../lib/previewRenderer')
-      setSrcdoc(generateErrorHtml([errorMsg]))
+      updateBlobUrl(generateErrorHtml([errorMsg]))
     } finally {
       setBundling(false)
     }
-  }, [isReactProject, fileMap, extraPackages, envVars, projectName, brandColor])
+  }, [isReactProject, fileMap, extraPackages, envVars, projectName, brandColor, updateBlobUrl])
 
   // Rebundle when files change (debounced) or buildTrigger changes
   // Auto-bundles on page load if project has files — existing projects render immediately
@@ -183,7 +205,7 @@ export default function PreviewFrame({
 
   // Determine what to show
   const showDeployedPreview = previewSource === 'deployed' && deployUrl
-  const hasLivePreview = isReactProject && srcdoc
+  const hasLivePreview = isReactProject && blobUrl
 
   const errorCount = previewErrors.length + bundleErrors.length
   const consoleCount = consoleEntries.length
@@ -297,7 +319,7 @@ export default function PreviewFrame({
             ) : hasLivePreview ? (
               <iframe
                 ref={iframeRef}
-                srcDoc={srcdoc!}
+                src={blobUrl!}
                 sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-top-navigation-by-user-activation"
                 className="w-full h-full border-none"
                 title="live preview"

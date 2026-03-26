@@ -58,7 +58,8 @@
       "Bash(\"/c/Program Files/nodejs/npx.cmd\" tsc --noEmit)",
       "Bash(where.exe node:*)",
       "Bash(npx.cmd tsc:*)",
-      "Bash(node -e \"require\\(''''child_process''''\\).execSync\\(''''npx tsc --noEmit'''', {stdio: ''''inherit''''}\\)\")"
+      "Bash(node -e \"require\\(''''child_process''''\\).execSync\\(''''npx tsc --noEmit'''', {stdio: ''''inherit''''}\\)\")",
+      "Bash(export PATH=\"$PATH:/c/Program Files/nodejs:/c/Users/charl/AppData/Roaming/npm\")"
     ]
   }
 }
