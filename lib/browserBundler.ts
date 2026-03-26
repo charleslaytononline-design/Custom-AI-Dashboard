@@ -229,7 +229,7 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
 
             // Load virtual files from the in-memory file map
             build.onLoad({ filter: /.*/, namespace: 'virtual' }, (args) => {
-              const content = files[args.path]
+              let content = files[args.path]
               if (content === undefined) {
                 return { errors: [{ text: `File not found: ${args.path}` }] }
               }
@@ -242,6 +242,12 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
                   .trim()
                 if (cleanedCss) collectedCss += '\n' + cleanedCss
                 return { contents: '', loader: 'js' }
+              }
+              // Swap BrowserRouter → MemoryRouter for preview (srcdoc iframes
+              // have pathname "srcdoc" instead of "/", breaking BrowserRouter)
+              if ((loader === 'tsx' || loader === 'ts' || loader === 'jsx' || loader === 'js') && content.includes('BrowserRouter')) {
+                content = content
+                  .replace(/\bBrowserRouter\b/g, 'MemoryRouter')
               }
               return { contents: content, loader }
             })
