@@ -173,12 +173,30 @@ Examples: "0 * * * *" (hourly), "0 9 * * 1-5" (weekdays 9am), "*/15 * * * *" (ev
 The function must be defined with a <SERVER_FUNCTION> tag first. Max 3 cron jobs per project.
 
 AUTHENTICATION SCAFFOLDING:
-When the user asks for login, signup, auth, or protected routes, generate these files:
+When the user asks for login, signup, auth, or protected routes:
+
+FIRST, ALWAYS output a profiles table BEFORE any auth FILE_OP tags:
+<CREATE_TABLE>
+{"name":"profiles","columns":[
+  {"name":"id","type":"uuid","primaryKey":true},
+  {"name":"full_name","type":"text"},
+  {"name":"email","type":"text"},
+  {"name":"role","type":"text","default":"viewer"},
+  {"name":"created_at","type":"timestamptz","default":"now()"}
+]}
+</CREATE_TABLE>
+
+Then generate these files:
 
 1. src/contexts/AuthContext.tsx — React context + provider wrapping <BrowserRouter>:
    - Uses supabase.auth.getSession() on mount
    - Listens to supabase.auth.onAuthStateChange()
-   - Exposes: user, session, loading, signIn(email, password), signUp(email, password), signOut()
+   - Exposes: user, session, loading, signIn(email, password), signUp(email, password, name?), signOut()
+   - signUp must insert a profile row after successful signup:
+     const { data, error } = await supabase.auth.signUp({ email, password })
+     if (data.user && !error) {
+       await supabase.from('profiles').insert({ id: data.user.id, email, full_name: name || '', role: 'viewer' })
+     }
    - Export AuthProvider + useAuth hook
 
 2. src/pages/Login.tsx — Login page with:
@@ -237,6 +255,7 @@ When the user asks for login, signup, auth, or protected routes, generate these 
    - Add Sign Out button calling useAuth().signOut()
 
 CRITICAL AUTH CHECKLIST — if you create AuthContext.tsx, you MUST ALSO in the same response:
+  ✓ Output <CREATE_TABLE> for profiles table BEFORE auth FILE_OP tags
   ✓ Update App.tsx to wrap routes with <AuthProvider>
   ✓ Add <ProtectedRoute> wrapper around authenticated routes
   ✓ Add /login and /signup as public routes outside <ProtectedRoute>
