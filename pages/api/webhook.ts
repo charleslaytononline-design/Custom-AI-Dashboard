@@ -58,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       severity: 'info',
       message: `Payment of $${creditsNum} credits completed`,
       email: session.customer_email || null,
-      metadata: { userId, credits: creditsNum, payment_intent: session.payment_intent, amount_total: session.amount_total },
+      metadata: { sourceFile: 'pages/api/webhook.ts', userId, credits: creditsNum, payment_intent: session.payment_intent, amount_total: session.amount_total },
     })
   }
 

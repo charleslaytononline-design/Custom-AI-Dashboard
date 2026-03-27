@@ -69,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       event_type: 'function_execution',
       severity: 'info',
       message: `Function ${funcName} executed`,
-      metadata: { userId: sessionUserId, projectId, functionName: funcName, success: true },
+      metadata: { sourceFile: 'pages/api/run.ts', userId: sessionUserId, projectId, functionName: funcName, success: true },
     }).then(() => {}, () => {})
 
     return res.status(200).json({ success: true, result })
@@ -79,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       event_type: 'function_execution',
       severity: 'error',
       message: `Function ${funcName} failed: ${sanitizeError(err)}`,
-      metadata: { userId: sessionUserId, projectId, functionName: funcName, success: false },
+      metadata: { sourceFile: 'pages/api/run.ts', userId: sessionUserId, projectId, functionName: funcName, success: false, stack: err.stack?.slice(0, 500) },
     }).then(() => {}, () => {})
 
     return res.status(200).json({ success: false, error: sanitizeError(err) })

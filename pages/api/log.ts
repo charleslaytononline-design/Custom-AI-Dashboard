@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 import { getAuthUser } from '../../lib/apiAuth'
 
 const supabase = createClient(
@@ -20,9 +21,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'event_type and message required' })
   }
 
+  // Compute fingerprint for dedup and tracking (event_type + first 100 chars of message)
+  const fingerprint = crypto.createHash('md5').update(`${event_type}:${(message || '').slice(0, 100)}`).digest('hex')
+
   // Insert the log entry (tag with authenticated userId if available)
-  const enrichedMetadata = { ...metadata, _authenticated: !!sessionUserId, _sessionUserId: sessionUserId || undefined }
-  await supabase.from('platform_logs').insert({ event_type, severity, message, email: email || null, metadata: enrichedMetadata })
+  const enrichedMetadata = {
+    ...metadata,
+    _authenticated: !!sessionUserId,
+    _sessionUserId: sessionUserId || undefined,
+    _referer: req.headers.referer || undefined,
+    _userAgent: (req.headers['user-agent'] || '').slice(0, 200) || undefined,
+  }
+  await supabase.from('platform_logs').insert({ event_type, severity, message, email: email || null, metadata: enrichedMetadata, fingerprint })
 
   // Check if an email alert should fire for this event type
   const { data: setting } = await supabase

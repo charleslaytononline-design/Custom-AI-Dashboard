@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { getAuthUser } from '../../lib/apiAuth'
 
@@ -31,10 +32,12 @@ async function logEvent(
   metadata?: Record<string, unknown>
 ) {
   try {
+    const fingerprint = crypto.createHash('md5').update(`${event_type}:${(message || '').slice(0, 100)}`).digest('hex')
     await supabase.from('platform_logs').insert({
       event_type, severity, message,
       email: null,
       metadata: { userId, ...metadata },
+      fingerprint,
     })
     const { data: setting } = await supabase
       .from('log_alert_settings').select('send_email').eq('event_type', event_type).single()
@@ -202,7 +205,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // The brief pause avoids hitting Replicate's burst rate limit from rapid sequential requests
       await logEvent('builder_error', 'warn',
         `${primaryModel} SSL cert error — auto-retrying with ${FALLBACK_MODEL}`,
-        userId, { prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
+        userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
       )
       await new Promise(r => setTimeout(r, 8000)) // wait 8s to clear burst limit
       try {
@@ -211,14 +214,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       } catch (fallbackErr: any) {
         await logEvent('builder_error', 'error',
           `Fallback ${FALLBACK_MODEL} also failed: ${fallbackErr.message}`,
-          userId, { prompt: prompt?.slice(0, 200), error: fallbackErr.message }
+          userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), error: fallbackErr.message, stack: fallbackErr.stack?.slice(0, 500) }
         )
         return res.status(500).json({ error: 'Image generation failed', detail: fallbackErr.message })
       }
     } else {
       await logEvent('builder_error', 'error',
         `Image generation failed [${primaryModel}]: ${primaryErr.message}`,
-        userId, { prompt: prompt?.slice(0, 200), model: primaryModel, error: primaryErr.message }
+        userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), model: primaryModel, error: primaryErr.message, stack: primaryErr.stack?.slice(0, 500) }
       )
       return res.status(500).json({ error: 'Image generation failed', detail: primaryErr.message })
     }
@@ -227,7 +230,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (usedModel !== primaryModel) {
     await logEvent('builder_error', 'warn',
       `Image generated with fallback model ${usedModel} (primary ${primaryModel} had SSL error)`,
-      userId, { prompt: prompt?.slice(0, 200) }
+      userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200) }
     )
   }
 
@@ -245,7 +248,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (uploadError) {
       await logEvent('builder_error', 'warn', `Supabase storage upload failed — using temporary Replicate URL`, userId, {
-        storageError: uploadError.message, fileName,
+        sourceFile: 'pages/api/generate-image.ts', storageError: uploadError.message, fileName,
       })
     } else if (uploadData) {
       const { data: urlData } = supabase.storage.from('images').getPublicUrl(fileName)
@@ -253,7 +256,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } catch (storageErr: any) {
     await logEvent('builder_error', 'warn', `Storage step threw: ${storageErr.message} — using Replicate URL`, userId, {
-      error: storageErr.message,
+      sourceFile: 'pages/api/generate-image.ts', error: storageErr.message, stack: storageErr.stack?.slice(0, 500),
     })
   }
 

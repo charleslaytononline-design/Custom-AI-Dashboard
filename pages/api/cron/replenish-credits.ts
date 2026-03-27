@@ -70,7 +70,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     event_type: 'credits_replenished',
     severity: 'info',
     message: `Monthly credit replenishment complete: ${totalUsersUpdated} users updated`,
-    metadata: { results, timestamp: new Date().toISOString() },
+    metadata: { sourceFile: 'pages/api/cron/replenish-credits.ts', results, timestamp: new Date().toISOString() },
   })
 
   // Update last replenishment timestamp

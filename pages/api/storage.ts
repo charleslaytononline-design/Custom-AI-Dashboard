@@ -84,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         event_type: 'storage_upload',
         severity: 'info',
         message: `File uploaded: ${filePath} (${buffer.length} bytes)`,
-        metadata: { userId: sessionUserId, projectId, filePath, size: buffer.length },
+        metadata: { sourceFile: 'pages/api/storage.ts', userId: sessionUserId, projectId, filePath, size: buffer.length },
       }).then(() => {}, () => {})
 
       return res.status(200).json({ success: true, path: data?.path, publicUrl: urlData?.publicUrl })

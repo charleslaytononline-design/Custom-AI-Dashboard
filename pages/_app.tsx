@@ -12,12 +12,14 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 function flushLogs() {
   if (logQueue.length === 0) return
   const batch = logQueue.splice(0)
-  const body = JSON.stringify(batch.length === 1 ? batch[0] : batch[0]) // send one at a time for API compat
-  // Use sendBeacon for reliability on unload, fetch otherwise
-  if (typeof navigator?.sendBeacon === 'function' && document.visibilityState === 'hidden') {
-    navigator.sendBeacon('/api/log', new Blob([body], { type: 'application/json' }))
-  } else {
-    fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
+  // Send each entry individually for API compat (previous code had a bug that dropped all but the first)
+  for (const entry of batch) {
+    const body = JSON.stringify(entry)
+    if (typeof navigator?.sendBeacon === 'function' && document.visibilityState === 'hidden') {
+      navigator.sendBeacon('/api/log', new Blob([body], { type: 'application/json' }))
+    } else {
+      fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
+    }
   }
   // If more remain in queue (from concurrent adds), schedule another flush
   if (logQueue.length > 0) scheduleFlush()
@@ -50,14 +52,22 @@ export default function App({ Component, pageProps }: AppProps) {
       return true
     }
 
+    // Helper: get current page context for all log entries
+    const getPageContext = () => ({
+      url: window.location.pathname + window.location.search,
+      referrer: document.referrer || undefined,
+    })
+
     // Unhandled JS exceptions
     const onError = (event: ErrorEvent) => {
       const key = `err:${event.message}`
       if (!dedupe(key)) return
-      sendLog('unhandled_error', 'error', event.message, {
+      sendLog('unhandled_error', 'error', event.message?.slice(0, 1000) || 'Unknown error', {
+        ...getPageContext(),
         filename: event.filename,
         line: event.lineno,
         col: event.colno,
+        stack: event.error?.stack?.slice(0, 1000),
       })
     }
 
@@ -66,7 +76,11 @@ export default function App({ Component, pageProps }: AppProps) {
       const msg = event.reason?.message || String(event.reason) || 'Unhandled rejection'
       const key = `rej:${msg}`
       if (!dedupe(key)) return
-      sendLog('unhandled_error', 'error', msg, { stack: event.reason?.stack })
+      sendLog('unhandled_error', 'error', msg.slice(0, 1000), {
+        ...getPageContext(),
+        stack: event.reason?.stack?.slice(0, 1000),
+        type: typeof event.reason === 'object' ? event.reason?.constructor?.name : typeof event.reason,
+      })
     }
 
     // console.error override
@@ -76,7 +90,11 @@ export default function App({ Component, pageProps }: AppProps) {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
       const key = `cerr:${msg.slice(0, 120)}`
       if (dedupe(key)) {
-        sendLog('console_error', 'error', msg.slice(0, 500))
+        const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
+        sendLog('console_error', 'error', msg.slice(0, 1000), {
+          ...getPageContext(),
+          callerStack,
+        })
       }
     }
 
@@ -87,7 +105,11 @@ export default function App({ Component, pageProps }: AppProps) {
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
       const key = `cwarn:${msg.slice(0, 120)}`
       if (dedupe(key)) {
-        sendLog('console_error', 'warn', msg.slice(0, 500))
+        const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
+        sendLog('console_error', 'warn', msg.slice(0, 1000), {
+          ...getPageContext(),
+          callerStack,
+        })
       }
     }
 

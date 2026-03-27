@@ -109,7 +109,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           event_type: 'cron_execution',
           severity: 'info',
           message: `Cron ${job.name} executed for project ${job.project_id}`,
-          metadata: { projectId: job.project_id, userId: job.user_id, jobName: job.name, success: true },
+          metadata: { sourceFile: 'pages/api/cron/run-project-jobs.ts', projectId: job.project_id, userId: job.user_id, jobName: job.name, success: true },
         }).then(() => {}, () => {})
 
       } catch (err: any) {
@@ -126,7 +126,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           event_type: 'cron_execution',
           severity: 'error',
           message: `Cron ${job.name} failed: ${err.message?.slice(0, 200)}`,
-          metadata: { projectId: job.project_id, userId: job.user_id, jobName: job.name, success: false, failures: newFailures },
+          metadata: { sourceFile: 'pages/api/cron/run-project-jobs.ts', projectId: job.project_id, userId: job.user_id, jobName: job.name, success: false, failures: newFailures, stack: err.stack?.slice(0, 500) },
         }).then(() => {}, () => {})
       }
     }

@@ -38,7 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       event_type: 'builder_failed_untracked',
       severity: 'warn',
       message: `Client recorded untracked build failure: ${pageName} (cost: $${cost.toFixed(4)}, continuations: ${continuationCount || 0})`,
-      metadata: { userId, pageName, estimatedCost: cost, continuationCount, errorMessage },
+      metadata: { sourceFile: 'pages/api/record-failed-build.ts', userId, pageName, estimatedCost: cost, continuationCount, errorMessage },
     })
   } catch (err) {
     console.error('Failed to record build failure:', err)

@@ -102,7 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     severity: 'info',
     message: `New signup: ${email}`,
     email,
-    metadata: { userId, emailSent: true },
+    metadata: { sourceFile: 'pages/api/signup.ts', userId, emailSent: true },
   })
 
   return res.json({ ok: true, autoConfirmed: false })

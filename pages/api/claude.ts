@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import Anthropic from '@anthropic-ai/sdk'
+import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 // NOTE: Only React projects are supported. HTML builder (contextManager) was removed.
 import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
@@ -36,8 +37,9 @@ async function log(
   metadata?: Record<string, unknown>
 ) {
   try {
+    const fingerprint = crypto.createHash('md5').update(`${event_type}:${(message || '').slice(0, 100)}`).digest('hex')
     await supabase.from('platform_logs').insert({
-      event_type, severity, message, email: email || null, metadata: metadata || null,
+      event_type, severity, message, email: email || null, metadata: metadata || null, fingerprint,
     })
 
     const { data: setting } = await supabase
@@ -143,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .from('profiles').select('credit_balance, gift_balance, role, email, plan_id').eq('id', userId).single()
 
   if (!profile) {
-    await log('api_error', 'error', `Profile not found for userId: ${userId}`, null, { userId, profileError })
+    await log('api_error', 'error', `Profile not found for userId: ${userId}`, null, { sourceFile: 'pages/api/claude.ts', userId, profileError })
     return res.status(401).json({ error: 'User not found' })
   }
 
@@ -152,7 +154,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Role permission check: can this user build?
   const { data: rolePerms } = await supabase.from('roles').select('can_build').eq('name', profile.role).single()
   if (rolePerms && !rolePerms.can_build) {
-    await log('role_blocked', 'warn', `Build blocked — role "${profile.role}" cannot build`, userEmail, { userId })
+    await log('role_blocked', 'warn', `Build blocked — role "${profile.role}" cannot build`, userEmail, { sourceFile: 'pages/api/claude.ts', userId })
     return res.status(403).json({ error: 'Your account role does not allow building. Contact an administrator.' })
   }
 
@@ -160,7 +162,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const totalBalance = (profile.credit_balance || 0) + (profile.gift_balance || 0)
   if (totalBalance <= 0) {
     await log('credits_error', 'warn', `Build blocked — insufficient credits`, userEmail, {
-      userId, balance: profile.credit_balance, giftBalance: profile.gift_balance, pageName,
+      sourceFile: 'pages/api/claude.ts', userId, balance: profile.credit_balance, giftBalance: profile.gift_balance, pageName,
     })
     return res.status(402).json({
       error: 'insufficient_credits',
@@ -506,7 +508,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const tablesCreated = tableResults.filter(r => r.status === 'fulfilled').length
         for (const r of tableResults) {
           if (r.status === 'rejected') {
-            await log('builder_error', 'warn', `CREATE_TABLE failed: ${r.reason?.message}`, userEmail, { userId, projectId })
+            await log('builder_error', 'warn', `CREATE_TABLE failed: ${r.reason?.message}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId })
           }
         }
 
@@ -533,12 +535,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           try {
             const alterDef = JSON.parse(match[1].trim())
             if (!isValidTableName(alterDef.table)) {
-              await log('builder_security', 'warn', `ALTER_TABLE blocked: invalid table name`, userEmail, { userId, projectId })
+              await log('builder_security', 'warn', `ALTER_TABLE blocked: invalid table name`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId })
               continue
             }
             const validation = validateAlterOps(alterDef.operations)
             if (!validation.valid) {
-              await log('builder_security', 'warn', `ALTER_TABLE blocked: ${validation.error}`, userEmail, { userId, projectId })
+              await log('builder_security', 'warn', `ALTER_TABLE blocked: ${validation.error}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId })
               continue
             }
             await clientsDb.rpc('alter_project_table', {
@@ -549,7 +551,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             sendSSE({ type: 'status', text: `Altered table ${alterDef.table}` })
             await log('db_alter_table', 'info', `ALTER TABLE ${alterDef.table}`, userEmail, { userId, projectId, operations: alterDef.operations })
           } catch (err: any) {
-            await log('builder_error', 'warn', `ALTER_TABLE failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+            await log('builder_error', 'warn', `ALTER_TABLE failed: ${sanitizeError(err)}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, stack: err.stack?.slice(0, 500) })
           }
         }
       })())
@@ -576,7 +578,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             sendSSE({ type: 'status', text: `Enabled RLS on ${op.table}` })
             await log('db_enable_rls', 'info', `RLS enabled on ${op.table}`, userEmail, { userId, projectId, table: op.table, column: op.column })
           } catch (err: any) {
-            await log('builder_error', 'warn', `ENABLE_RLS failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+            await log('builder_error', 'warn', `ENABLE_RLS failed: ${sanitizeError(err)}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, stack: err.stack?.slice(0, 500) })
           }
         }
       })())
@@ -595,7 +597,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             sendSSE({ type: 'status', text: `Enabled realtime on ${table}` })
             await log('db_enable_realtime', 'info', `Realtime enabled on ${table}`, userEmail, { userId, projectId, table })
           } catch (err: any) {
-            await log('builder_error', 'warn', `ENABLE_REALTIME failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+            await log('builder_error', 'warn', `ENABLE_REALTIME failed: ${sanitizeError(err)}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, stack: err.stack?.slice(0, 500) })
           }
         }
       })())
@@ -609,7 +611,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           sendSSE({ type: 'status', text: 'Storage bucket created' })
           await log('db_setup_storage', 'info', `Storage bucket created`, userEmail, { userId, projectId })
         } catch (err: any) {
-          await log('builder_error', 'warn', `SETUP_STORAGE failed: ${sanitizeError(err)}`, userEmail, { userId, projectId })
+          await log('builder_error', 'warn', `SETUP_STORAGE failed: ${sanitizeError(err)}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, stack: err.stack?.slice(0, 500) })
         }
       })())
     }
@@ -629,7 +631,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     })
     if (!deducted) {
       await log('credits_error', 'warn', `deduct_credits failed after build`, userEmail, {
-        userId, pageName, userCharge, totalTokens,
+        sourceFile: 'pages/api/claude.ts', userId, pageName, userCharge, totalTokens,
       })
       sendSSE({ type: 'error', error: 'insufficient_credits', message: 'Not enough credits.' })
       clearInterval(heartbeat)
@@ -720,7 +722,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const opPath = fileOpMatch[2]
         // SECURITY: validate file path before accepting
         if (!isValidFilePath(opPath)) {
-          await log('builder_security', 'warn', `FILE_OP blocked: invalid path "${opPath}"`, userEmail, { userId, projectId, path: opPath })
+          await log('builder_security', 'warn', `FILE_OP blocked: invalid path "${opPath}"`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, path: opPath })
           continue
         }
         parsedOps.push({ action: fileOpMatch[1].toLowerCase(), path: opPath, content: fileOpMatch[3]?.trim() || '' })
@@ -751,7 +753,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: op.content ?? null })
         } else if (result.status === 'rejected') {
           const op = parsedOps[i]
-          await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { userId, projectId, filePath: op.path })
+          await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, filePath: op.path, stack: result.reason?.stack?.slice(0, 500) })
         }
       }
 
@@ -830,14 +832,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const elapsedSec = ((Date.now() - handlerStart) / 1000).toFixed(1)
     await log('api_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, null, {
+      sourceFile: 'pages/api/claude.ts',
       userId,
       pageName,
+      userPrompt: userPrompt?.slice(0, 500),
       error: errMsg,
       elapsedSeconds: elapsedSec,
-      stack: err.stack?.slice(0, 500),
+      stack: err.stack?.slice(0, 1000),
       imagesRequested: imagePrompts?.length || 0,
       rawChars: (raw || '').length,
       continuationCount,
+      isAutoFix,
+      retryCount,
+      projectId,
     })
 
     // Record failed API cost in transactions so admin can see the loss
