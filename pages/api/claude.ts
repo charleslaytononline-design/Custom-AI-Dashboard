@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
-import { buildPageContext, compactHistory } from '../../lib/contextManager'
+// NOTE: Only React projects are supported. HTML builder (contextManager) was removed.
 import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
@@ -193,49 +193,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const lastUserMsg = messages[messages.length - 1]?.content || ''
   const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
 
-  // Detect project type
-  let projectType = 'html'
+  // NOTE: Only React projects are supported. HTML builder was removed.
+  const projectType = 'react'
   let projectName = ''
-  let layoutCode: string | null = null
   let dbProvider: string | null = null
   if (projectId) {
-    const { data: proj } = await supabase.from('projects').select('layout_code, project_type, name, db_provider').eq('id', projectId).eq('user_id', userId).single()
-    projectType = proj?.project_type || 'html'
+    const { data: proj } = await supabase.from('projects').select('name, db_provider').eq('id', projectId).eq('user_id', userId).single()
     projectName = proj?.name || ''
-    layoutCode = proj?.layout_code || null
     dbProvider = proj?.db_provider || null
   }
 
-  // For React projects, load project files and build context differently
+  // Load project files for React context
   let reactFiles: any[] = []
-  if (projectType === 'react' && projectId) {
+  if (projectId) {
     reactFiles = await loadProjectFiles(projectId, supabase)
   }
 
-  // HTML-specific context (only for html projects)
-  const pageContext = projectType === 'html' ? buildPageContext(
-    { name: pageName || 'Page', code: pageCode || '' },
-    (allPages || []).map((p: any) => ({ name: p.name, code: p.code || '' })),
-    userPrompt,
-  ) : ''
-  const pageList = allPages ? allPages.map((p: any) => p.name).join(', ') : 'none'
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://login.customaidashboard.com'
-
-  const hasLayout = projectType === 'html' && !!layoutCode
-
-  // Build system prompt based on project type
-  let system: string
-  if (projectType === 'react') {
-    // React project prompt
-    const activeFile = req.body.activeFilePath || null
-    if (planOnly) {
-      system = buildReactPlanPrompt({
+  // Build system prompt
+  const activeFile = req.body.activeFilePath || null
+  const system = planOnly
+    ? buildReactPlanPrompt({
         projectName,
         allFiles: reactFiles,
         hasClientsDb: !!clientsDb,
       })
-    } else {
-      system = buildReactSystemPrompt({
+    : buildReactSystemPrompt({
         projectName,
         projectId: projectId || '',
         allFiles: reactFiles,
@@ -244,183 +226,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         maxImagesPerBuild: settings.maxImagesPerBuild,
         hasClientsDb: !!clientsDb,
       })
-    }
-  } else if (planOnly) {
-    system = `You are an AI app builder. The user wants to build something on a page called "${pageName}".
-
-CRITICAL: You are in PLAN MODE. You must ONLY output a plain-text bullet-point plan.
-- Do NOT output any code, HTML, CSS, JavaScript, or JSX
-- Do NOT output <CODE>, <MESSAGE>, <GENERATE_IMAGE>, <CREATE_TABLE>, <SHARED_CODE>, or any XML/HTML tags
-- Do NOT output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here
-- Even if the user provides a screenshot or image, ONLY describe what you WILL build — do NOT build it yet
-
-Write a clear bullet-point plan of what you will build. Max 8 bullet points.
-Keep plans realistic — the builder can output ~8,000 tokens of HTML per build. Plan 4-6 focused sections maximum, not 10+. Prioritize core content and functionality over decorative extras.
-If the request involves multiple pages, list which pages you'll create and what each contains.
-Respond in plain text only — your entire response must be readable markdown bullet points.`
-  } else {
-    system = `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
-
-${pageContext}
-${hasLayout ? `PROJECT HAS SHARED LAYOUT: Yes (sidebar + topbar are provided automatically)` : `PROJECT HAS SHARED LAYOUT: No (this is a new project or legacy project)`}
-
-CURRENT PAGE CODE:
-\`\`\`html
-${pageCode || '<!-- empty page -->'}
-\`\`\`
-${hasLayout ? `
-CURRENT LAYOUT:
-\`\`\`html
-${layoutCode}
-\`\`\`` : ''}
-
-MULTI-PAGE APP SYSTEM:
-This builder supports real multi-page apps. Each page in the project is a separate file with its own code.
-A shared LAYOUT (sidebar + topbar) is stored at the project level and automatically wraps every page.
-
-PAGE CREATION — to create new pages, output <CREATE_PAGE> tags BEFORE the CODE block:
-<CREATE_PAGE>Dashboard</CREATE_PAGE>
-<CREATE_PAGE>Leads</CREATE_PAGE>
-<CREATE_PAGE>Settings</CREATE_PAGE>
-Create pages when the user asks for a multi-page app or when features need their own page.
-The current build will apply to the CURRENT PAGE ("${pageName}"). Other new pages start empty.
-
-LAYOUT — to create or update the shared sidebar/topbar, output a <LAYOUT> tag BEFORE the CODE block:
-<LAYOUT>
-<aside class="fixed left-0 top-0 h-screen w-56 bg-[#0f0f0f] border-r border-white/[0.06] flex flex-col z-40">
-  <div class="p-4 border-b border-white/[0.06] flex items-center gap-2.5">
-    <div class="w-8 h-8 rounded-lg bg-brand flex items-center justify-center text-white text-xs font-bold">AI</div>
-    <span class="text-white font-semibold text-sm">App Name</span>
-  </div>
-  <nav class="flex-1 p-2 space-y-0.5">
-    <a data-page="Dashboard" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer text-gray-400 hover:text-white hover:bg-white/5 transition-all">
-      <i class="fa-solid fa-gauge w-4 text-center text-xs"></i><span>Dashboard</span>
-    </a>
-    <a data-page="Leads" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm cursor-pointer text-gray-400 hover:text-white hover:bg-white/5 transition-all">
-      <i class="fa-solid fa-users w-4 text-center text-xs"></i><span>Leads</span>
-    </a>
-  </nav>
-</aside>
-<header class="fixed top-0 left-56 right-0 h-14 bg-[#0a0a0a] border-b border-white/[0.06] flex items-center justify-between px-6 z-30">
-  <h1 class="text-white font-medium text-sm">${pageName}</h1>
-</header>
-</LAYOUT>
-
-LAYOUT RULES:
-- Use data-page="PageName" on nav links — the platform handles page switching automatically
-- Do NOT use href for page links. data-page triggers real page navigation.
-- Include an icon (Font Awesome) + label for each nav item
-- The layout is injected automatically — do NOT include sidebar/topbar in your CODE block
-- ${hasLayout ? 'A layout already exists. Only output <LAYOUT> if the user asks to change navigation or add pages.' : 'This project has no layout yet. Generate a <LAYOUT> tag on this first build.'}
-
-IMAGE GENERATION CAPABILITY:
-Generate up to ${settings.maxImagesPerBuild} real AI images per build using Flux. Output BEFORE the CODE block:
-<GENERATE_IMAGE>prompt for image 1</GENERATE_IMAGE>
-<GENERATE_IMAGE>prompt for image 2</GENERATE_IMAGE>
-In CODE, reference images by number:
-<img src="__GENERATED_IMAGE_1__" alt="description" class="..." />
-<img src="__GENERATED_IMAGE_2__" alt="description" class="..." />
-You can also use __GENERATED_IMAGE_URL__ as shorthand for the first image.
-IMPORTANT: Only use __GENERATED_IMAGE_N__ placeholders when you also output a matching <GENERATE_IMAGE> tag. For showcase galleries, app screenshots, or decorative images where AI generation isn't needed, use CSS gradients, SVG illustrations, or Font Awesome icons instead.
-
-CRITICAL IMAGE PROMPT RULES:
-- The image prompt MUST describe exactly what the user asked for. If they say "a fluffy dog", the prompt MUST be about a fluffy dog — never something else.
-- Be extremely specific and literal: subject, setting, lighting, style, colors, mood, camera angle.
-- Always include quality modifiers: "high quality, professional, detailed, 8k, sharp focus"
-- For photos: add "professional photography, studio lighting, shallow depth of field"
-- For illustrations: add "digital illustration, vibrant colors, clean lines"
-- NEVER creatively reinterpret the user's request into a different subject. Match their description exactly.
-- Maximum ${settings.maxImagesPerBuild} images per build — if more are needed, use CSS/icon placeholders for the rest.
-
-DATABASE CAPABILITY:
-Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the CODE block:
-<CREATE_TABLE>
-{"name":"table_name","columns":[
-  {"name":"id","type":"uuid","primaryKey":true},
-  {"name":"field_name","type":"text"},
-  {"name":"tags","type":"text[]"},
-  {"name":"created_at","type":"timestamptz","default":"now()"}
-]}
-</CREATE_TABLE>
-
-Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
-Rules: Always include id (uuid, primaryKey) + created_at (timestamptz, default now()). Use text[] for arrays, jsonb for nested data.
-Default values MUST be single-quoted for strings: "default":"'pending'" (NOT "default":"pending"). Allowed defaults: 'string', now(), gen_random_uuid(), true, false, 0.
-
-PLATFORM HELPERS (auto-included on every page):
-The following functions are automatically available on every page. Do NOT re-declare them in your CODE:
-- dbQuery(table, action, data) — database CRUD (select, insert, update, delete). Returns {data, error}.
-- serverRun(functionName, params) — call server-side functions (future feature)
-- sendEmail(to, subject, html) — send emails (future feature)
-- PROJECT_ID — the current project ID constant (auto-set)
-
-DATABASE USAGE:
-In your CODE, just call dbQuery directly — it is already available, do NOT redeclare it:
-  const {data} = await dbQuery('leads', 'select')
-  await dbQuery('leads', 'insert', {name: 'John', email: 'john@test.com'})
-  await dbQuery('leads', 'update', {id: '...', name: 'Jane'})
-  await dbQuery('leads', 'delete', {id: '...'})
-Use real DB for: forms, CRM records, orders. Use localStorage for: UI state, config, display preferences.
-
-SHARED CODE:
-To define utility functions shared across ALL pages in this project, output a <SHARED_CODE> tag BEFORE CODE:
-<SHARED_CODE>
-function formatCurrency(a){return '$'+Number(a).toFixed(2)}
-function formatDate(d){return new Date(d).toLocaleDateString()}
-</SHARED_CODE>
-These functions are auto-included on every page via a shared script. Only output <SHARED_CODE> when:
-- This is the first build and you need shared utilities
-- The user explicitly asks to add/change shared functions
-Do NOT re-output <SHARED_CODE> on every build — it persists across builds.
-
-RESPONSE FORMAT:
-Output special tags first (<CREATE_PAGE>, <LAYOUT>, <CREATE_TABLE>, <GENERATE_IMAGE>, <SHARED_CODE>) then:
-<MESSAGE>Brief description of what you built</MESSAGE>
-<CODE>
-${hasLayout ? '<!-- Page content only — layout is automatic -->' : '<!DOCTYPE html>\\n... complete HTML page ...\\n</html>'}
-</CODE>
-
-${hasLayout ? `IMPORTANT — CONTENT-ONLY MODE:
-Since this project has a shared layout, your CODE block should contain ONLY the page content.
-Do NOT include <!DOCTYPE html>, <html>, <head>, <body>, sidebar, or topbar.
-The layout wraps your content automatically inside <main class="ml-56 mt-14 min-h-screen">.
-Your CODE starts directly with the page content (divs, sections, etc).
-Include <script> tags for Alpine.js data and dbQuery if needed.` : `FULL PAGE MODE:
-This project has no layout yet. Output a complete <!DOCTYPE html> document.
-Include all CDN scripts in <head>. Include sidebar and topbar in <body>.
-STACK — always include:
-<script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{brand:{DEFAULT:'#7c6ef7',dark:'#5b50d6'}}}}}</script>
-<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">`}
-
-DESIGN SYSTEM:
-- Page bg: #0a0a0a | Cards: bg-[#141414] border border-white/[0.06] rounded-xl p-5
-- Buttons: bg-brand hover:bg-brand-dark text-white rounded-lg px-4 py-2 text-sm font-medium
-- Inputs: bg-[#1e1e1e] border border-white/[0.08] rounded-lg px-3 py-2 text-white text-sm
-- Tables: bg-[#141414] border border-white/[0.06] rounded-xl overflow-hidden
-- Badges: bg-emerald-500/10 text-emerald-400 (green) | bg-red-500/10 text-red-400 (red) | bg-amber-500/10 text-amber-400 (yellow)
-- Empty states: centered icon + message + action button
-- Loading: skeleton with animate-pulse bg-white/5
-- Use Alpine.js x-data for page state, Alpine.store for shared app state
-
-RULES:
-- Output ONLY the XML format — nothing before tags or after CODE closing tag
-- Use Tailwind classes only — no inline styles
-- Every button must be functional
-- Keep ALL existing features when updating
-- CRITICAL: Keep HTML output under 8,000 tokens. You have ~45 seconds of generation time — be concise.
-- Write concise clean code. No comments, no lorem ipsum, no verbose spacing.
-- Build core functionality first — skip decorative extras on large requests.
-- Prioritize finishing over perfection. A complete 5-section page beats an incomplete 10-section page.
-- For landing/marketing pages without a shared layout, always include a sticky top navigation bar with site name and anchor links to the main sections (e.g., #features, #pricing, #faq). Use smooth scrolling with scroll-behavior:smooth on html.`
-  } // end project type branching
 
   // Inject AI training rules from database
   const userMsg = messages[messages.length - 1]?.content || ''
   const trainingRules = await getTrainingRules(typeof userMsg === 'string' ? userMsg : '')
   const autoFixAddendum = isAutoFix
-    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors in the current page code. Fix ONLY the bug — do not redesign, restructure, or add new features. Return the complete fixed page code in <CODE> tags and a brief description of the fix in <MESSAGE> tags. Keep changes minimal — change as few lines as possible.`
+    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors. Fix ONLY the bug — do not redesign, restructure, or add new features. Use FILE_OP tags to edit the affected file(s). Keep changes minimal — change as few lines as possible.`
     : ''
   const systemWithTraining = system + trainingRules + autoFixAddendum
 
@@ -449,17 +260,11 @@ RULES:
 
     // For continuations, override the last message to ask Claude to finish where it left off
     if (isContinuation && partialRaw) {
-      if (projectType === 'react') {
-        lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any FILE_OP tags already generated. Complete the current FILE_OP if it was cut off, then output remaining FILE_OPs. Close all open tags. You must finish within this response.`
-      } else {
-        lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any code. WRAP UP CONCISELY — close remaining sections with minimal content, close all open HTML tags, and include </CODE> at the end. You must finish within this response. Do not add new sections — just complete what you started.`
-      }
+      lastContent = `Your previous response was cut off due to a time limit. Here is what you generated so far:\n\n\`\`\`\n${partialRaw}\n\`\`\`\n\nContinue EXACTLY where you left off. Do NOT restart from the beginning. Do NOT repeat any FILE_OP tags already generated. Complete the current FILE_OP if it was cut off, then output remaining FILE_OPs. Close all open tags. You must finish within this response.`
     }
 
     const rawHistory = messages.slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
-    const { summary, recentMessages } = projectType === 'react'
-      ? compactReactHistory(rawHistory, 4)
-      : compactHistory(rawHistory, 4)
+    const { summary, recentMessages } = compactReactHistory(rawHistory, 4)
     const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
     const safeHistory = firstUserIdx > 0 ? recentMessages.slice(firstUserIdx) : recentMessages
 
@@ -645,21 +450,6 @@ RULES:
     // Parse SETUP_STORAGE tags
     const setupStorage = /<SETUP_STORAGE\s*\/>/.test(raw)
 
-    const layoutMatch = raw.match(/<LAYOUT>([\s\S]*?)<\/LAYOUT>/i)
-
-    const pageRegex = /<CREATE_PAGE>([\s\S]*?)<\/CREATE_PAGE>/gi
-    const newPages: string[] = []
-    let pageMatch: RegExpExecArray | null
-    while ((pageMatch = pageRegex.exec(raw)) !== null) {
-      const newPageName = pageMatch[1].trim()
-      if (!newPageName) continue
-      const existingNames = (allPages || []).map((p: any) => p.name.toLowerCase())
-      if (existingNames.includes(newPageName.toLowerCase())) continue
-      if (newPageName.toLowerCase() === (pageName || '').toLowerCase()) continue
-      newPages.push(newPageName)
-    }
-
-    const sharedCodeMatch = raw.match(/<SHARED_CODE>([\s\S]*?)<\/SHARED_CODE>/i)
 
     // Run all independent post-processing tasks in parallel
     const postTasks: Promise<void>[] = []
@@ -824,50 +614,9 @@ RULES:
       })())
     }
 
-    // Task: Save layout
-    if (layoutMatch && projectId && !planOnly) {
-      postTasks.push((async () => {
-        const newLayout = layoutMatch[1].trim()
-        await supabase.from('projects').update({ layout_code: newLayout }).eq('id', projectId)
-      })())
-    }
-
-    // Task: Create new pages (all in parallel)
-    if (newPages.length > 0 && projectId && !planOnly) {
-      postTasks.push((async () => {
-        await Promise.allSettled(newPages.map(name =>
-          supabase.from('pages').insert({ project_id: projectId, user_id: userId, name, code: `<!-- Page: ${name} — build this page next -->` })
-        ))
-      })())
-    }
-
-    // Task: Save shared code
-    if (sharedCodeMatch && projectId && !planOnly) {
-      postTasks.push((async () => {
-        const newSharedCode = sharedCodeMatch[1].trim()
-        const { data: existing } = await supabase.from('project_shared_code').select('id').eq('project_id', projectId).single()
-        if (existing) {
-          await supabase.from('project_shared_code').update({ code: newSharedCode, updated_at: new Date().toISOString() }).eq('project_id', projectId)
-        } else {
-          await supabase.from('project_shared_code').insert({ project_id: projectId, user_id: userId, code: newSharedCode })
-        }
-      })())
-    }
 
     // Wait for all post-processing to complete
     await Promise.allSettled(postTasks)
-
-    const imagePlaceholder = 'https://placehold.co/1024x768/141414/444444?text=Loading+image...'
-
-    // Replace image placeholders with loading placeholders (frontend will replace with real URLs after build)
-    const replaceImagePlaceholders = (html: string): string => {
-      html = html.replace(/__GENERATED_IMAGE_URL__/g, imagePlaceholder)
-      // Keep numbered placeholders distinct so frontend can replace each individually
-      html = html.replace(/__GENERATED_IMAGE_(\d+)__/g, (_, n) =>
-        `https://placehold.co/1024x768/141414/444444?text=Loading+image+${n}...`
-      )
-      return html
-    }
 
     // Deduct credits from everyone including admin (includes accumulated costs from continuations)
     const buildDesc = continuationCount > 0 ? `AI build: ${pageName} (continued ${continuationCount}x)` : `AI build: ${pageName}`
@@ -891,9 +640,8 @@ RULES:
     // Parse response — for continuations, prepend prior parts so extraction sees the full output
     const fullRaw = (isContinuation && partialRaw) ? partialRaw + raw : raw
     let message = 'Done!'
-    let code: string | null = null
 
-    // Track file operations for React projects
+    // Track file operations
     const fileOpsApplied: Array<{ action: string; path: string }> = []
 
     if (planOnly) {
@@ -1012,88 +760,6 @@ RULES:
       } else if (fileOpsApplied.length > 0) {
         message = message || `Updated ${fileOpsApplied.length} file(s)`
       }
-      // code stays null for React projects (files are stored individually)
-    } else {
-      // --- HTML PROJECT: Parse CODE tags (existing logic) ---
-      const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
-      const codeMatch = fullRaw.match(/<CODE>([\s\S]*?)<\/CODE>/)
-
-      if (messageMatch && codeMatch) {
-        message = messageMatch[1].trim()
-        code = codeMatch[1].trim()
-        if (code) code = replaceImagePlaceholders(code)
-        if (code && projectId) {
-          code = code.replace(/__PROJECT_ID__/g, projectId)
-        }
-      } else {
-        const htmlMatch = fullRaw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
-        if (htmlMatch) {
-          code = htmlMatch[0]
-        } else {
-          const mdMatch = fullRaw.match(/```(?:html)?\s*\n([\s\S]*?)\n```/)
-          if (mdMatch) code = mdMatch[1]
-        }
-        if (code) code = replaceImagePlaceholders(code)
-        if (code && projectId) {
-          code = code.replace(/__PROJECT_ID__/g, projectId)
-        }
-
-        if (!code) {
-          // Auto-retry once on max_tokens truncation
-          if (stopReason === 'max_tokens' && retryCount < 1 && !planOnly) {
-            sendSSE({ type: 'status', text: 'Response was truncated. Retrying with simpler output...' })
-            await log('builder_retry', 'info', `Auto-retrying after max_tokens truncation`, userEmail, { userId, pageName, retryCount })
-
-            const retryStream = client.messages.stream({
-              model: settings.chatModel,
-              max_tokens: 16000,
-              system: systemWithTraining + '\n\nIMPORTANT: Your previous response was truncated because it was too long. Generate a SIMPLER, MORE CONCISE version. Reduce the number of sections, use fewer elements, and keep HTML under 6000 tokens. Focus on core functionality only.',
-              messages: apiMessages,
-            })
-
-            let retryRaw = ''
-            retryStream.on('text', (text) => {
-              retryRaw += text
-              sendSSE({ type: 'delta', text })
-            })
-
-            await retryStream.finalMessage()
-            const retryCodeMatch = retryRaw.match(/<CODE>([\s\S]*?)<\/CODE>/)
-            const retryHtmlMatch = retryRaw.match(/<!DOCTYPE html[\s\S]*?<\/html>/i)
-            if (retryCodeMatch) {
-              code = retryCodeMatch[1].trim()
-              const retryMsgMatch = retryRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)
-              message = retryMsgMatch ? retryMsgMatch[1].trim() : 'Done! (simplified version)'
-            } else if (retryHtmlMatch) {
-              code = retryHtmlMatch[0]
-              message = 'Done! Your page has been updated (simplified version).'
-            }
-            if (code) code = replaceImagePlaceholders(code)
-            if (code && projectId) {
-              code = code.replace(/__PROJECT_ID__/g, projectId)
-            }
-          }
-
-          if (!code) {
-            await log('builder_error', 'error',
-              `Claude response could not be parsed into HTML (stop_reason: ${stopReason})`,
-              userEmail, {
-                userId,
-                pageName,
-                stop_reason: stopReason,
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                raw_preview: raw.slice(0, 800),
-              }
-            )
-            message = stopReason === 'max_tokens'
-              ? 'The page was too complex to generate in one shot. Try asking for fewer sections at once, or break it into multiple builds.'
-              : 'Something went wrong generating the page. Please try again.'
-          }
-        } else {
-          message = code ? 'Done! Your page has been updated.' : message
-        }
-      }
     }
 
     const { data: updatedProfile } = await supabase
@@ -1119,16 +785,12 @@ RULES:
       message: trimmedImagePrompts.length > 0
         ? message + ` (${trimmedImagePrompts.length} image${trimmedImagePrompts.length > 1 ? 's' : ''} generating...)`
         : message,
-      code,
       imagePrompts: trimmedImagePrompts, // frontend generates images after build
       tokensUsed: totalTokens,
       apiCost,
       userCharge,
       newBalance: (updatedProfile?.credit_balance || 0) + (updatedProfile?.gift_balance || 0),
-      layoutUpdated: projectType === 'html' ? !!layoutMatch : false,
-      pagesCreated: projectType === 'html' ? newPages : [],
-      // React-specific fields
-      fileOps: projectType === 'react' ? fileOpsApplied : undefined,
+      fileOps: fileOpsApplied,
       projectType,
     })
     clearInterval(heartbeat)

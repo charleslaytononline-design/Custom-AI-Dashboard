@@ -15,7 +15,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const sessionUserId = await getAuthUser(req, res)
   if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
 
-  const { name, description, projectType = 'react' } = req.body
+  const { name, description } = req.body
+  const projectType = 'react' // Only React projects are supported
   const userId = sessionUserId
   if (!name?.trim()) {
     return res.status(400).json({ error: 'Missing name' })

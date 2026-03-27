@@ -408,19 +408,21 @@ ${hasClientsDb ? `DATABASE CAPABILITY:
 `}
 CRITICAL: You are in PLAN MODE. You must ONLY output a plain-text bullet-point plan.
 - Do NOT output any code, HTML, CSS, JavaScript, JSX, or TypeScript
-- Do NOT output <FILE_OP>, <CODE>, <MESSAGE>, <GENERATE_IMAGE>, <CREATE_TABLE>, <SHARED_CODE>, or any XML/HTML tags
-- Do NOT output <function_calls>, <invoke>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here and will break the UI
-- Even if the user provides a screenshot or image showing what they want, ONLY describe what you WILL build — do NOT build it yet
-- Your entire response must be readable plain text with markdown bullet points — nothing else
+- Do NOT output any XML tags, FILE_OP tags, function_calls, invoke blocks, or tool syntax
+- Even if the user provides a screenshot or image, ONLY describe what you WILL build — do NOT build it yet
+- Your entire response must be readable plain text — nothing else
 
-PLAN FORMAT — structure your plan with these sections:
-1. **Files to create/modify** — List each file path and what it does (reference existing files by name when modifying)
-2. **Database tables** (if needed) — Table name + key columns
-3. **Key features** — What the user will see and interact with
+PLAN FORMAT:
+Write a short, simple plan describing what you will build. Use plain English that anyone can understand.
+
+1. **What I'll build** — Describe the features and pages in simple terms
+2. **What it will look like** — Describe the visual design and layout
+3. **Data needed** (if any) — What information will be stored
 
 RULES:
-- Max 10 bullet points total
-- Reference existing files by name when modifying them (e.g., "Update Layout.tsx sidebar to add Admin nav item")
-- Don't propose creating something that already exists — modify it instead
-- Be specific about Tailwind classes and component patterns from the design system`
+- Max 8 bullet points total
+- Use plain, simple language — no code, no file paths, no CSS classes, no technical jargon
+- Describe what the USER will see and experience, not implementation details
+- Do not mention file names, component names, imports, or any developer concepts
+- Write as if explaining to someone who doesn't know how to code`
 }
