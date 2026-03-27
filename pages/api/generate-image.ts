@@ -8,7 +8,7 @@ const supabase = createClient(
 )
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 120,
 }
 
 const FALLBACK_MODEL = 'black-forest-labs/flux-1.1-pro'
@@ -67,7 +67,7 @@ async function runPrediction(model: string, prompt: string): Promise<string> {
       headers: {
         Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         'Content-Type': 'application/json',
-        'Prefer': 'wait=60',
+        'Prefer': 'wait=110',
       },
       body: JSON.stringify({
         input: {

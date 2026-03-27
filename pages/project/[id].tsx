@@ -533,6 +533,10 @@ export default function ProjectBuilder() {
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ prompt: prompts[i] }),
                         })
+                        if (!imgRes.ok) {
+                          const errBody = await imgRes.text()
+                          throw new Error(`Image API returned ${imgRes.status}: ${errBody}`)
+                        }
                         const imgData = await imgRes.json()
                         if (imgData.url) {
                           // Build placeholder URL that matches what the backend inserted
@@ -584,8 +588,8 @@ export default function ProjectBuilder() {
                           // Update credit balance if returned
                           if (imgData.newBalance !== undefined) setCreditBalance(imgData.newBalance)
                         }
-                      } catch (err) {
-                        console.error(`Image ${i + 1} generation failed:`, err)
+                      } catch (err: any) {
+                        console.error(`Image ${i + 1} generation failed:`, err?.message || String(err))
                       }
                     }
                     setBuildStatus(null)
