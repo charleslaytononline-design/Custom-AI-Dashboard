@@ -555,6 +555,8 @@ export default function ProjectBuilder() {
                             if (i === 0) {
                               updated = updated.split(placeholder).join(imgData.url)
                             }
+                            // Replace __GENERATED_IMAGE_X__ placeholder
+                            updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(imgData.url)
                             if (updated !== file.content) {
                               await supabase
                                 .from('project_files')
@@ -571,6 +573,8 @@ export default function ProjectBuilder() {
                             if (i === 0) {
                               updated = updated.split(placeholder).join(imgData.url)
                             }
+                            // Replace __GENERATED_IMAGE_X__ placeholder
+                            updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(imgData.url)
                             return updated !== f.content ? { ...f, content: updated } : f
                           }))
 
