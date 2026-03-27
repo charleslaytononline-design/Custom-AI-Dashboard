@@ -247,10 +247,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } else if (planOnly) {
     system = `You are an AI app builder. The user wants to build something on a page called "${pageName}".
-Write a clear bullet-point plan of what you will build. No code. Max 8 bullet points.
-IMPORTANT: Keep plans realistic — the builder can output ~8,000 tokens of HTML per build. Plan 4-6 focused sections maximum, not 10+. Prioritize core content and functionality over decorative extras. A concise, well-built page is better than an ambitious one that times out.
+
+CRITICAL: You are in PLAN MODE. You must ONLY output a plain-text bullet-point plan.
+- Do NOT output any code, HTML, CSS, JavaScript, or JSX
+- Do NOT output <CODE>, <MESSAGE>, <GENERATE_IMAGE>, <CREATE_TABLE>, <SHARED_CODE>, or any XML/HTML tags
+- Do NOT output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here
+- Even if the user provides a screenshot or image, ONLY describe what you WILL build — do NOT build it yet
+
+Write a clear bullet-point plan of what you will build. Max 8 bullet points.
+Keep plans realistic — the builder can output ~8,000 tokens of HTML per build. Plan 4-6 focused sections maximum, not 10+. Prioritize core content and functionality over decorative extras.
 If the request involves multiple pages, list which pages you'll create and what each contains.
-Respond in plain text only.`
+Respond in plain text only — your entire response must be readable markdown bullet points.`
   } else {
     system = `You are an expert UI engineer inside "Custom AI Dashboard" — a professional AI app builder like Lovable.
 
@@ -886,7 +893,19 @@ RULES:
     const fileOpsApplied: Array<{ action: string; path: string }> = []
 
     if (planOnly) {
+      // Strip any code/XML tags Claude may have outputted despite plan-mode instructions
       message = fullRaw
+        .replace(/<FILE_OP[\s\S]*?<\/FILE_OP>/gi, '')
+        .replace(/<CODE>[\s\S]*?<\/CODE>/gi, '')
+        .replace(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/gi, '$1')
+        .replace(/<GENERATE_IMAGE>[\s\S]*?<\/GENERATE_IMAGE>/gi, '')
+        .replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '')
+        .replace(/<CREATE_TABLE>[\s\S]*?<\/CREATE_TABLE>/gi, '')
+        .replace(/<SHARED_CODE>[\s\S]*?<\/SHARED_CODE>/gi, '')
+        .replace(/<ADD_PACKAGE[^>]*\/>/gi, '')
+        .replace(/<CREATE_PAGE[^>]*\/>/gi, '')
+        .replace(/<LAYOUT>[\s\S]*?<\/LAYOUT>/gi, '')
+        .trim()
     } else if (projectType === 'react') {
       // --- REACT PROJECT: Parse FILE_OP tags and apply to project_files ---
       const messageMatch = fullRaw.match(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/)

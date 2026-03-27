@@ -68,6 +68,7 @@ export default function ProjectBuilder() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const streamingTextRef = useRef('')
 
 
   // Auth
@@ -341,6 +342,12 @@ export default function ProjectBuilder() {
       }
       preBuiltFilesRef.current = preMap
 
+      // For plan mode, add a streaming message that updates live as text arrives
+      if (planOnly) {
+        streamingTextRef.current = ''
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }])
+      }
+
       // Stream a single build call and return continuation data if the server signals one
       const streamBuild = async (extraBody: Record<string, unknown> = {}): Promise<{ continuation?: { partialRaw: string; continuationCount: number; accumulatedApiCost: number } }> => {
         const res = await fetch('/api/claude', {
@@ -387,6 +394,17 @@ export default function ProjectBuilder() {
                 const sizeLabel = deltaCharCount > 1000 ? `${(deltaCharCount / 1000).toFixed(1)}K` : `${deltaCharCount}`
                 const genLabel = planOnly ? 'Generating plan' : 'Generating code'
                 setBuildStatus(`${genLabel}... ${sizeLabel} chars (${elapsed}s)`)
+
+                // Stream text into chat message for plan mode
+                if (planOnly) {
+                  streamingTextRef.current += event.text || ''
+                  const streamedContent = streamingTextRef.current
+                  setMessages(prev => {
+                    const updated = [...prev]
+                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamedContent }
+                    return updated
+                  })
+                }
               } else if (event.type === 'status') {
                 setBuildStatus(event.text)
               } else if (event.type === 'file_op') {
@@ -461,7 +479,12 @@ export default function ProjectBuilder() {
 
                 if (planOnly && event.message) {
                   setPendingPlan(event.message)
-                  setMessages(prev => [...prev, { role: 'assistant', content: event.message, isPlan: true }])
+                  // Replace the streaming message with the final plan (server-sanitized)
+                  setMessages(prev => {
+                    const updated = [...prev]
+                    updated[updated.length - 1] = { role: 'assistant', content: event.message, isPlan: true }
+                    return updated
+                  })
                   saveChatMessage('assistant', event.message, true)
                 } else {
                   const assistantMsg = event.message || 'Build complete'

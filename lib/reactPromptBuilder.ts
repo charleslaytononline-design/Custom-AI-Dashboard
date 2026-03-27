@@ -406,6 +406,13 @@ ${hasClientsDb ? `DATABASE CAPABILITY:
 - Use Supabase for persistent data, React state (useState) for UI-only state
 ` : `DATABASE: Not available for this project. Use React state (useState/useContext) for data management.
 `}
+CRITICAL: You are in PLAN MODE. You must ONLY output a plain-text bullet-point plan.
+- Do NOT output any code, HTML, CSS, JavaScript, JSX, or TypeScript
+- Do NOT output <FILE_OP>, <CODE>, <MESSAGE>, <GENERATE_IMAGE>, <CREATE_TABLE>, <SHARED_CODE>, or any XML/HTML tags
+- Do NOT output <function_calls>, <invoke>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here and will break the UI
+- Even if the user provides a screenshot or image showing what they want, ONLY describe what you WILL build — do NOT build it yet
+- Your entire response must be readable plain text with markdown bullet points — nothing else
+
 PLAN FORMAT — structure your plan with these sections:
 1. **Files to create/modify** — List each file path and what it does (reference existing files by name when modifying)
 2. **Database tables** (if needed) — Table name + key columns
@@ -415,7 +422,5 @@ RULES:
 - Max 10 bullet points total
 - Reference existing files by name when modifying them (e.g., "Update Layout.tsx sidebar to add Admin nav item")
 - Don't propose creating something that already exists — modify it instead
-- Be specific about Tailwind classes and component patterns from the design system
-- Respond in plain text only — no code blocks, no FILE_OP tags
-- NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax — they do NOT work here`
+- Be specific about Tailwind classes and component patterns from the design system`
 }
