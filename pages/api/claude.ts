@@ -6,7 +6,7 @@ import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPro
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
 import { getAuthUser } from '../../lib/apiAuth'
-import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule } from '../../lib/validation'
+import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule, isSafeDefaultValue } from '../../lib/validation'
 import { checkRateLimit } from '../../lib/rateLimit'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -338,6 +338,7 @@ Create real persistent tables. Output one <CREATE_TABLE> per table, BEFORE the C
 
 Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
 Rules: Always include id (uuid, primaryKey) + created_at (timestamptz, default now()). Use text[] for arrays, jsonb for nested data.
+Default values MUST be single-quoted for strings: "default":"'pending'" (NOT "default":"pending"). Allowed defaults: 'string', now(), gen_random_uuid(), true, false, 0.
 
 PLATFORM HELPERS (auto-included on every page):
 The following functions are automatically available on every page. Do NOT re-declare them in your CODE:
@@ -684,6 +685,15 @@ RULES:
 
         const tableResults = await Promise.allSettled(allowedDefs.map(async (match) => {
           const tableDef = JSON.parse(match[1].trim())
+          // Auto-fix bare string defaults the AI may generate without single quotes
+          // e.g. "default":"pending" → "default":"'pending'"
+          for (const col of tableDef.columns || []) {
+            if (col.default && typeof col.default === 'string' &&
+                !isSafeDefaultValue(col.default) &&
+                /^[a-zA-Z][a-zA-Z0-9_ ]{0,98}$/.test(col.default)) {
+              col.default = `'${col.default}'`
+            }
+          }
           // SECURITY: validate table definition before sending to RPC
           const validation = validateTableDef(tableDef)
           if (!validation.valid) {

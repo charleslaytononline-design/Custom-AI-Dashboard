@@ -82,6 +82,7 @@ Create real persistent tables. Output <CREATE_TABLE> tags BEFORE FILE_OP tags:
 
 Allowed types: uuid, text, integer, numeric, boolean, timestamptz, jsonb, bigint, text[], integer[], uuid[]
 Always include id (uuid, primaryKey) + created_at (timestamptz, default now()).
+Default values MUST be single-quoted for strings: "default":"'pending'" (NOT "default":"pending"). Allowed defaults: 'string', now(), gen_random_uuid(), true, false, 0.
 
 DATABASE USAGE IN REACT:
 Use the Supabase client from src/lib/supabase.ts:
@@ -184,7 +185,7 @@ FIRST, ALWAYS output a profiles table BEFORE any auth FILE_OP tags:
   {"name":"id","type":"uuid","primaryKey":true},
   {"name":"full_name","type":"text"},
   {"name":"email","type":"text"},
-  {"name":"role","type":"text","default":"viewer"},
+  {"name":"role","type":"text","default":"'viewer'"},
   {"name":"created_at","type":"timestamptz","default":"now()"}
 ]}
 </CREATE_TABLE>
