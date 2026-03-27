@@ -67,7 +67,7 @@ async function runPrediction(model: string, prompt: string): Promise<string> {
       headers: {
         Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         'Content-Type': 'application/json',
-        'Prefer': 'wait=110',
+        'Prefer': 'wait=60',
       },
       body: JSON.stringify({
         input: {
