@@ -245,6 +245,12 @@ export default function Admin() {
   const [selectedBuilderErrors, setSelectedBuilderErrors] = useState<Set<string>>(new Set())
   const [builderErrorCardHeight, setBuilderErrorCardHeight] = useState(400)
 
+  // All Console Logs state
+  const [consoleLogPage, setConsoleLogPage] = useState(0)
+  const [consoleLogsPerPage, setConsoleLogsPerPage] = useState(20)
+  const [consoleLogSearch, setConsoleLogSearch] = useState('')
+  const [expandedConsoleLogs, setExpandedConsoleLogs] = useState<Set<string>>(new Set())
+
   // Chat History state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatSearch, setChatSearch] = useState('')
@@ -2607,6 +2613,141 @@ export default function Admin() {
                 )
               })()}
             </div>
+
+            {/* All Console Logs — every console.error/warn from every page, no filtering */}
+            {(() => {
+              const allConsoleLogs = logs.filter(l =>
+                l.event_type === 'console_error' || l.event_type === 'unhandled_error'
+              )
+              const filteredConsoleLogs = allConsoleLogs.filter(l => {
+                if (consoleLogSearch) {
+                  const q = consoleLogSearch.toLowerCase()
+                  if (!l.message.toLowerCase().includes(q) && !(l.email || '').toLowerCase().includes(q)) return false
+                }
+                return true
+              })
+              const totalPages = Math.ceil(filteredConsoleLogs.length / consoleLogsPerPage)
+              const startIdx = consoleLogPage * consoleLogsPerPage
+              const endIdx = startIdx + consoleLogsPerPage
+              const pagedLogs = filteredConsoleLogs.slice(startIdx, endIdx)
+
+              const toggleConsoleExpand = (id: string) => {
+                setExpandedConsoleLogs(prev => {
+                  const next = new Set(prev)
+                  if (next.has(id)) next.delete(id); else next.add(id)
+                  return next
+                })
+              }
+
+              return (
+                <div style={{ ...s.settingsCard }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>All Console Logs</h3>
+                      <p style={{ fontSize: 11, color: 'var(--text-3)', margin: 0 }}>
+                        Every console.error, console.warn, and unhandled exception from all pages including login and auth. Nothing filtered.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        value={consoleLogSearch}
+                        onChange={e => { setConsoleLogSearch(e.target.value); setConsoleLogPage(0) }}
+                        placeholder="Search message or email..."
+                        style={{ ...s.searchInput, width: 220 }}
+                      />
+                      <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#f09595', background: 'rgba(163,45,45,0.12)', padding: '3px 10px', borderRadius: 10 }}>
+                        {allConsoleLogs.length} entries
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
+                    Showing {filteredConsoleLogs.length === 0 ? 0 : startIdx + 1}–{Math.min(endIdx, filteredConsoleLogs.length)} of {filteredConsoleLogs.length}
+                  </div>
+
+                  <div style={{ borderRadius: 8, border: '1px solid var(--border)', overflow: 'auto', maxHeight: 500 }}>
+                    {filteredConsoleLogs.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>No console logs</div>
+                    ) : (
+                      <table style={s.table}>
+                        <thead>
+                          <tr style={s.thead}>
+                            <th style={s.th}>Time</th>
+                            <th style={s.th}>Severity</th>
+                            <th style={s.th}>Email</th>
+                            <th style={s.th}>Page</th>
+                            <th style={s.th}>Message</th>
+                            <th style={s.th}>Meta</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedLogs.map(log => (
+                            <React.Fragment key={log.id}>
+                              <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => toggleConsoleExpand(log.id)}>
+                                <td style={{ ...s.td, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                                  {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td style={s.td}>
+                                  <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                                    {log.severity}
+                                  </span>
+                                </td>
+                                <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text-3)' }}>{log.email || '—'}</span></td>
+                                <td style={s.td}><span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'monospace' }}>{(log.metadata as any)?.url || '—'}</span></td>
+                                <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{log.message}</span>
+                                </td>
+                                <td style={s.td}>
+                                  {log.metadata && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{expandedConsoleLogs.has(log.id) ? '▼ collapse' : '▶ expand'}</span>}
+                                </td>
+                              </tr>
+                              {expandedConsoleLogs.has(log.id) && log.metadata && (
+                                <tr style={{ background: 'var(--bg)' }}>
+                                  <td colSpan={6} style={{ padding: '10px 14px' }}>
+                                    <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {JSON.stringify(log.metadata, null, 2)}
+                                    </pre>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {filteredConsoleLogs.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, padding: '8px 0' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button
+                          onClick={() => setConsoleLogPage(p => Math.max(0, p - 1))}
+                          disabled={consoleLogPage === 0}
+                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: consoleLogPage === 0 ? 0.4 : 1, cursor: consoleLogPage === 0 ? 'not-allowed' : 'pointer' }}
+                        >
+                          ← Previous
+                        </button>
+                        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Page {consoleLogPage + 1} of {totalPages}</span>
+                        <button
+                          onClick={() => setConsoleLogPage(p => Math.min(totalPages - 1, p + 1))}
+                          disabled={consoleLogPage >= totalPages - 1}
+                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: consoleLogPage >= totalPages - 1 ? 0.4 : 1, cursor: consoleLogPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                        >
+                          Next Page →
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => { setConsoleLogsPerPage(p => p + 20); setConsoleLogPage(0) }}
+                        style={{ ...s.actionBtn, padding: '6px 14px' }}
+                      >
+                        Show More ({consoleLogsPerPage} → {consoleLogsPerPage + 20} per page)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )
       })()}

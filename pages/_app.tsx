@@ -41,12 +41,9 @@ function sendLog(event_type: string, severity: string, message: string, metadata
   else scheduleFlush()
 }
 
-// Known bot/noise patterns to ignore in warning logs
+// Known bot/noise patterns to ignore in warning logs (Vercel screenshot bot)
 const IGNORED_WARN_PATTERNS = [
   'autoconsent already initialized',
-  'createBrowserSupabaseClient',
-  'createPagesBrowserClient',
-  'Please utilize the `createPagesBrowserClient` function instead',
 ]
 
 export default function App({ Component, pageProps }: AppProps) {
