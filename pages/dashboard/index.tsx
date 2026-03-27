@@ -172,7 +172,7 @@ export default function Dashboard() {
 
   async function signOut() { localStorage.removeItem('session_started_at'); await supabase.auth.signOut(); router.push('/') }
 
-  if (!user) return <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'#555',background:'#0a0a0a',fontFamily:'sans-serif' }}>Loading...</div>
+  if (!user) return <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'var(--text-3)',background:'var(--bg)',fontFamily:'sans-serif' }}>Loading...</div>
 
   return (
     <div style={s.root}>
@@ -189,8 +189,8 @@ export default function Dashboard() {
             </button>
           )}
           <div style={s.tokenBadge}>
-            <span style={{ color:'#444',fontSize:10 }}>tokens</span>
-            <span style={{ color:'#7c6ef7',fontWeight:600,fontSize:12 }}>{totalTokens.toLocaleString()}</span>
+            <span style={{ color:'var(--text-3)',fontSize:10 }}>tokens</span>
+            <span style={{ color:'var(--accent)',fontWeight:600,fontSize:12 }}>{totalTokens.toLocaleString()}</span>
           </div>
           <span style={s.email}>{user.email}</span>
           <button onClick={signOut} style={s.signOut}>Sign out</button>
@@ -210,7 +210,7 @@ export default function Dashboard() {
                 {messages.length === 0 && (
                   <div style={s.empty}>
                     <div style={{ fontSize:28,marginBottom:12 }}>✦</div>
-                    <p style={{ color:'#555',fontSize:13,textAlign:'center',lineHeight:1.6,marginBottom:20 }}>
+                    <p style={{ color:'var(--text-3)',fontSize:13,textAlign:'center',lineHeight:1.6,marginBottom:20 }}>
                       {mode === 'plan' ? 'Describe what you want — I\'ll create a plan for your approval first.' : 'Describe what you want to build and I\'ll create it instantly.'}
                     </p>
                     <div style={s.chips}>
@@ -239,7 +239,7 @@ export default function Dashboard() {
                     <div style={{ ...s.bubble, ...s.bubbleAI }}>
                       <div style={{ display:'flex',gap:5,alignItems:'center' }}>
                         {[0,1,2].map(i => <span key={i} style={{ ...s.dot, animationDelay:`${i*0.2}s` }} />)}
-                        <span style={{ color:'#555',fontSize:12,marginLeft:4 }}>
+                        <span style={{ color:'var(--text-3)',fontSize:12,marginLeft:4 }}>
                           {mode==='plan' ? 'Creating plan...' : 'Building...'}
                         </span>
                       </div>
@@ -259,7 +259,7 @@ export default function Dashboard() {
                     ⚡ Build
                   </button>
                   <span style={{ flex:1 }} />
-                  <span style={{ fontSize:11,color:'#444' }}>{mode==='plan' ? 'Plan first, then build' : 'Build directly'}</span>
+                  <span style={{ fontSize:11,color:'var(--text-3)' }}>{mode==='plan' ? 'Plan first, then build' : 'Build directly'}</span>
                 </div>
                 <textarea
                   value={input}
@@ -296,8 +296,8 @@ export default function Dashboard() {
                 {pages.map(page => (
                   <div key={page.id} style={{ ...s.pageItem, ...(activePage?.id===page.id ? s.pageItemOn : {}) }}>
                     <div style={{ flex:1,cursor:'pointer' }} onClick={() => { setActivePage(page); setMessages([]); setSidebarTab('chat') }}>
-                      <div style={{ fontSize:13,fontWeight:activePage?.id===page.id?500:400,color:'#f0f0f0' }}>{page.name}</div>
-                      <div style={{ fontSize:11,color:'#444',marginTop:2 }}>{new Date(page.updated_at).toLocaleDateString()}</div>
+                      <div style={{ fontSize:13,fontWeight:activePage?.id===page.id?500:400,color:'var(--text)' }}>{page.name}</div>
+                      <div style={{ fontSize:11,color:'var(--text-3)',marginTop:2 }}>{new Date(page.updated_at).toLocaleDateString()}</div>
                     </div>
                     {pages.length > 1 && <button onClick={() => deletePage(page.id)} style={s.delBtn}>✕</button>}
                   </div>
@@ -315,7 +315,7 @@ export default function Dashboard() {
           {showCode && activePage ? (
             <div style={s.codePanel}>
               <div style={s.codeHeader}>
-                <span style={{ color:'#666',fontSize:12 }}>Source — {activePage.name}</span>
+                <span style={{ color:'var(--text-3)',fontSize:12 }}>Source — {activePage.name}</span>
                 <button onClick={() => navigator.clipboard.writeText(activePage.code)} style={s.copyBtn}>Copy</button>
               </div>
               <pre style={s.codeContent}>{activePage.code}</pre>
@@ -334,60 +334,60 @@ export default function Dashboard() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { display:'flex',flexDirection:'column',height:'100vh',background:'#0a0a0a',overflow:'hidden',fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' },
-  topbar: { display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px',height:50,borderBottom:'1px solid rgba(255,255,255,0.07)',background:'#0f0f0f',flexShrink:0 },
+  root: { display:'flex',flexDirection:'column',height:'100vh',background:'var(--bg)',overflow:'hidden',fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' },
+  topbar: { display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px',height:50,borderBottom:'1px solid var(--border)',background:'var(--bg-2)',flexShrink:0 },
   topLeft: { display:'flex',alignItems:'center',gap:10 },
-  logo: { width:26,height:26,background:'#7c6ef7',borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white' },
-  logoName: { fontSize:14,fontWeight:600,color:'#f0f0f0' },
-  sep: { color:'#333' },
-  pageName: { fontSize:13,color:'#555' },
+  logo: { width:26,height:26,background:'var(--accent)',borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white' },
+  logoName: { fontSize:14,fontWeight:600,color:'var(--text)' },
+  sep: { color:'var(--border-2)' },
+  pageName: { fontSize:13,color:'var(--text-3)' },
   topRight: { display:'flex',alignItems:'center',gap:12 },
-  codeBtn: { padding:'5px 12px',background:'none',border:'1px solid rgba(255,255,255,0.1)',borderRadius:7,color:'#666',fontSize:12,cursor:'pointer',fontFamily:'monospace' },
-  codeBtnOn: { background:'rgba(124,110,247,0.1)',borderColor:'rgba(124,110,247,0.3)',color:'#9d92f5' },
+  codeBtn: { padding:'5px 12px',background:'none',border:'1px solid var(--border)',borderRadius:7,color:'var(--text-3)',fontSize:12,cursor:'pointer',fontFamily:'monospace' },
+  codeBtnOn: { background:'color-mix(in srgb, var(--accent) 10%, transparent)',borderColor:'color-mix(in srgb, var(--accent) 30%, transparent)',color:'var(--accent)' },
   tokenBadge: { display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1 },
-  email: { fontSize:11,color:'#444' },
-  signOut: { padding:'5px 11px',background:'none',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,color:'#555',fontSize:12,cursor:'pointer' },
+  email: { fontSize:11,color:'var(--text-3)' },
+  signOut: { padding:'5px 11px',background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-3)',fontSize:12,cursor:'pointer' },
   main: { display:'flex',flex:1,overflow:'hidden' },
-  left: { width:300,minWidth:300,display:'flex',flexDirection:'column',borderRight:'1px solid rgba(255,255,255,0.07)',background:'#0f0f0f',overflow:'hidden' },
-  tabs: { display:'flex',borderBottom:'1px solid rgba(255,255,255,0.07)',flexShrink:0 },
-  tab: { flex:1,padding:10,background:'none',border:'none',color:'#444',fontSize:12,cursor:'pointer',fontWeight:500,borderBottom:'2px solid transparent' },
-  tabOn: { color:'#f0f0f0',borderBottom:'2px solid #7c6ef7' },
+  left: { width:300,minWidth:300,display:'flex',flexDirection:'column',borderRight:'1px solid var(--border)',background:'var(--bg-2)',overflow:'hidden' },
+  tabs: { display:'flex',borderBottom:'1px solid var(--border)',flexShrink:0 },
+  tab: { flex:1,padding:10,background:'none',border:'none',color:'var(--text-3)',fontSize:12,cursor:'pointer',fontWeight:500,borderBottom:'2px solid transparent' },
+  tabOn: { color:'var(--text)',borderBottom:'2px solid var(--accent)' },
   msgs: { flex:1,overflowY:'auto',padding:12,display:'flex',flexDirection:'column',gap:10 },
   empty: { display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'32px 8px',flex:1 },
   chips: { display:'flex',flexWrap:'wrap',gap:5,justifyContent:'center' },
-  chip: { padding:'4px 10px',background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.08)',borderRadius:20,color:'#666',fontSize:11,cursor:'pointer' },
+  chip: { padding:'4px 10px',background:'var(--bg-3)',border:'1px solid var(--border)',borderRadius:20,color:'var(--text-3)',fontSize:11,cursor:'pointer' },
   msgRow: { display:'flex',flexDirection:'column' },
   msgRight: { alignItems:'flex-end' },
   bubble: { maxWidth:'92%',padding:'9px 12px',borderRadius:10 },
-  bubbleUser: { background:'#7c6ef7',color:'white' },
-  bubbleAI: { background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.07)',color:'#e0e0e0' },
-  bubblePlan: { background:'rgba(124,110,247,0.07)',border:'1px solid rgba(124,110,247,0.2)',color:'#e0e0e0',maxWidth:'100%',width:'100%' },
-  planLabel: { fontSize:11,fontWeight:600,color:'#9d92f5',marginBottom:8,textTransform:'uppercase' as const,letterSpacing:'0.05em' },
-  approveBtn: { padding:'6px 14px',background:'#7c6ef7',border:'none',borderRadius:7,color:'white',fontSize:12,fontWeight:500,cursor:'pointer' },
-  reviseBtn: { padding:'6px 12px',background:'none',border:'1px solid rgba(255,255,255,0.1)',borderRadius:7,color:'#666',fontSize:12,cursor:'pointer' },
-  dot: { width:6,height:6,borderRadius:'50%',background:'#444',display:'inline-block',animation:'bounce 1.2s infinite' },
-  errBox: { background:'rgba(163,45,45,0.12)',border:'1px solid rgba(163,45,45,0.25)',borderRadius:8,padding:'8px 12px',fontSize:12,color:'#f09595' },
-  inputArea: { padding:10,borderTop:'1px solid rgba(255,255,255,0.07)',display:'flex',flexDirection:'column',gap:8,flexShrink:0 },
+  bubbleUser: { background:'var(--accent)',color:'white' },
+  bubbleAI: { background:'var(--bg-3)',border:'1px solid var(--border)',color:'var(--text-2)' },
+  bubblePlan: { background:'color-mix(in srgb, var(--accent) 7%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 20%, transparent)',color:'var(--text-2)',maxWidth:'100%',width:'100%' },
+  planLabel: { fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:8,textTransform:'uppercase' as const,letterSpacing:'0.05em' },
+  approveBtn: { padding:'6px 14px',background:'var(--accent)',border:'none',borderRadius:7,color:'white',fontSize:12,fontWeight:500,cursor:'pointer' },
+  reviseBtn: { padding:'6px 12px',background:'none',border:'1px solid var(--border)',borderRadius:7,color:'var(--text-3)',fontSize:12,cursor:'pointer' },
+  dot: { width:6,height:6,borderRadius:'50%',background:'var(--text-3)',display:'inline-block',animation:'bounce 1.2s infinite' },
+  errBox: { background:'color-mix(in srgb, var(--danger) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--danger) 25%, transparent)',borderRadius:8,padding:'8px 12px',fontSize:12,color:'var(--danger)' },
+  inputArea: { padding:10,borderTop:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:8,flexShrink:0 },
   modeRow: { display:'flex',alignItems:'center',gap:6 },
-  modeBtn: { padding:'4px 10px',background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,color:'#666',fontSize:11,cursor:'pointer',fontWeight:500 },
-  modeBtnOn: { background:'rgba(124,110,247,0.15)',borderColor:'rgba(124,110,247,0.3)',color:'#9d92f5' },
-  textarea: { padding:10,background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.08)',borderRadius:8,color:'#f0f0f0',fontSize:13,resize:'none',outline:'none',lineHeight:1.5 },
-  sendBtn: { padding:9,background:'#7c6ef7',border:'none',borderRadius:8,color:'white',fontSize:13,fontWeight:500,cursor:'pointer' },
+  modeBtn: { padding:'4px 10px',background:'var(--bg-3)',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-3)',fontSize:11,cursor:'pointer',fontWeight:500 },
+  modeBtnOn: { background:'color-mix(in srgb, var(--accent) 15%, transparent)',borderColor:'color-mix(in srgb, var(--accent) 30%, transparent)',color:'var(--accent)' },
+  textarea: { padding:10,background:'var(--bg-3)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',fontSize:13,resize:'none',outline:'none',lineHeight:1.5 },
+  sendBtn: { padding:9,background:'var(--accent)',border:'none',borderRadius:8,color:'white',fontSize:13,fontWeight:500,cursor:'pointer' },
   pagesPanel: { display:'flex',flexDirection:'column',flex:1,overflow:'hidden' },
-  newPageBtn: { width:'100%',padding:8,background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.08)',borderRadius:8,color:'#666',fontSize:13,cursor:'pointer',textAlign:'left' as const },
-  newInput: { flex:1,padding:'7px 10px',background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:6,color:'#f0f0f0',fontSize:13,outline:'none' },
-  addBtn: { padding:'7px 12px',background:'#7c6ef7',border:'none',borderRadius:6,color:'white',fontSize:12,cursor:'pointer' },
-  cancelBtn: { padding:'7px 10px',background:'none',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,color:'#555',fontSize:12,cursor:'pointer' },
-  pageItem: { display:'flex',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.05)',gap:8 },
-  pageItemOn: { background:'rgba(124,110,247,0.07)' },
-  delBtn: { background:'none',border:'none',color:'#333',cursor:'pointer',fontSize:11,padding:'2px 4px',borderRadius:4 },
+  newPageBtn: { width:'100%',padding:8,background:'var(--bg-3)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text-3)',fontSize:13,cursor:'pointer',textAlign:'left' as const },
+  newInput: { flex:1,padding:'7px 10px',background:'var(--bg-3)',border:'1px solid var(--border-2)',borderRadius:6,color:'var(--text)',fontSize:13,outline:'none' },
+  addBtn: { padding:'7px 12px',background:'var(--accent)',border:'none',borderRadius:6,color:'white',fontSize:12,cursor:'pointer' },
+  cancelBtn: { padding:'7px 10px',background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-3)',fontSize:12,cursor:'pointer' },
+  pageItem: { display:'flex',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid var(--border)',gap:8 },
+  pageItemOn: { background:'color-mix(in srgb, var(--accent) 7%, transparent)' },
+  delBtn: { background:'none',border:'none',color:'var(--border-2)',cursor:'pointer',fontSize:11,padding:'2px 4px',borderRadius:4 },
   right: { flex:1,display:'flex',flexDirection:'column',overflow:'hidden' },
-  previewBar: { display:'flex',alignItems:'center',gap:8,padding:'7px 12px',borderBottom:'1px solid rgba(255,255,255,0.07)',background:'#0f0f0f',flexShrink:0 },
-  urlBar: { flex:1,padding:'4px 10px',background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.07)',borderRadius:6,fontSize:12,color:'#444' },
-  refreshBtn: { padding:'4px 10px',background:'none',border:'1px solid rgba(255,255,255,0.07)',borderRadius:6,color:'#444',cursor:'pointer',fontSize:14 },
-  iframe: { flex:1,border:'none',background:'#0a0a0a',width:'100%',height:'100%' },
+  previewBar: { display:'flex',alignItems:'center',gap:8,padding:'7px 12px',borderBottom:'1px solid var(--border)',background:'var(--bg-2)',flexShrink:0 },
+  urlBar: { flex:1,padding:'4px 10px',background:'var(--bg-3)',border:'1px solid var(--border)',borderRadius:6,fontSize:12,color:'var(--text-3)' },
+  refreshBtn: { padding:'4px 10px',background:'none',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-3)',cursor:'pointer',fontSize:14 },
+  iframe: { flex:1,border:'none',background:'var(--bg)',width:'100%',height:'100%' },
   codePanel: { flex:1,display:'flex',flexDirection:'column',overflow:'hidden' },
-  codeHeader: { display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 16px',borderBottom:'1px solid rgba(255,255,255,0.07)',background:'#0f0f0f',flexShrink:0 },
-  copyBtn: { padding:'4px 12px',background:'#1a1a1a',border:'1px solid rgba(255,255,255,0.1)',borderRadius:6,color:'#666',fontSize:12,cursor:'pointer' },
-  codeContent: { flex:1,overflow:'auto',padding:16,fontSize:11.5,lineHeight:1.6,color:'#9d92f5',background:'#0a0a0a',fontFamily:'monospace',whiteSpace:'pre-wrap',wordBreak:'break-all' as const },
+  codeHeader: { display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 16px',borderBottom:'1px solid var(--border)',background:'var(--bg-2)',flexShrink:0 },
+  copyBtn: { padding:'4px 12px',background:'var(--bg-3)',border:'1px solid var(--border-2)',borderRadius:6,color:'var(--text-3)',fontSize:12,cursor:'pointer' },
+  codeContent: { flex:1,overflow:'auto',padding:16,fontSize:11.5,lineHeight:1.6,color:'var(--accent)',background:'var(--bg)',fontFamily:'monospace',whiteSpace:'pre-wrap',wordBreak:'break-all' as const },
 }
