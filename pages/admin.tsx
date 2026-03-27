@@ -187,7 +187,6 @@ export default function Admin() {
   const [savingSettings, setSavingSettings] = useState(false)
   const [totalRevenue, setTotalRevenue] = useState(0)
   const [totalApiCost, setTotalApiCost] = useState(0)
-  const [totalProfit, setTotalProfit] = useState(0)
   const [anthropicCostTotal, setAnthropicCostTotal] = useState(0)
   const [replicateCostTotal, setReplicateCostTotal] = useState(0)
   const [totalGifted, setTotalGifted] = useState(0)
@@ -890,7 +889,6 @@ export default function Admin() {
     setTotalRevenue(revenue)
     setTotalApiCost(anthropicTotal + replicateTotal)
     setTotalGifted(giftTotal)
-    setTotalProfit(revenue - anthropicTotal - replicateTotal)
     setAnthropicCostTotal(anthropicTotal)
     setReplicateCostTotal(replicateTotal)
     setFailedCostTotal(failedTotal)
@@ -1032,12 +1030,24 @@ export default function Admin() {
     return plans.find(p => p.id === planId)?.name || 'Free'
   }
 
+  function getUserProfit(u: any) {
+    const userTotalApiCost = (u.anthropicCost || 0) + (u.replicateCost || 0)
+    const userGiftApiCost = (u.totalSpend || 0) > 0
+      ? userTotalApiCost * ((u.giftUsed || 0) / (u.totalSpend || 1))
+      : 0
+    const userRealApiCost = userTotalApiCost - userGiftApiCost
+    const userRealRevenue = (u.totalSpend || 0) - (u.giftUsed || 0)
+    return userRealRevenue - userRealApiCost - (u.failedCost || 0) - (u.stopCost || 0)
+  }
+
   const isMobile = useMobile()
   const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
   const realGiftApiCost = totalRevenue > 0 ? totalApiCost * (totalGiftUsed / totalRevenue) : 0
   const realRevenue = totalRevenue - totalGiftUsed
-  const actualProfit = realRevenue - totalApiCost - failedCostTotal - stoppedCostTotal
-  const margin = realRevenue > 0 ? ((actualProfit / realRevenue) * 100).toFixed(1) : '0'
+  const realApiCost = totalApiCost - realGiftApiCost
+  const paidProfit = realRevenue - realApiCost - failedCostTotal - stoppedCostTotal
+  const netProfit = paidProfit - realGiftApiCost
+  const margin = realRevenue > 0 ? ((paidProfit / realRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
   if (loading) return <div style={s.loadingInner}>Loading...</div>
@@ -1059,9 +1069,9 @@ export default function Admin() {
           <div style={s.statSub}>real: ${realRevenue.toFixed(2)} / gift: ${totalGiftUsed.toFixed(2)}</div>
         </div>
         <div style={s.statCard}>
-          <div style={s.statLabel}>Your Profit</div>
-          <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{totalGiftUsed > 0 ? ` · -$${totalGiftUsed.toFixed(2)} gift excluded` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}{stoppedCostTotal > 0 ? ` · -$${stoppedCostTotal.toFixed(2)} stop costs` : ''}</div>
+          <div style={s.statLabel}>Your Profit <span title={`Real Revenue (excl gifts): $${realRevenue.toFixed(2)}\n- API Costs (paid users): $${realApiCost.toFixed(4)}\n- Failed Costs: $${failedCostTotal.toFixed(4)}\n- Stopped Costs: $${stoppedCostTotal.toFixed(4)}\n= Paid Profit: $${paidProfit.toFixed(2)}\n- Gift API Costs: $${realGiftApiCost.toFixed(4)}\n= Net Profit: $${netProfit.toFixed(2)}`} style={{ cursor: 'help', opacity: 0.5, fontSize: 11 }}>(i)</span></div>
+          <div style={{ ...s.statVal, color: '#5DCAA5', fontSize: 18 }}>${paidProfit.toFixed(2)} <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: netProfit >= 0 ? '#fbbf24' : '#f87171' }}>${netProfit.toFixed(2)}</span></div>
+          <div style={s.statSub}>paid profit / net after gifts · {margin}% margin</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -1210,7 +1220,7 @@ export default function Admin() {
                     <td style={s.td}><span style={{ ...s.num, color: '#2dd4bf' }}>${(u.replicateCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.tokenCount || 0).toLocaleString()}</span></td>
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
-                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${(((u.totalSpend || 0) - (u.giftUsed || 0)) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.failedCost || 0) - (u.stopCost || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${getUserProfit(u).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#fb923c' }}>{u.failedRequests || 0}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#f87171' }}>${(u.failedCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#c084fc' }}>{u.stopRequests || 0}</span></td>
