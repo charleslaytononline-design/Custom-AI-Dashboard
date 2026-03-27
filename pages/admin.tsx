@@ -2273,7 +2273,7 @@ export default function Admin() {
                 if (l.event_type === 'builder_error' || l.event_type === 'api_error') return true
                 // console_error and unhandled_error only from the builder/project page
                 if (l.event_type === 'console_error' || l.event_type === 'unhandled_error') {
-                  return l.metadata?.url?.startsWith('/project/')
+                  return (l.metadata as any)?.url?.startsWith('/project/')
                 }
                 return false
               })
