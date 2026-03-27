@@ -90,6 +90,28 @@ export const DEFAULT_THEMES: Theme[] = [
       danger: '#ef4444',
     },
   },
+  {
+    id: 'builtin-light',
+    name: 'Light',
+    is_builtin: true,
+    is_available: true,
+    sort_order: 3,
+    colors: {
+      bg: '#ffffff',
+      bg2: '#f5f5f5',
+      bg3: '#e8e8e8',
+      border: 'rgba(0,0,0,0.1)',
+      border2: 'rgba(0,0,0,0.18)',
+      text: '#1a1a1a',
+      text2: '#4a4a4a',
+      text3: '#7a7a7a',
+      accent: '#6c5ce7',
+      accent2: '#5a4bd1',
+      success: '#0d9668',
+      warning: '#b45309',
+      danger: '#dc2626',
+    },
+  },
 ]
 
 const CSS_VAR_MAP: Record<keyof ThemeColors, string> = {
