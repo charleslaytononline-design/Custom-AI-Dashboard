@@ -481,6 +481,73 @@ export default function ProjectBuilder() {
                     setActiveTab(firstChanged.path)
                   }
                 }
+
+                // Generate AI images if any were requested
+                if (event.imagePrompts?.length > 0 && projectId) {
+                  const prompts = event.imagePrompts as string[]
+                  ;(async () => {
+                    for (let i = 0; i < prompts.length; i++) {
+                      try {
+                        setBuildStatus(`Generating image ${i + 1} of ${prompts.length}...`)
+                        const imgRes = await fetch('/api/generate-image', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ prompt: prompts[i] }),
+                        })
+                        const imgData = await imgRes.json()
+                        if (imgData.url) {
+                          // Build placeholder URL that matches what the backend inserted
+                          const placeholder = i === 0
+                            ? `https://placehold.co/1024x768/141414/444444?text=Loading+image...`
+                            : `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
+                          const numberedPlaceholder = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
+
+                          // Replace placeholders in all project files (DB)
+                          const { data: allFiles } = await supabase
+                            .from('project_files')
+                            .select('id, path, content')
+                            .eq('project_id', projectId as string)
+                          for (const file of allFiles || []) {
+                            if (!file.content) continue
+                            let updated = file.content
+                            // Replace numbered placeholder
+                            updated = updated.split(numberedPlaceholder).join(imgData.url)
+                            // For image 1, also replace the shorthand placeholder
+                            if (i === 0) {
+                              updated = updated.split(placeholder).join(imgData.url)
+                            }
+                            if (updated !== file.content) {
+                              await supabase
+                                .from('project_files')
+                                .update({ content: updated, updated_at: new Date().toISOString() })
+                                .eq('id', file.id)
+                            }
+                          }
+
+                          // Update local files state
+                          setFiles(prev => prev.map(f => {
+                            if (!f.content) return f
+                            let updated = f.content
+                            updated = updated.split(numberedPlaceholder).join(imgData.url)
+                            if (i === 0) {
+                              updated = updated.split(placeholder).join(imgData.url)
+                            }
+                            return updated !== f.content ? { ...f, content: updated } : f
+                          }))
+
+                          // Refresh preview
+                          setBuildTrigger(prev => prev + 1)
+
+                          // Update credit balance if returned
+                          if (imgData.newBalance !== undefined) setCreditBalance(imgData.newBalance)
+                        }
+                      } catch (err) {
+                        console.error(`Image ${i + 1} generation failed:`, err)
+                      }
+                    }
+                    setBuildStatus(null)
+                  })()
+                }
               } else if (event.type === 'db_choice_required') {
                 // Project needs a database but user hasn't chosen where yet
                 setPendingDbTables(JSON.stringify(event.pendingTables || []))

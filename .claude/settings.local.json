@@ -60,7 +60,12 @@
       "Bash(npx.cmd tsc:*)",
       "Bash(node -e \"require\\(''''child_process''''\\).execSync\\(''''npx tsc --noEmit'''', {stdio: ''''inherit''''}\\)\")",
       "Bash(export PATH=\"$PATH:/c/Program Files/nodejs:/c/Users/charl/AppData/Roaming/npm\")",
-      "Bash(/c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/node_modules/.bin/tsc --noEmit)"
+      "Bash(/c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/node_modules/.bin/tsc --noEmit)",
+      "Bash(node node_modules/.bin/tsc --noEmit --pretty)",
+      "Read(//c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/$LOCALAPPDATA/Programs/node/**)",
+      "Read(//c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/$HOME/.nvm/*/bin/**)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/.bin/tsc --noEmit)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" ./node_modules/typescript/bin/tsc --noEmit)"
     ]
   }
 }
