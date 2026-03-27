@@ -5,7 +5,7 @@
  * For HTML projects: renders composed HTML directly via srcdoc.
  * Includes: error console, responsive viewport controls, loading states.
  */
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
 import type { ProjectFile } from '../lib/virtualFS'
 
 interface ConsoleEntry {
@@ -53,7 +53,7 @@ interface PreviewFrameProps {
   buildTrigger?: number
 }
 
-export default function PreviewFrame({
+export default memo(function PreviewFrame({
   files,
   projectType,
   projectName,
@@ -426,4 +426,4 @@ export default function PreviewFrame({
       </div>
     </div>
   )
-}
+})

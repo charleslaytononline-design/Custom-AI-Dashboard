@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import type { FileTreeNode } from '../lib/virtualFS'
 
 interface FileTreeProps {
@@ -9,7 +9,7 @@ interface FileTreeProps {
   onDeleteFile?: (path: string) => void
 }
 
-export default function FileTree({ nodes, activeFilePath, onFileSelect, onNewFile, onDeleteFile }: FileTreeProps) {
+export default memo(function FileTree({ nodes, activeFilePath, onFileSelect, onNewFile, onDeleteFile }: FileTreeProps) {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {onNewFile && (
@@ -33,7 +33,7 @@ export default function FileTree({ nodes, activeFilePath, onFileSelect, onNewFil
       </div>
     </div>
   )
-}
+})
 
 function TreeNode({
   node,

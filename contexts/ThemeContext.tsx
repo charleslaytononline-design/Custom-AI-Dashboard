@@ -33,42 +33,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Load user's theme from DB after auth resolves
-  useEffect(() => {
-    async function loadUserTheme() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('theme_id')
-        .eq('id', user.id)
-        .single()
-
-      if (profile?.theme_id) {
-        const { data: dbTheme } = await supabase
-          .from('color_themes')
-          .select('*')
-          .eq('id', profile.theme_id)
-          .single()
-
-        if (dbTheme) {
-          const t: Theme = {
-            id: dbTheme.id,
-            name: dbTheme.name,
-            colors: dbTheme.colors as ThemeColors,
-            is_builtin: dbTheme.is_builtin,
-            is_available: dbTheme.is_available,
-          }
-          setThemeState(t)
-          applyTheme(t.colors)
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(t))
-        }
-      }
-    }
-    loadUserTheme().catch(() => {})
-  }, [])
-
   const refreshThemes = useCallback(async () => {
     const { data } = await supabase
       .from('color_themes')
@@ -86,15 +50,49 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         sort_order: d.sort_order,
       })))
     } else {
-      // Fallback to built-in themes if DB not set up yet
       setAvailableThemes(DEFAULT_THEMES)
     }
   }, [])
 
-  // Load available themes on mount
+  // Load user theme + available themes in a single effect with parallel queries
   useEffect(() => {
-    refreshThemes().catch(() => {})
-  }, [refreshThemes])
+    async function loadThemeData() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        // Not logged in — just load available themes
+        refreshThemes().catch(() => {})
+        return
+      }
+
+      // Fetch user profile theme + available themes in parallel
+      const [profileRes, themesRes] = await Promise.all([
+        supabase.from('profiles').select('theme_id').eq('id', user.id).single(),
+        supabase.from('color_themes').select('*').eq('is_available', true).order('sort_order', { ascending: true }),
+      ])
+
+      // Set available themes
+      if (themesRes.data && themesRes.data.length > 0) {
+        const allThemes = themesRes.data.map(d => ({
+          id: d.id, name: d.name, colors: d.colors as ThemeColors,
+          is_builtin: d.is_builtin, is_available: d.is_available, sort_order: d.sort_order,
+        }))
+        setAvailableThemes(allThemes)
+
+        // Set user's selected theme from the already-fetched themes list
+        if (profileRes.data?.theme_id) {
+          const userTheme = allThemes.find(t => t.id === profileRes.data!.theme_id)
+          if (userTheme) {
+            setThemeState(userTheme)
+            applyTheme(userTheme.colors)
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(userTheme))
+          }
+        }
+      } else {
+        setAvailableThemes(DEFAULT_THEMES)
+      }
+    }
+    loadThemeData().catch(() => {})
+  }, [])
 
   const setTheme = useCallback(async (newTheme: Theme) => {
     setThemeState(newTheme)

@@ -5,13 +5,34 @@ import '../styles/globals.css'
 import { useSessionTimeout } from '../hooks/useSessionTimeout'
 import { ThemeProvider } from '../contexts/ThemeContext'
 
+// Batch log entries and flush every 30 seconds (or on page unload)
+const logQueue: Array<{ event_type: string; severity: string; message: string; metadata?: object }> = []
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushLogs() {
+  if (logQueue.length === 0) return
+  const batch = logQueue.splice(0)
+  const body = JSON.stringify(batch.length === 1 ? batch[0] : batch[0]) // send one at a time for API compat
+  // Use sendBeacon for reliability on unload, fetch otherwise
+  if (typeof navigator?.sendBeacon === 'function' && document.visibilityState === 'hidden') {
+    navigator.sendBeacon('/api/log', new Blob([body], { type: 'application/json' }))
+  } else {
+    fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
+  }
+  // If more remain in queue (from concurrent adds), schedule another flush
+  if (logQueue.length > 0) scheduleFlush()
+}
+
+function scheduleFlush() {
+  if (flushTimer) return
+  flushTimer = setTimeout(() => { flushTimer = null; flushLogs() }, 30_000)
+}
+
 function sendLog(event_type: string, severity: string, message: string, metadata?: object) {
-  // Fire-and-forget — don't await, don't block the UI
-  fetch('/api/log', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event_type, severity, message, metadata }),
-  }).catch(() => {/* silently ignore if log API is down */})
+  logQueue.push({ event_type, severity, message, metadata })
+  // Flush errors immediately, batch warnings/info
+  if (severity === 'error') { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }; flushLogs() }
+  else scheduleFlush()
 }
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -73,11 +94,17 @@ export default function App({ Component, pageProps }: AppProps) {
     window.addEventListener('error', onError)
     window.addEventListener('unhandledrejection', onUnhandledRejection)
 
+    // Flush buffered logs when page goes hidden (tab switch, close)
+    const onVisChange = () => { if (document.visibilityState === 'hidden') flushLogs() }
+    document.addEventListener('visibilitychange', onVisChange)
+
     return () => {
       window.removeEventListener('error', onError)
       window.removeEventListener('unhandledrejection', onUnhandledRejection)
+      document.removeEventListener('visibilitychange', onVisChange)
       console.error = origError
       console.warn = origWarn
+      flushLogs()
     }
   }, [])
 

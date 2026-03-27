@@ -62,39 +62,16 @@ export async function middleware(req: NextRequest) {
     return res
   }
 
-  // Role-based page access enforcement
-  // Look up user's profile to get their role, then check page access
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', session.user.id)
-    .single()
+  // Role-based page access enforcement — single RPC call instead of 3 queries
+  const basePath = '/' + pathname.split('/').filter(Boolean)[0]
+  const { data: access } = await supabase.rpc('check_page_access', {
+    p_user_id: session.user.id,
+    p_page_path: basePath,
+  })
 
-  if (profile?.role) {
-    // Get role record
-    const { data: role } = await supabase
-      .from('roles')
-      .select('id, can_access_admin')
-      .eq('name', profile.role)
-      .single()
-
-    if (role) {
-      // Check page access for this role
-      // Normalize path: /project/abc123 -> /project
-      const basePath = '/' + pathname.split('/').filter(Boolean)[0]
-      const { data: access } = await supabase
-        .from('role_page_access')
-        .select('can_access')
-        .eq('role_id', role.id)
-        .eq('page_path', basePath)
-        .single()
-
-      // If this page is registered and access is denied, redirect
-      if (access && !access.can_access) {
-        const homeUrl = new URL('/home', req.url)
-        return NextResponse.redirect(homeUrl)
-      }
-    }
+  if (access && !access.allowed) {
+    const homeUrl = new URL('/home', req.url)
+    return NextResponse.redirect(homeUrl)
   }
 
   return res

@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 
 const IDLE_TIMEOUT_MS = 6 * 60 * 60 * 1000       // 6 hours
 const ABSOLUTE_TIMEOUT_MS = 24 * 60 * 60 * 1000  // 24 hours
-const CHECK_INTERVAL_MS = 60 * 1000               // check every 60 seconds
+const CHECK_INTERVAL_MS = 5 * 60 * 1000            // check every 5 minutes
 const STORAGE_KEY = 'session_started_at'
 
 export function useSessionTimeout() {

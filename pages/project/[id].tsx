@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
 import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../../lib/supabase'
@@ -11,16 +11,21 @@ import PreviewFrame from '../../components/PreviewFrame'
 import { generateWelcomeHtml, DEFAULT_WELCOME_CONFIG } from '../../lib/welcomeConfig'
 import type { WelcomeConfig } from '../../lib/welcomeConfig'
 import GitHubConnect from '../../components/GitHubConnect'
-import SupabaseConnect from '../../components/SupabaseConnect'
-import DiffViewer from '../../components/DiffViewer'
-import PackageManager from '../../components/PackageManager'
-import EnvVarManager from '../../components/EnvVarManager'
-import SchemaViewer from '../../components/SchemaViewer'
-import DatabaseChoiceModal from '../../components/DatabaseChoiceModal'
+
+// Lazy-load components that are behind modals/toggles
+const SupabaseConnect = dynamic(() => import('../../components/SupabaseConnect'))
+const DiffViewer = dynamic(() => import('../../components/DiffViewer'))
+const PackageManager = dynamic(() => import('../../components/PackageManager'))
+const EnvVarManager = dynamic(() => import('../../components/EnvVarManager'))
+const SchemaViewer = dynamic(() => import('../../components/SchemaViewer'))
+const DatabaseChoiceModal = dynamic(() => import('../../components/DatabaseChoiceModal'))
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
 
-interface Message { id?: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; isDbChoice?: boolean; imageUrl?: string; fileOps?: Array<{ action: string; path: string }> }
+let msgCounter = 0
+function nextMsgId() { return `msg_${Date.now()}_${++msgCounter}` }
+
+interface Message { id: string; role: 'user' | 'assistant'; content: string; isPlan?: boolean; isDbChoice?: boolean; imageUrl?: string; fileOps?: Array<{ action: string; path: string }> }
 type AppMode = 'build' | 'plan'
 
 export default function ProjectBuilder() {
@@ -187,14 +192,14 @@ export default function ProjectBuilder() {
   const activeCode = activeFile?.content || ''
 
   // Open a file tab
-  function openFile(node: FileTreeNode) {
+  const openFile = useCallback((node: FileTreeNode) => {
     if (node.type !== 'file') return
-    if (!openTabs.includes(node.path)) {
-      setOpenTabs(prev => [...prev, node.path])
-    }
+    setOpenTabs(prev => prev.includes(node.path) ? prev : [...prev, node.path])
     setActiveTab(node.path)
     setSidebarTab('chat')
-  }
+  }, [])
+
+  const showNewFileDialog = useCallback(() => setShowNewFile(true), [])
 
   // Close a tab
   function closeTab(path: string) {
@@ -235,13 +240,13 @@ export default function ProjectBuilder() {
   }
 
   // Delete file
-  async function handleDeleteFile(path: string) {
+  const handleDeleteFile = useCallback(async (path: string) => {
     if (!confirm(`Delete ${path}?`)) return
     if (!projectId) return
     await deleteFile(projectId as string, path)
     setFiles(prev => prev.filter(f => f.path !== path))
     closeTab(path)
-  }
+  }, [projectId])
 
   // Get language from file path
   function getLanguage(path: string): string {
@@ -309,7 +314,7 @@ export default function ProjectBuilder() {
 
     // Show displayText in chat if provided, but send full messageText to API
     const visibleText = displayText || messageText
-    const userMsg: Message = { role: 'user', content: visibleText, imageUrl }
+    const userMsg: Message = { id: nextMsgId(), role: 'user', content: visibleText, imageUrl }
     setMessages(prev => [...prev, userMsg])
     saveChatMessage('user', visibleText)
     setInput('')
@@ -345,7 +350,7 @@ export default function ProjectBuilder() {
       // For plan mode, add a streaming message that updates live as text arrives
       if (planOnly) {
         streamingTextRef.current = ''
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }])
+        setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: '' }])
       }
 
       // Stream a single build call and return continuation data if the server signals one
@@ -498,17 +503,20 @@ export default function ProjectBuilder() {
                   // Replace the streaming message with the final plan (server-sanitized)
                   setMessages(prev => {
                     const updated = [...prev]
-                    updated[updated.length - 1] = { role: 'assistant', content: event.message, isPlan: true }
+                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: event.message, isPlan: true }
                     return updated
                   })
                   saveChatMessage('assistant', event.message, true)
                 } else {
                   const assistantMsg = event.message || 'Build complete'
-                  setMessages(prev => [...prev, { role: 'assistant', content: assistantMsg, fileOps }])
+                  setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: assistantMsg, fileOps }])
                   saveChatMessage('assistant', assistantMsg)
                 }
 
-                if (event.newBalance !== undefined) setCreditBalance(event.newBalance)
+                if (event.newBalance !== undefined) {
+                  setCreditBalance(event.newBalance)
+                  window.dispatchEvent(new Event('creditBalanceChanged'))
+                }
 
                 // Auto-open first changed file
                 if (fileOps.length > 0) {
@@ -609,7 +617,7 @@ export default function ProjectBuilder() {
                 setPendingDbTables(JSON.stringify(event.pendingTables || []))
                 setShowDbChoice(true)
                 // Add inline DB choice to chat so user can still pick if modal is dismissed
-                setMessages(prev => [...prev, { role: 'assistant', content: 'Your app needs a database. Choose where to store your data:', isDbChoice: true }])
+                setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: 'Your app needs a database. Choose where to store your data:', isDbChoice: true }])
                 setBuildStatus(null)
                 setLoading(false)
                 return {} // Stop processing this build
@@ -632,7 +640,7 @@ export default function ProjectBuilder() {
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setLastError(err.message)
-        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err.message}` }])
+        setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: `Error: ${err.message}` }])
         saveChatMessage('assistant', `Error: ${err.message}`)
       }
     } finally {
@@ -710,7 +718,7 @@ export default function ProjectBuilder() {
       // Reload files and refresh preview
       await loadFiles()
       setBuildTrigger(prev => prev + 1)
-      setMessages(prev => [...prev, { role: 'assistant', content: '↩️ Build undone — files restored to previous state.' }])
+      setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: '↩️ Build undone — files restored to previous state.' }])
     } catch (err: any) {
       setLastError(err.message || 'Undo failed')
     }
@@ -899,8 +907,8 @@ export default function ProjectBuilder() {
                   </div>
                 ) : (
                   <>
-                    {messages.map((msg, i) => (
-                      <div key={i} className={`flex flex-col ${msg.role==='user' ? 'items-end' : ''}`}>
+                    {messages.map((msg) => (
+                      <div key={msg.id} className={`flex flex-col ${msg.role==='user' ? 'items-end' : ''}`}>
                         <div className={`max-w-[92%] px-3 py-2 rounded-[10px] ${
                           msg.role==='user'
                             ? 'bg-brand text-white'
@@ -939,7 +947,7 @@ export default function ProjectBuilder() {
                                 onClick={() => {
                                   setShowDbChoice(false)
                                   supabase.from('projects').update({ db_provider: 'custom' }).eq('id', projectId as string).then(() => {
-                                    setMessages(prev => [...prev, { role: 'user', content: 'Connect own Supabase' }])
+                                    setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: 'Connect own Supabase' }])
                                     setShowSupabaseConnect(true)
                                   })
                                 }}
@@ -1099,7 +1107,7 @@ export default function ProjectBuilder() {
                   nodes={fileTree}
                   activeFilePath={activeTab}
                   onFileSelect={openFile}
-                  onNewFile={() => setShowNewFile(true)}
+                  onNewFile={showNewFileDialog}
                   onDeleteFile={handleDeleteFile}
                 />
 
@@ -1174,7 +1182,7 @@ export default function ProjectBuilder() {
                       nodes={fileTree}
                       activeFilePath={activeTab}
                       onFileSelect={openFile}
-                      onNewFile={() => setShowNewFile(true)}
+                      onNewFile={showNewFileDialog}
                       onDeleteFile={handleDeleteFile}
                     />
                   </div>
@@ -1198,7 +1206,7 @@ export default function ProjectBuilder() {
                       nodes={fileTree}
                       activeFilePath={activeTab}
                       onFileSelect={openFile}
-                      onNewFile={() => setShowNewFile(true)}
+                      onNewFile={showNewFileDialog}
                       onDeleteFile={handleDeleteFile}
                     />
                   </div>
@@ -1262,7 +1270,7 @@ export default function ProjectBuilder() {
           }}
           onChooseCustom={() => {
             setShowDbChoice(false)
-            setMessages(prev => [...prev, { role: 'user', content: 'Connect own Supabase' }])
+            setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: 'Connect own Supabase' }])
             setShowSupabaseConnect(true)
           }}
           onClose={() => setShowDbChoice(false)}

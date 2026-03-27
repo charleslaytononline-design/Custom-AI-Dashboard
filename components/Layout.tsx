@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/router'
+import Link from 'next/link'
 import { supabase } from '../lib/supabase'
 import { useMobile } from '../hooks/useMobile'
 import { useTheme } from '../contexts/ThemeContext'
@@ -38,13 +39,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     // Child pages fire this event to open the buy modal
     const handler = () => setShowBuy(true)
     window.addEventListener('openBuyModal', handler)
-    return () => window.removeEventListener('openBuyModal', handler)
+
+    // Refresh balance when credits change (after builds, payments, etc.)
+    const creditHandler = () => {
+      supabase.auth.getUser().then(({ data }) => {
+        if (data.user) refreshProfile(data.user.id)
+      })
+    }
+    window.addEventListener('creditBalanceChanged', creditHandler)
+
+    return () => {
+      window.removeEventListener('openBuyModal', handler)
+      window.removeEventListener('creditBalanceChanged', creditHandler)
+    }
   }, [])
 
-  // Refresh balance on every navigation (handles payment success redirects too)
+  // Refresh balance on payment success redirect only
   useEffect(() => {
-    if (user) refreshProfile(user.id)
-  }, [router.asPath])
+    if (user && router.asPath.includes('success=true')) {
+      refreshProfile(user.id)
+    }
+  }, [router.asPath, user])
 
   // Close sidebar on route change (mobile)
   useEffect(() => {
@@ -96,25 +111,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <nav style={s.nav}>
-          <div
-            style={{ ...s.navItem, ...(path === '/home' ? s.navActive : {}) }}
-            onClick={() => router.push('/home')}
-          >
-            <span>⊞</span> Projects
-          </div>
-          <div
-            style={{ ...s.navItem, ...(path === '/profile' ? s.navActive : {}) }}
-            onClick={() => router.push('/profile')}
-          >
-            <span>◎</span> My Profile
-          </div>
-          {isAdmin && (
-            <div
-              style={{ ...s.navItem, ...(path === '/admin' ? s.navActive : {}) }}
-              onClick={() => router.push('/admin')}
-            >
-              <span>🛡</span> Admin
+          <Link href="/home" style={{ textDecoration: 'none' }}>
+            <div style={{ ...s.navItem, ...(path === '/home' ? s.navActive : {}) }}>
+              <span>⊞</span> Projects
             </div>
+          </Link>
+          <Link href="/profile" style={{ textDecoration: 'none' }}>
+            <div style={{ ...s.navItem, ...(path === '/profile' ? s.navActive : {}) }}>
+              <span>◎</span> My Profile
+            </div>
+          </Link>
+          {isAdmin && (
+            <Link href="/admin" style={{ textDecoration: 'none' }}>
+              <div style={{ ...s.navItem, ...(path === '/admin' ? s.navActive : {}) }}>
+                <span>🛡</span> Admin
+              </div>
+            </Link>
           )}
           <div style={{ marginTop: 'auto' }}>
             <div
