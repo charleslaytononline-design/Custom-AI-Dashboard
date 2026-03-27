@@ -395,13 +395,29 @@ export default function ProjectBuilder() {
                 const genLabel = planOnly ? 'Generating plan' : 'Generating code'
                 setBuildStatus(`${genLabel}... ${sizeLabel} chars (${elapsed}s)`)
 
-                // Stream text into chat message for plan mode
+                // Stream text into chat message for plan mode (with real-time sanitization)
                 if (planOnly) {
                   streamingTextRef.current += event.text || ''
-                  const streamedContent = streamingTextRef.current
+                  // Strip XML/code tags Claude may hallucinate in plan mode
+                  const cleaned = streamingTextRef.current
+                    .replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '')
+                    .replace(/<invoke[\s\S]*?<\/antml:invoke>/gi, '')
+                    .replace(/<invoke[\s\S]*?<\/invoke>/gi, '')
+                    .replace(/<FILE_OP[\s\S]*?<\/FILE_OP>/gi, '')
+                    .replace(/<CODE>[\s\S]*?<\/CODE>/gi, '')
+                    .replace(/<MESSAGE>([\s\S]*?)<\/MESSAGE>/gi, '$1')
+                    .replace(/<GENERATE_IMAGE>[\s\S]*?<\/GENERATE_IMAGE>/gi, '')
+                    .replace(/<CREATE_TABLE>[\s\S]*?<\/CREATE_TABLE>/gi, '')
+                    .replace(/<SHARED_CODE>[\s\S]*?<\/SHARED_CODE>/gi, '')
+                    .replace(/<ADD_PACKAGE[^>]*\/>/gi, '')
+                    .replace(/<CREATE_PAGE[^>]*\/>/gi, '')
+                    .replace(/<LAYOUT>[\s\S]*?<\/LAYOUT>/gi, '')
+                    .replace(/<[a-z_]+[\s\S]*$/i, '')  // Strip incomplete/unclosed tag at end of stream
+                    .replace(/\n{3,}/g, '\n\n')  // Collapse excess blank lines left by removed tags
+                    .trim()
                   setMessages(prev => {
                     const updated = [...prev]
-                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: streamedContent }
+                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: cleaned }
                     return updated
                   })
                 }

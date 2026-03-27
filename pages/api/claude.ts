@@ -596,14 +596,18 @@ RULES:
     const stopReason = finalMessage.stop_reason
 
     // Extract image prompts — frontend will generate images after build completes (avoids timeout)
-    const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
-    const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
-    imagePrompts = []
-    let imgMatch: RegExpExecArray | null
-    while ((imgMatch = imageRegex.exec(imageSearchText)) !== null) {
-      imagePrompts.push(imgMatch[1].trim())
+    // Skip in plan mode — plans should not trigger image generation
+    let trimmedImagePrompts: string[] = []
+    if (!planOnly) {
+      const imageSearchText = (isContinuation && partialRaw) ? partialRaw + raw : raw
+      const imageRegex = /<GENERATE_IMAGE>([\s\S]*?)<\/GENERATE_IMAGE>/gi
+      imagePrompts = []
+      let imgMatch: RegExpExecArray | null
+      while ((imgMatch = imageRegex.exec(imageSearchText)) !== null) {
+        imagePrompts.push(imgMatch[1].trim())
+      }
+      trimmedImagePrompts = imagePrompts.slice(0, settings.maxImagesPerBuild)
     }
-    const trimmedImagePrompts = imagePrompts.slice(0, settings.maxImagesPerBuild)
 
     // --- Post-processing: run independent tasks in parallel ---
     sendSSE({ type: 'status', text: 'Processing build...' })
