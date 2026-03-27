@@ -24,6 +24,15 @@
   --danger: #A32D2D;
   --radius: 8px;
   --radius-lg: 12px;
+
+  /* Derived semi-transparent overlays */
+  --accent-7:  color-mix(in srgb, var(--accent) 7%, transparent);
+  --accent-10: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-15: color-mix(in srgb, var(--accent) 15%, transparent);
+  --accent-20: color-mix(in srgb, var(--accent) 20%, transparent);
+  --accent-30: color-mix(in srgb, var(--accent) 30%, transparent);
+  --danger-12: color-mix(in srgb, var(--danger) 12%, transparent);
+  --danger-25: color-mix(in srgb, var(--danger) 25%, transparent);
 }
 
 html, body {

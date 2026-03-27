@@ -136,6 +136,22 @@ export function applyTheme(colors: ThemeColors) {
   for (const [key, cssVar] of Object.entries(CSS_VAR_MAP)) {
     root.setProperty(cssVar, colors[key as keyof ThemeColors])
   }
+
+  // Derived semi-transparent accent/danger variables.
+  // These use color-mix() which works via setProperty() but NOT in React inline styles.
+  // Components reference these as var(--accent-7), var(--accent-10), etc.
+  const derived: Record<string, string> = {
+    '--accent-7':  'color-mix(in srgb, var(--accent) 7%, transparent)',
+    '--accent-10': 'color-mix(in srgb, var(--accent) 10%, transparent)',
+    '--accent-15': 'color-mix(in srgb, var(--accent) 15%, transparent)',
+    '--accent-20': 'color-mix(in srgb, var(--accent) 20%, transparent)',
+    '--accent-30': 'color-mix(in srgb, var(--accent) 30%, transparent)',
+    '--danger-12': 'color-mix(in srgb, var(--danger) 12%, transparent)',
+    '--danger-25': 'color-mix(in srgb, var(--danger) 25%, transparent)',
+  }
+  for (const [cssVar, value] of Object.entries(derived)) {
+    root.setProperty(cssVar, value)
+  }
 }
 
 export function getDefaultTheme(): Theme {
