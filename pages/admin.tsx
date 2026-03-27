@@ -1034,6 +1034,7 @@ export default function Admin() {
 
   const isMobile = useMobile()
   const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
+  const realGiftApiCost = totalRevenue > 0 ? totalApiCost * (totalGiftUsed / totalRevenue) : 0
   const realRevenue = totalRevenue - totalGiftUsed
   const actualProfit = realRevenue - totalApiCost - failedCostTotal - stoppedCostTotal
   const margin = realRevenue > 0 ? ((actualProfit / realRevenue) * 100).toFixed(1) : '0'
@@ -1074,8 +1075,8 @@ export default function Admin() {
         </div>
         <div style={{ ...s.statCard, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fbbf24' }}>Gifted Credits</div>
-          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 18 }}>${totalGifted.toFixed(2)} <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#5DCAA5' }}>${giftRemaining.toFixed(2)}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
-          <div style={s.statSub}>gifted / remaining / used</div>
+          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 16 }}>${totalGifted.toFixed(2)} <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#5DCAA5' }}>${giftRemaining.toFixed(2)}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#38bdf8' }}>${realGiftApiCost.toFixed(2)}</span></div>
+          <div style={s.statSub}>gifted / remaining / used / real API costs</div>
         </div>
       </div>
       <div style={{ ...s.statsGrid, gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
