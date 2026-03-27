@@ -943,9 +943,9 @@ export default function Admin() {
 
   const isMobile = useMobile()
   const giftRemaining = users.reduce((a, u) => a + (u.gift_balance || 0), 0)
-  const giftApiCost = totalGiftUsed > 0 ? totalGiftUsed / parseFloat(settings.markup_multiplier || '3') : 0
-  const actualProfit = totalProfit - giftApiCost - failedCostTotal - stoppedCostTotal
-  const margin = totalRevenue > 0 ? ((actualProfit / totalRevenue) * 100).toFixed(1) : '0'
+  const realRevenue = totalRevenue - totalGiftUsed
+  const actualProfit = realRevenue - totalApiCost - failedCostTotal - stoppedCostTotal
+  const margin = realRevenue > 0 ? ((actualProfit / realRevenue) * 100).toFixed(1) : '0'
   const filtered = users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()))
 
   if (loading) return <div style={s.loadingInner}>Loading...</div>
@@ -964,12 +964,12 @@ export default function Admin() {
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Revenue</div>
           <div style={s.statVal}>${totalRevenue.toFixed(2)}</div>
-          <div style={s.statSub}>charged to users</div>
+          <div style={s.statSub}>real: ${realRevenue.toFixed(2)} / gift: ${totalGiftUsed.toFixed(2)}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Your Profit</div>
           <div style={{ ...s.statVal, color: '#5DCAA5' }}>${actualProfit.toFixed(2)}</div>
-          <div style={s.statSub}>{margin}% margin{giftApiCost > 0 ? ` · -$${giftApiCost.toFixed(2)} gift API cost` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}{stoppedCostTotal > 0 ? ` · -$${stoppedCostTotal.toFixed(2)} stop costs` : ''}</div>
+          <div style={s.statSub}>{margin}% margin{totalGiftUsed > 0 ? ` · -$${totalGiftUsed.toFixed(2)} gift excluded` : ''}{failedCostTotal > 0 ? ` · -$${failedCostTotal.toFixed(2)} failed costs` : ''}{stoppedCostTotal > 0 ? ` · -$${stoppedCostTotal.toFixed(2)} stop costs` : ''}</div>
         </div>
         <div style={s.statCard}>
           <div style={s.statLabel}>Total Users</div>
@@ -1063,6 +1063,7 @@ export default function Admin() {
                   <th style={s.th}>Projects</th>
                   <th style={s.th}>Pages</th>
                   <th style={s.th}>Messages</th>
+                  <th style={{ ...s.th, color: '#fbbf24' }}>Gift Spend</th>
                   <th style={s.th}>Total Spend</th>
                   <th style={{ ...s.th, color: '#818cf8' }}>Anthropic Cost</th>
                   <th style={{ ...s.th, color: '#2dd4bf' }}>Replicate Cost</th>
@@ -1111,12 +1112,13 @@ export default function Admin() {
                     <td style={s.td}><span style={s.num}>{u.projectCount}</span></td>
                     <td style={s.td}><span style={s.num}>{u.pageCount}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.messageCount || 0).toLocaleString()}</span></td>
-                    <td style={s.td}><span style={s.num}>${(u.totalSpend || 0).toFixed(2)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#fbbf24' }}>${(u.giftUsed || 0).toFixed(2)}</span></td>
+                    <td style={s.td}><span style={s.num}>${((u.totalSpend || 0) - (u.giftUsed || 0)).toFixed(2)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#f09595' }}>${(u.anthropicCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#2dd4bf' }}>${(u.replicateCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={s.num}>{(u.tokenCount || 0).toLocaleString()}</span></td>
                     <td style={s.td}><span style={s.num}>{u.imageCount || 0}</span></td>
-                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${((u.totalSpend || 0) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.giftUsed || 0) - (u.failedCost || 0) - (u.stopCost || 0)).toFixed(4)}</span></td>
+                    <td style={s.td}><span style={{ ...s.num, color: '#5DCAA5' }}>${(((u.totalSpend || 0) - (u.giftUsed || 0)) - (u.anthropicCost || 0) - (u.replicateCost || 0) - (u.failedCost || 0) - (u.stopCost || 0)).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#fb923c' }}>{u.failedRequests || 0}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#f87171' }}>${(u.failedCost || 0).toFixed(4)}</span></td>
                     <td style={s.td}><span style={{ ...s.num, color: '#c084fc' }}>{u.stopRequests || 0}</span></td>
