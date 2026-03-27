@@ -125,10 +125,8 @@ export function generatePreviewHtml(options: PreviewOptions): string {
       value: { request: async function(name, _o, cb) { var fn = cb || _o; return await fn({ name: name, mode: 'exclusive' }); } },
       configurable: true, writable: true
     });
-    // Defense-in-depth: prevent native form submissions. Primary fix is blob URL origin in PreviewFrame.tsx.
-    document.addEventListener('submit', function(e) { e.preventDefault(); }, true);
-    // Defense-in-depth: override programmatic form.submit() which bypasses addEventListener
-    HTMLFormElement.prototype.submit = function() {};
+    // Form submissions are secured by blob URL origin + sandbox allow-forms attribute in PreviewFrame.tsx.
+    // No JS-level form blocking needed — it breaks legitimate auth/contact forms in user projects.
   </script>
 
   <!-- Error & console forwarding to parent -->

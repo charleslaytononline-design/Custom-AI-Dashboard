@@ -76,6 +76,7 @@ export default memo(function PreviewFrame({
   const [viewport, setViewport] = useState<Viewport>('desktop')
   const [previewSource, setPreviewSource] = useState<'live' | 'deployed'>('live')
   const bundleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasMountBundledRef = useRef(false)
 
   // Convert files array to a map for the bundler
   const fileMap = useMemo(() => {
@@ -163,9 +164,18 @@ export default memo(function PreviewFrame({
 
   // Rebundle when files change (debounced) or buildTrigger changes
   // Auto-bundles on page load if project has files — existing projects render immediately
+  // Forces an immediate (non-debounced) bundle on first mount to fix stale previews on re-navigation
   useEffect(() => {
     if (!isReactProject) return
 
+    // First mount: bundle immediately without debounce so preview renders on page load
+    if (!hasMountBundledRef.current) {
+      hasMountBundledRef.current = true
+      bundleAndRender()
+      return
+    }
+
+    // Subsequent file changes: debounce to avoid excessive re-bundles
     if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     bundleTimerRef.current = setTimeout(() => {
       bundleAndRender()
