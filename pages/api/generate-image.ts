@@ -29,13 +29,14 @@ async function logEvent(
   severity: 'info' | 'warn' | 'error',
   message: string,
   userId?: string,
+  email?: string | null,
   metadata?: Record<string, unknown>
 ) {
   try {
     const fingerprint = crypto.createHash('md5').update(`${event_type}:${(message || '').slice(0, 100)}`).digest('hex')
     await supabase.from('platform_logs').insert({
       event_type, severity, message,
-      email: null,
+      email: email || null,
       metadata: { userId, ...metadata },
       fingerprint,
     })
@@ -70,7 +71,7 @@ async function runPrediction(model: string, prompt: string): Promise<string> {
       headers: {
         Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         'Content-Type': 'application/json',
-        'Prefer': 'wait=60',
+        'Prefer': 'wait=30',
       },
       body: JSON.stringify({
         input: {
@@ -152,7 +153,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const userId = sessionUserId
 
   const [{ data: profile }, { data: modelSetting }, imageSettings] = await Promise.all([
-    supabase.from('profiles').select('credit_balance, gift_balance, role, plan_id').eq('id', userId).single(),
+    supabase.from('profiles').select('credit_balance, gift_balance, role, plan_id, email').eq('id', userId).single(),
     supabase.from('settings').select('value').eq('key', 'ai_image_model').single(),
     getImageSettings(),
   ])
@@ -161,6 +162,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const chargePerImage = costPerImage * imageSettings.markupMultiplier
 
   if (!profile) return res.status(401).json({ error: 'User not found' })
+  const userEmail = (profile as any).email || null
 
   // Role permission check: can this user build?
   const { data: rolePerms } = await supabase.from('roles').select('can_build').eq('name', profile.role).single()
@@ -205,7 +207,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // The brief pause avoids hitting Replicate's burst rate limit from rapid sequential requests
       await logEvent('builder_error', 'warn',
         `${primaryModel} SSL cert error — auto-retrying with ${FALLBACK_MODEL}`,
-        userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
+        userId, userEmail, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), originalError: primaryErr.message }
       )
       await new Promise(r => setTimeout(r, 8000)) // wait 8s to clear burst limit
       try {
@@ -214,14 +216,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       } catch (fallbackErr: any) {
         await logEvent('builder_error', 'error',
           `Fallback ${FALLBACK_MODEL} also failed: ${fallbackErr.message}`,
-          userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), error: fallbackErr.message, stack: fallbackErr.stack?.slice(0, 500) }
+          userId, userEmail, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), error: fallbackErr.message, stack: fallbackErr.stack?.slice(0, 500) }
         )
         return res.status(500).json({ error: 'Image generation failed', detail: fallbackErr.message })
       }
     } else {
       await logEvent('builder_error', 'error',
         `Image generation failed [${primaryModel}]: ${primaryErr.message}`,
-        userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), model: primaryModel, error: primaryErr.message, stack: primaryErr.stack?.slice(0, 500) }
+        userId, userEmail, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200), model: primaryModel, error: primaryErr.message, stack: primaryErr.stack?.slice(0, 500) }
       )
       return res.status(500).json({ error: 'Image generation failed', detail: primaryErr.message })
     }
@@ -230,7 +232,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (usedModel !== primaryModel) {
     await logEvent('builder_error', 'warn',
       `Image generated with fallback model ${usedModel} (primary ${primaryModel} had SSL error)`,
-      userId, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200) }
+      userId, userEmail, { sourceFile: 'pages/api/generate-image.ts', prompt: prompt?.slice(0, 200) }
     )
   }
 
@@ -247,7 +249,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .upload(fileName, imgBuffer, { contentType: 'image/webp', cacheControl: '31536000' })
 
     if (uploadError) {
-      await logEvent('builder_error', 'warn', `Supabase storage upload failed — using temporary Replicate URL`, userId, {
+      await logEvent('builder_error', 'warn', `Supabase storage upload failed — using temporary Replicate URL`, userId, userEmail, {
         sourceFile: 'pages/api/generate-image.ts', storageError: uploadError.message, fileName,
       })
     } else if (uploadData) {
@@ -255,7 +257,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       permanentUrl = urlData.publicUrl
     }
   } catch (storageErr: any) {
-    await logEvent('builder_error', 'warn', `Storage step threw: ${storageErr.message} — using Replicate URL`, userId, {
+    await logEvent('builder_error', 'warn', `Storage step threw: ${storageErr.message} — using Replicate URL`, userId, userEmail, {
       sourceFile: 'pages/api/generate-image.ts', error: storageErr.message, stack: storageErr.stack?.slice(0, 500),
     })
   }

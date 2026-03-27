@@ -454,7 +454,7 @@ export default function Admin() {
     if (events) setSecurityEvents(events)
 
     // Load security notes
-    const { data: notesSetting } = await supabase.from('settings').select('value').eq('key', 'security_audit_notes').single()
+    const { data: notesSetting } = await supabase.from('settings').select('value').eq('key', 'security_audit_notes').maybeSingle()
     if (notesSetting?.value) setSecurityNotes(notesSetting.value)
 
     // Detect suspicious activity from logs
@@ -644,7 +644,7 @@ export default function Admin() {
 
   // Welcome page editor helpers
   async function loadWelcomeConfig() {
-    const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').single()
+    const { data } = await supabase.from('settings').select('value').eq('key', 'welcome_page_config').maybeSingle()
     if (data?.value) {
       try { setWelcomeConfig(JSON.parse(data.value)) } catch {}
     }

@@ -4,9 +4,13 @@ import Head from 'next/head'
 import '../styles/globals.css'
 import { useSessionTimeout } from '../hooks/useSessionTimeout'
 import { ThemeProvider } from '../contexts/ThemeContext'
+import { supabase } from '../lib/supabase'
+
+// Module-level email cache — populated when auth session is detected
+let _userEmail: string | null = null
 
 // Batch log entries and flush every 30 seconds (or on page unload)
-const logQueue: Array<{ event_type: string; severity: string; message: string; metadata?: object }> = []
+const logQueue: Array<{ event_type: string; severity: string; message: string; email?: string | null; metadata?: object }> = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
 function flushLogs() {
@@ -31,17 +35,34 @@ function scheduleFlush() {
 }
 
 function sendLog(event_type: string, severity: string, message: string, metadata?: object) {
-  logQueue.push({ event_type, severity, message, metadata })
+  logQueue.push({ event_type, severity, message, email: _userEmail || undefined, metadata })
   // Flush errors immediately, batch warnings/info
   if (severity === 'error') { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }; flushLogs() }
   else scheduleFlush()
 }
+
+// Known bot/noise patterns to ignore in warning logs
+const IGNORED_WARN_PATTERNS = [
+  'autoconsent already initialized',
+  'createBrowserSupabaseClient',
+  'createPagesBrowserClient',
+  'Please utilize the `createPagesBrowserClient` function instead',
+]
 
 export default function App({ Component, pageProps }: AppProps) {
   useSessionTimeout()
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+
+    // Populate email from current auth session
+    supabase.auth.getSession().then(({ data }) => {
+      _userEmail = data.session?.user?.email || null
+    })
+    // Keep email in sync on auth state changes (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      _userEmail = session?.user?.email || null
+    })
 
     // Track recently sent messages to avoid duplicate log spam
     const recent = new Set<string>()
@@ -87,10 +108,18 @@ export default function App({ Component, pageProps }: AppProps) {
     const origError = console.error
     console.error = (...args: unknown[]) => {
       origError(...args)
-      const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+      let msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+      const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
+
+      // Enrich useless empty error messages
+      if (msg === '{}' || msg === '' || msg === 'undefined') {
+        msg = `Empty error object logged at ${window.location.pathname} | stack: ${callerStack?.split('\n')[0] || 'unknown'}`
+      } else if (msg === '{"cancelled":true}') {
+        msg = `Operation cancelled at ${window.location.pathname}`
+      }
+
       const key = `cerr:${msg.slice(0, 120)}`
       if (dedupe(key)) {
-        const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
         sendLog('console_error', 'error', msg.slice(0, 1000), {
           ...getPageContext(),
           callerStack,
@@ -103,6 +132,10 @@ export default function App({ Component, pageProps }: AppProps) {
     console.warn = (...args: unknown[]) => {
       origWarn(...args)
       const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
+
+      // Skip known bot/noise warnings
+      if (IGNORED_WARN_PATTERNS.some(p => msg.includes(p))) return
+
       const key = `cwarn:${msg.slice(0, 120)}`
       if (dedupe(key)) {
         const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
@@ -126,6 +159,7 @@ export default function App({ Component, pageProps }: AppProps) {
       document.removeEventListener('visibilitychange', onVisChange)
       console.error = origError
       console.warn = origWarn
+      subscription.unsubscribe()
       flushLogs()
     }
   }, [])

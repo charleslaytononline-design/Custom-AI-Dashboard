@@ -1,4 +1,6 @@
-import { createBrowserSupabaseClient } from '@supabase/auth-helpers-nextjs'
+import { createClient } from '@supabase/supabase-js'
 
-// Cookie-based session storage — enables server-side auth checks in getServerSideProps
-export const supabase = createBrowserSupabaseClient()
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)

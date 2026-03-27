@@ -21,6 +21,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'event_type and message required' })
   }
 
+  // Resolve email: use provided email, or look up from authenticated session
+  let resolvedEmail = email || null
+  if (!resolvedEmail && sessionUserId) {
+    try {
+      const { data: profile } = await supabase.from('profiles').select('email').eq('id', sessionUserId).single()
+      resolvedEmail = profile?.email || null
+    } catch { /* don't fail logging if profile lookup fails */ }
+  }
+
   // Compute fingerprint for dedup and tracking (event_type + first 100 chars of message)
   const fingerprint = crypto.createHash('md5').update(`${event_type}:${(message || '').slice(0, 100)}`).digest('hex')
 
@@ -32,7 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     _referer: req.headers.referer || undefined,
     _userAgent: (req.headers['user-agent'] || '').slice(0, 200) || undefined,
   }
-  await supabase.from('platform_logs').insert({ event_type, severity, message, email: email || null, metadata: enrichedMetadata, fingerprint })
+  await supabase.from('platform_logs').insert({ event_type, severity, message, email: resolvedEmail, metadata: enrichedMetadata, fingerprint })
 
   // Check if an email alert should fire for this event type
   const { data: setting } = await supabase
@@ -66,7 +75,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             <table style="width:100%;border-collapse:collapse;font-size:14px">
               <tr><td style="padding:8px 0;color:#666;width:120px">Event</td><td style="padding:8px 0;font-weight:600">${event_type}</td></tr>
               <tr><td style="padding:8px 0;color:#666">Severity</td><td style="padding:8px 0">${severity}</td></tr>
-              ${email ? `<tr><td style="padding:8px 0;color:#666">Email</td><td style="padding:8px 0">${email}</td></tr>` : ''}
+              ${resolvedEmail ? `<tr><td style="padding:8px 0;color:#666">Email</td><td style="padding:8px 0">${resolvedEmail}</td></tr>` : ''}
               <tr><td style="padding:8px 0;color:#666;vertical-align:top">Message</td><td style="padding:8px 0">${message}</td></tr>
             </table>
             ${metaHtml}
