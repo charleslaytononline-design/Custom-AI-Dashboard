@@ -96,7 +96,7 @@ export default function ResetPassword() {
           </div>
         </div>
         {!ready ? (
-          <div style={{ color: '#888', fontSize: 14, textAlign: 'center' as const }}>
+          <div style={{ color: 'var(--text-2)', fontSize: 14, textAlign: 'center' as const }}>
             Verifying reset link...
           </div>
         ) : (
@@ -124,19 +124,19 @@ export default function ResetPassword() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a', padding: 16 },
-  card: { background: '#111', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: 40, width: '100%', maxWidth: 400 },
+  page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: 16 },
+  card: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 16, padding: 40, width: '100%', maxWidth: 400 },
   brand: { display: 'flex', alignItems: 'center', gap: 14, marginBottom: 32 },
-  brandIcon: { width: 44, height: 44, background: '#7c6ef7', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white', flexShrink: 0 },
-  brandName: { fontSize: 17, fontWeight: 600, color: '#f0f0f0' },
-  brandSub: { fontSize: 12, color: '#555', marginTop: 2 },
+  brandIcon: { width: 44, height: 44, background: 'var(--accent)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'white', flexShrink: 0 },
+  brandName: { fontSize: 17, fontWeight: 600, color: 'var(--text)' },
+  brandSub: { fontSize: 12, color: 'var(--text-3)', marginTop: 2 },
   form: { display: 'flex', flexDirection: 'column', gap: 16 },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
-  label: { fontSize: 12, color: '#888' },
-  input: { padding: '10px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#f0f0f0', fontSize: 14, outline: 'none' },
+  label: { fontSize: 12, color: 'var(--text-2)' },
+  input: { padding: '10px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 14, outline: 'none' },
   err: { background: 'rgba(163,45,45,0.15)', border: '1px solid rgba(163,45,45,0.3)', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#f09595' },
   ok: { background: 'rgba(29,158,117,0.15)', border: '1px solid rgba(29,158,117,0.3)', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#5DCAA5' },
-  btn: { padding: 11, background: '#7c6ef7', border: 'none', borderRadius: 8, color: 'white', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 },
-  toggle: { marginTop: 24, textAlign: 'center', fontSize: 13, color: '#555' },
-  link: { background: 'none', border: 'none', color: '#7c6ef7', cursor: 'pointer', fontSize: 13, padding: 0 },
+  btn: { padding: 11, background: 'var(--accent)', border: 'none', borderRadius: 8, color: 'white', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 },
+  toggle: { marginTop: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-3)' },
+  link: { background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 13, padding: 0 },
 }

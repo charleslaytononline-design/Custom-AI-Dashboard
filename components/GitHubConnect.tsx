@@ -42,44 +42,44 @@ export default function GitHubConnect({ projectId, userId, projectName }: GitHub
     <>
       <button
         onClick={() => setShowModal(true)}
-        className="px-3 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[#888] text-xs cursor-pointer hover:bg-white/[0.04] shrink-0 transition-colors"
+        className="px-3 py-1.5 bg-transparent border border-[var(--border)] rounded-md text-[var(--text-2)] text-xs cursor-pointer hover:bg-white/[0.04] shrink-0 transition-colors"
       >
         GitHub
       </button>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#111] border border-white/10 rounded-2xl p-6 w-full max-w-[420px] flex flex-col gap-4">
+          <div className="bg-[var(--bg-2)] border border-white/10 rounded-2xl p-6 w-full max-w-[420px] flex flex-col gap-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-sm font-semibold text-[#f0f0f0]">Export to GitHub</h2>
-              <button onClick={() => setShowModal(false)} className="bg-transparent border-none text-[#666] text-sm cursor-pointer">✕</button>
+              <h2 className="text-sm font-semibold text-[var(--text)]">Export to GitHub</h2>
+              <button onClick={() => setShowModal(false)} className="bg-transparent border-none text-[var(--text-3)] text-sm cursor-pointer">✕</button>
             </div>
 
             <div className="flex flex-col gap-3">
               <div>
-                <label className="text-[11px] text-[#888] mb-1 block">GitHub Personal Access Token</label>
+                <label className="text-[11px] text-[var(--text-2)] mb-1 block">GitHub Personal Access Token</label>
                 <input
                   type="password"
                   value={token}
                   onChange={e => setToken(e.target.value)}
                   placeholder="ghp_..."
-                  className="w-full px-3 py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] outline-none"
+                  className="w-full px-3 py-2 bg-surface-3 border border-[var(--border)] rounded-lg text-[var(--text)] text-[13px] outline-none"
                 />
-                <p className="text-[10px] text-[#555] mt-1">
+                <p className="text-[10px] text-[var(--text-3)] mt-1">
                   Create one at github.com/settings/tokens with &quot;repo&quot; scope
                 </p>
               </div>
 
               <div>
-                <label className="text-[11px] text-[#888] mb-1 block">Repository Name</label>
+                <label className="text-[11px] text-[var(--text-2)] mb-1 block">Repository Name</label>
                 <input
                   value={repoName}
                   onChange={e => setRepoName(e.target.value)}
-                  className="w-full px-3 py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] outline-none"
+                  className="w-full px-3 py-2 bg-surface-3 border border-[var(--border)] rounded-lg text-[var(--text)] text-[13px] outline-none"
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-[12px] text-[#888] cursor-pointer">
+              <label className="flex items-center gap-2 text-[12px] text-[var(--text-2)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={isPrivate}
@@ -115,7 +115,7 @@ export default function GitHubConnect({ projectId, userId, projectName }: GitHub
               </button>
               <button
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer"
+                className="px-4 py-2 bg-transparent border border-[var(--border)] rounded-lg text-[var(--text-2)] text-[13px] cursor-pointer"
               >
                 Cancel
               </button>

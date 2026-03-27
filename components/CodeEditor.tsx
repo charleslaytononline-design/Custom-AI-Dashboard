@@ -59,10 +59,10 @@ export default function CodeEditor({ code, onChange, onSave, pageName, language 
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '6px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)',
-        background: '#0f0f0f', flexShrink: 0,
+        padding: '6px 12px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg)', flexShrink: 0,
       }}>
-        <span style={{ color: '#666', fontSize: 12, fontFamily: 'monospace' }}>
+        <span style={{ color: 'var(--text-3)', fontSize: 12, fontFamily: 'monospace' }}>
           {pageName}
         </span>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -72,8 +72,8 @@ export default function CodeEditor({ code, onChange, onSave, pageName, language 
               navigator.clipboard.writeText(val)
             }}
             style={{
-              padding: '3px 10px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6, color: '#666', fontSize: 11, cursor: 'pointer',
+              padding: '3px 10px', background: 'var(--bg-3)', border: '1px solid var(--border-2)',
+              borderRadius: 6, color: 'var(--text-3)', fontSize: 11, cursor: 'pointer',
             }}
           >
             Copy
@@ -116,7 +116,7 @@ export default function CodeEditor({ code, onChange, onSave, pageName, language 
           scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
         }}
         loading={
-          <div style={{ background: '#0a0a0a', color: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 13 }}>
+          <div style={{ background: 'var(--bg)', color: 'var(--text-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 13 }}>
             Loading editor...
           </div>
         }

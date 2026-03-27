@@ -87,7 +87,7 @@ export default function PackageManager({ projectId, onPackagesChange }: PackageM
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between px-3 py-1.5">
-        <span className="text-[10px] text-[#555] font-semibold uppercase tracking-wider">Packages</span>
+        <span className="text-[10px] text-[var(--text-3)] font-semibold uppercase tracking-wider">Packages</span>
         <button
           onClick={() => setShowAdd(!showAdd)}
           className="text-[10px] text-brand bg-transparent border-none cursor-pointer hover:underline"
@@ -103,7 +103,7 @@ export default function PackageManager({ projectId, onPackagesChange }: PackageM
             value={newPkg}
             onChange={e => setNewPkg(e.target.value)}
             placeholder="package-name"
-            className="px-2 py-1.5 bg-[#0a0a0a] border border-white/10 rounded text-xs text-white outline-none focus:border-brand/50"
+            className="px-2 py-1.5 bg-[var(--bg)] border border-white/10 rounded text-xs text-white outline-none focus:border-brand/50"
             onKeyDown={e => e.key === 'Enter' && addPackage(newPkg, newVersion)}
           />
           <div className="flex gap-1">
@@ -111,7 +111,7 @@ export default function PackageManager({ projectId, onPackagesChange }: PackageM
               value={newVersion}
               onChange={e => setNewVersion(e.target.value)}
               placeholder="version"
-              className="flex-1 px-2 py-1 bg-[#0a0a0a] border border-white/10 rounded text-[10px] text-[#888] outline-none"
+              className="flex-1 px-2 py-1 bg-[var(--bg)] border border-white/10 rounded text-[10px] text-[var(--text-2)] outline-none"
             />
             <button
               onClick={() => addPackage(newPkg, newVersion)}
@@ -131,7 +131,7 @@ export default function PackageManager({ projectId, onPackagesChange }: PackageM
                 <button
                   key={p.name}
                   onClick={() => addPackage(p.name, p.version)}
-                  className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-white/[0.08] text-[#888] cursor-pointer hover:text-white hover:bg-white/10"
+                  className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 border border-[var(--border)] text-[var(--text-2)] cursor-pointer hover:text-white hover:bg-white/10"
                   title={p.desc}
                 >
                   + {p.name}
@@ -144,17 +144,17 @@ export default function PackageManager({ projectId, onPackagesChange }: PackageM
       {/* Installed packages */}
       <div className="px-3 space-y-0.5">
         {packages.length === 0 ? (
-          <div className="text-[10px] text-[#444] py-1">No extra packages installed</div>
+          <div className="text-[10px] text-[var(--text-3)] py-1">No extra packages installed</div>
         ) : (
           packages.map(pkg => (
             <div key={pkg.id} className="flex items-center justify-between group py-0.5">
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-[10px] text-[#aaa] truncate">{pkg.name}</span>
-                <span className="text-[9px] text-[#444]">{pkg.version}</span>
+                <span className="text-[10px] text-[var(--text-2)] truncate">{pkg.name}</span>
+                <span className="text-[9px] text-[var(--text-3)]">{pkg.version}</span>
               </div>
               <button
                 onClick={() => removePackage(pkg.id)}
-                className="text-[10px] text-[#555] hover:text-red-400 bg-transparent border-none cursor-pointer opacity-0 group-hover:opacity-100"
+                className="text-[10px] text-[var(--text-3)] hover:text-red-400 bg-transparent border-none cursor-pointer opacity-0 group-hover:opacity-100"
               >
                 ✕
               </button>

@@ -217,27 +217,27 @@ export default function PreviewFrame({
         maxWidth: '100%',
         height: '100%',
         margin: '0 auto',
-        borderLeft: '1px solid rgba(255,255,255,0.07)',
-        borderRight: '1px solid rgba(255,255,255,0.07)',
+        borderLeft: '1px solid var(--border)',
+        borderRight: '1px solid var(--border)',
       }
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       {/* Preview toolbar */}
-      <div className="flex items-center gap-1.5 px-2 py-1 border-b border-white/[0.07] bg-[#0c0c0c] shrink-0">
+      <div className="flex items-center gap-1.5 px-2 py-1 border-b border-[var(--border)] bg-[#0c0c0c] shrink-0">
         {/* Source toggle (live vs deployed) */}
         {isReactProject && (
-          <div className="flex items-center rounded-md overflow-hidden border border-white/[0.08] mr-1.5">
+          <div className="flex items-center rounded-md overflow-hidden border border-[var(--border)] mr-1.5">
             <button
               onClick={() => setPreviewSource('live')}
-              className={`px-2 py-0.5 text-[10px] font-medium border-none cursor-pointer transition-colors ${previewSource === 'live' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#555] hover:text-[#888]'}`}
+              className={`px-2 py-0.5 text-[10px] font-medium border-none cursor-pointer transition-colors ${previewSource === 'live' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[var(--text-3)] hover:text-[var(--text-2)]'}`}
             >
               Live
             </button>
             {deployUrl && (
               <button
                 onClick={() => setPreviewSource('deployed')}
-                className={`px-2 py-0.5 text-[10px] font-medium border-none cursor-pointer transition-colors ${previewSource === 'deployed' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#555] hover:text-[#888]'}`}
+                className={`px-2 py-0.5 text-[10px] font-medium border-none cursor-pointer transition-colors ${previewSource === 'deployed' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[var(--text-3)] hover:text-[var(--text-2)]'}`}
               >
                 Deployed
               </button>
@@ -251,7 +251,7 @@ export default function PreviewFrame({
             <button
               key={key}
               onClick={() => setViewport(key)}
-              className={`w-6 h-6 flex items-center justify-center rounded text-xs border-none cursor-pointer transition-colors ${viewport === key ? 'bg-white/10 text-white' : 'bg-transparent text-[#444] hover:text-[#888]'}`}
+              className={`w-6 h-6 flex items-center justify-center rounded text-xs border-none cursor-pointer transition-colors ${viewport === key ? 'bg-white/10 text-white' : 'bg-transparent text-[var(--text-3)] hover:text-[var(--text-2)]'}`}
               title={key.charAt(0).toUpperCase() + key.slice(1)}
             >
               {val.label}
@@ -264,7 +264,7 @@ export default function PreviewFrame({
           <button
             onClick={bundleAndRender}
             disabled={bundling}
-            className="ml-1 px-2 py-0.5 text-[10px] text-[#555] hover:text-[#aaa] bg-transparent border border-white/[0.07] rounded cursor-pointer disabled:opacity-40"
+            className="ml-1 px-2 py-0.5 text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] bg-transparent border border-[var(--border)] rounded cursor-pointer disabled:opacity-40"
             title="Refresh preview"
           >
             {bundling ? '⟳' : '↻'} Refresh
@@ -283,10 +283,10 @@ export default function PreviewFrame({
           onClick={() => setShowConsole(!showConsole)}
           className={`px-2 py-0.5 text-[10px] font-medium border rounded cursor-pointer transition-colors ${
             showConsole
-              ? 'bg-white/10 border-white/20 text-[#ccc]'
+              ? 'bg-white/10 border-white/20 text-[var(--text-2)]'
               : errorCount > 0
                 ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                : 'bg-transparent border-white/[0.07] text-[#555]'
+                : 'bg-transparent border-[var(--border)] text-[var(--text-3)]'
           }`}
         >
           Console{errorCount > 0 ? ` (${errorCount})` : consoleCount > 0 ? ` (${consoleCount})` : ''}
@@ -296,7 +296,7 @@ export default function PreviewFrame({
         {deployUrl && (
           <button
             onClick={() => window.open(`https://${deployUrl}`, '_blank', 'noopener')}
-            className="px-2 py-0.5 text-[10px] text-[#555] hover:text-[#aaa] bg-transparent border border-white/[0.07] rounded cursor-pointer"
+            className="px-2 py-0.5 text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] bg-transparent border border-[var(--border)] rounded cursor-pointer"
             title="Open deployed site"
           >
             ↗
@@ -306,7 +306,7 @@ export default function PreviewFrame({
 
       {/* Preview content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 flex items-start justify-center overflow-auto bg-[#0a0a0a]">
+        <div className="flex-1 flex items-start justify-center overflow-auto bg-[var(--bg)]">
           <div style={viewportStyle}>
             {showDeployedPreview ? (
               <iframe
@@ -332,7 +332,7 @@ export default function PreviewFrame({
                 title="welcome"
               />
             ) : (
-              <div className="flex-1 flex items-center justify-center text-[#666] text-[13px] h-full">
+              <div className="flex-1 flex items-center justify-center text-[var(--text-3)] text-[13px] h-full">
                 {bundling ? 'Building preview...' : 'No preview available'}
               </div>
             )}
@@ -341,10 +341,10 @@ export default function PreviewFrame({
 
         {/* Console panel */}
         {showConsole && (
-          <div className="h-[180px] min-h-[120px] border-t border-white/[0.07] bg-[#0c0c0c] flex flex-col overflow-hidden">
+          <div className="h-[180px] min-h-[120px] border-t border-[var(--border)] bg-[#0c0c0c] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.05] shrink-0">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-semibold text-[#888] uppercase tracking-wider">Console</span>
+                <span className="text-[10px] font-semibold text-[var(--text-2)] uppercase tracking-wider">Console</span>
                 {errorCount > 0 && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">{errorCount} error{errorCount !== 1 ? 's' : ''}</span>
                 )}
@@ -352,13 +352,13 @@ export default function PreviewFrame({
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => { setConsoleEntries([]); setPreviewErrors([]); setBundleErrors([]) }}
-                  className="text-[10px] text-[#555] hover:text-[#aaa] bg-transparent border-none cursor-pointer"
+                  className="text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] bg-transparent border-none cursor-pointer"
                 >
                   Clear
                 </button>
                 <button
                   onClick={() => setShowConsole(false)}
-                  className="text-[10px] text-[#555] hover:text-[#aaa] bg-transparent border-none cursor-pointer"
+                  className="text-[10px] text-[var(--text-3)] hover:text-[var(--text-2)] bg-transparent border-none cursor-pointer"
                 >
                   ✕
                 </button>
@@ -404,21 +404,21 @@ export default function PreviewFrame({
                   <span className={`shrink-0 mt-px ${
                     entry.level === 'error' ? 'text-red-400' :
                     entry.level === 'warn' ? 'text-yellow-400' :
-                    'text-[#555]'
+                    'text-[var(--text-3)]'
                   }`}>
                     {entry.level === 'error' ? '✕' : entry.level === 'warn' ? '⚠' : '›'}
                   </span>
                   <span className={`flex-1 break-all ${
                     entry.level === 'error' ? 'text-red-300' :
                     entry.level === 'warn' ? 'text-yellow-300' :
-                    'text-[#999]'
+                    'text-[var(--text-2)]'
                   }`}>
                     {entry.message}
                   </span>
                 </div>
               ))}
               {bundleErrors.length === 0 && previewErrors.length === 0 && consoleEntries.length === 0 && (
-                <div className="text-[#444] py-2">No console output</div>
+                <div className="text-[var(--text-3)] py-2">No console output</div>
               )}
             </div>
           </div>

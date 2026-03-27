@@ -762,7 +762,7 @@ export default function ProjectBuilder() {
     }
   }, [files, projectEnvVars, projectSupabaseUrl, projectSupabaseAnonKey])
 
-  if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[#555] font-sans">Loading...</div>
+  if (!user || !project) return <div className="flex items-center justify-center h-screen bg-surface text-[var(--text-3)] font-sans">Loading...</div>
 
   const balanceDisplay = `$${creditBalance.toFixed(2)}`
   const balanceColor = creditBalance > 0 ? '#5DCAA5' : '#f09595'
@@ -794,14 +794,14 @@ export default function ProjectBuilder() {
           <div
             key={tab}
             className={`flex items-center gap-1.5 px-3 py-1.5 cursor-pointer whitespace-nowrap text-xs border-r border-white/[0.04] ${
-              tab === activeTab ? 'bg-surface-2 text-[#f0f0f0] border-b-2 border-b-brand' : 'text-[#666] border-b-2 border-b-transparent'
+              tab === activeTab ? 'bg-surface-2 text-[var(--text)] border-b-2 border-b-brand' : 'text-[var(--text-3)] border-b-2 border-b-transparent'
             }`}
             onClick={() => setActiveTab(tab)}
           >
             <span>{tab.split('/').pop()}</span>
             <button
               onClick={(e) => { e.stopPropagation(); closeTab(tab) }}
-              className="bg-transparent border-none text-[#555] cursor-pointer text-sm px-0.5 leading-none"
+              className="bg-transparent border-none text-[var(--text-3)] cursor-pointer text-sm px-0.5 leading-none"
             >×</button>
           </div>
         ))}
@@ -815,7 +815,7 @@ export default function ProjectBuilder() {
           language={getLanguage(activeTab)}
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center text-[#444] text-[13px]">
+        <div className="flex-1 flex items-center justify-center text-[var(--text-3)] text-[13px]">
           Select a file to start editing
         </div>
       )}
@@ -827,9 +827,9 @@ export default function ProjectBuilder() {
       {/* TOPBAR */}
       <div className="flex items-center justify-between px-3 h-[50px] border-b border-white/[0.07] bg-surface-1 shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-          <button onClick={() => router.push('/home')} className="px-2.5 py-1 bg-transparent border border-white/[0.08] rounded-md text-[#888] text-xs cursor-pointer shrink-0">← {isMobile ? '' : 'Projects'}</button>
-          {!isMobile && <span className="text-[#333] shrink-0">/</span>}
-          <span className={`text-sm font-medium text-[#f0f0f0] ${isMobile ? 'max-w-[120px]' : ''} overflow-hidden text-ellipsis whitespace-nowrap`}>
+          <button onClick={() => router.push('/home')} className="px-2.5 py-1 bg-transparent border border-white/[0.08] rounded-md text-[var(--text-2)] text-xs cursor-pointer shrink-0">← {isMobile ? '' : 'Projects'}</button>
+          {!isMobile && <span className="text-[var(--text-3)] shrink-0">/</span>}
+          <span className={`text-sm font-medium text-[var(--text)] ${isMobile ? 'max-w-[120px]' : ''} overflow-hidden text-ellipsis whitespace-nowrap`}>
             {project.name}
           </span>
         </div>
@@ -838,26 +838,26 @@ export default function ProjectBuilder() {
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full">
               <span className="text-[11px] font-semibold" style={{ color: balanceColor }}>{balanceDisplay}</span>
-              <span className="text-[10px] text-[#444] ml-1">cr</span>
+              <span className="text-[10px] text-[var(--text-3)] ml-1">cr</span>
             </div>
           </div>
         ) : (
           <div className="flex items-center gap-3 shrink-0">
             <div className="flex gap-0.5 bg-surface-2 rounded-[7px] border border-white/[0.08] p-0.5">
-              <button onClick={() => setViewMode('preview')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='preview' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Preview</button>
-              <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Code</button>
-              <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[#666]'}`}>Split</button>
+              <button onClick={() => setViewMode('preview')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='preview' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[var(--text-3)]'}`}>Preview</button>
+              <button onClick={() => setViewMode('code')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='code' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[var(--text-3)]'}`}>Code</button>
+              <button onClick={() => setViewMode('split')} className={`px-2.5 py-1 rounded-[5px] text-[11px] font-medium cursor-pointer border-none ${viewMode==='split' ? 'bg-brand/20 text-[#9d92f5]' : 'bg-transparent text-[var(--text-3)]'}`}>Split</button>
             </div>
             <button
               onClick={() => setShowSupabaseConnect(true)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${projectSupabaseUrl ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-transparent border-white/[0.08] text-[#666] hover:text-[#aaa]'}`}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${projectSupabaseUrl ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-transparent border-white/[0.08] text-[var(--text-3)] hover:text-[var(--text-2)]'}`}
               title={projectSupabaseUrl ? 'Supabase connected' : 'Connect Supabase'}
             >
               ⚡ {projectSupabaseUrl ? 'DB' : 'Supabase'}
             </button>
             <button
               onClick={() => setShowSchemaViewer(true)}
-              className="px-2 py-1 rounded-md text-[11px] cursor-pointer border bg-transparent border-white/[0.08] text-[#666] hover:text-[#aaa]"
+              className="px-2 py-1 rounded-md text-[11px] cursor-pointer border bg-transparent border-white/[0.08] text-[var(--text-3)] hover:text-[var(--text-2)]"
               title="View database schema"
             >
               🗄
@@ -866,9 +866,9 @@ export default function ProjectBuilder() {
             <DeployButton projectId={projectId as string} userId={user.id} />
             <div className="flex items-center px-2.5 py-1 bg-white/[0.04] border border-white/[0.08] rounded-full">
               <span className="text-[11px] font-semibold" style={{ color: balanceColor }}>{balanceDisplay}</span>
-              <span className="text-[10px] text-[#444] ml-1">credits</span>
+              <span className="text-[10px] text-[var(--text-3)] ml-1">credits</span>
             </div>
-            <span className="text-[11px] text-[#444]">{user.email}</span>
+            <span className="text-[11px] text-[var(--text-3)]">{user.email}</span>
           </div>
         )}
       </div>
@@ -878,8 +878,8 @@ export default function ProjectBuilder() {
         {/* LEFT PANEL */}
         <div className={`${isMobile ? 'w-full min-w-0' : 'w-[300px] min-w-[300px] border-r border-white/[0.07]'} flex flex-col bg-surface-1 overflow-hidden ${isMobile && !showLeft ? 'hidden' : ''}`}>
           <div className="flex border-b border-white/[0.07] shrink-0 items-center">
-            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='chat' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('chat')}>Chat</button>
-            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='files' ? 'text-[#f0f0f0] border-brand' : 'text-[#444] border-transparent'}`} onClick={() => setSidebarTab('files')}>Files ({files.length})</button>
+            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='chat' ? 'text-[var(--text)] border-brand' : 'text-[var(--text-3)] border-transparent'}`} onClick={() => setSidebarTab('chat')}>Chat</button>
+            <button className={`flex-1 py-2.5 bg-transparent border-none text-xs font-medium cursor-pointer border-b-2 ${sidebarTab==='files' ? 'text-[var(--text)] border-brand' : 'text-[var(--text-3)] border-transparent'}`} onClick={() => setSidebarTab('files')}>Files ({files.length})</button>
           </div>
 
           {sidebarTab === 'chat' && (
@@ -888,12 +888,12 @@ export default function ProjectBuilder() {
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-2 py-8 flex-1">
                     <div className="text-[28px] mb-3 text-brand/60">✦</div>
-                    <p className="text-[#999] text-[13px] text-center leading-relaxed mb-5">
+                    <p className="text-[var(--text-2)] text-[13px] text-center leading-relaxed mb-5">
                       Describe what to build and I'll create it instantly. You can also upload a screenshot for reference.
                     </p>
                     <div className="flex flex-wrap gap-1.5 justify-center">
                       {['Admin dashboard with sidebar', 'Inventory tracker', 'Sales dashboard with charts', 'User management panel'].map(t => (
-                        <button key={t} className="px-2.5 py-1 bg-surface-3 border border-white/[0.08] rounded-full text-[#aaa] text-[11px] cursor-pointer hover:text-white hover:border-white/20 transition-colors" onClick={() => setInput(t)}>{t}</button>
+                        <button key={t} className="px-2.5 py-1 bg-surface-3 border border-white/[0.08] rounded-full text-[var(--text-2)] text-[11px] cursor-pointer hover:text-white hover:border-white/20 transition-colors" onClick={() => setInput(t)}>{t}</button>
                       ))}
                     </div>
                   </div>
@@ -905,8 +905,8 @@ export default function ProjectBuilder() {
                           msg.role==='user'
                             ? 'bg-brand text-white'
                             : msg.isPlan
-                            ? 'bg-brand/[0.07] border border-brand/20 text-[#e0e0e0] max-w-full w-full'
-                            : 'bg-surface-3 border border-white/[0.07] text-[#e0e0e0]'
+                            ? 'bg-brand/[0.07] border border-brand/20 text-[var(--text)] max-w-full w-full'
+                            : 'bg-surface-3 border border-white/[0.07] text-[var(--text)]'
                         }`}>
                           {msg.isPlan && <div className="text-[11px] font-semibold text-[#9d92f5] mb-2 uppercase tracking-wider">Plan — approve to build</div>}
                           {msg.imageUrl && (
@@ -926,14 +926,14 @@ export default function ProjectBuilder() {
                                     if (lastUserMsg) sendMessage(lastUserMsg.content, 'Use our secure server')
                                   })
                                 }}
-                                className="w-full text-left p-3 bg-[#0a0a0a] border border-white/[0.08] rounded-xl hover:border-emerald-500/30 hover:bg-emerald-500/[0.03] transition-all cursor-pointer"
+                                className="w-full text-left p-3 bg-[var(--bg)] border border-white/[0.08] rounded-xl hover:border-emerald-500/30 hover:bg-emerald-500/[0.03] transition-all cursor-pointer"
                               >
                                 <div className="flex items-center gap-2">
                                   <span className="text-emerald-400 text-sm">⚡</span>
-                                  <span className="text-[13px] font-medium text-[#f0f0f0]">Use our secure server</span>
+                                  <span className="text-[13px] font-medium text-[var(--text)]">Use our secure server</span>
                                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">Recommended</span>
                                 </div>
-                                <p className="text-[11px] text-[#666] mt-1 ml-6">Instant setup, fully managed, secure & isolated</p>
+                                <p className="text-[11px] text-[var(--text-3)] mt-1 ml-6">Instant setup, fully managed, secure & isolated</p>
                               </button>
                               <button
                                 onClick={() => {
@@ -943,13 +943,13 @@ export default function ProjectBuilder() {
                                     setShowSupabaseConnect(true)
                                   })
                                 }}
-                                className="w-full text-left p-3 bg-[#0a0a0a] border border-white/[0.08] rounded-xl hover:border-white/20 hover:bg-white/[0.02] transition-all cursor-pointer"
+                                className="w-full text-left p-3 bg-[var(--bg)] border border-white/[0.08] rounded-xl hover:border-white/20 hover:bg-white/[0.02] transition-all cursor-pointer"
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[#888] text-sm">🔗</span>
-                                  <span className="text-[13px] font-medium text-[#ccc]">Connect your own Supabase</span>
+                                  <span className="text-[var(--text-2)] text-sm">🔗</span>
+                                  <span className="text-[13px] font-medium text-[var(--text-2)]">Connect your own Supabase</span>
                                 </div>
-                                <p className="text-[11px] text-[#555] mt-1 ml-6">Full control, own auth, requires setup</p>
+                                <p className="text-[11px] text-[var(--text-3)] mt-1 ml-6">Full control, own auth, requires setup</p>
                               </button>
                             </div>
                           )}
@@ -978,7 +978,7 @@ export default function ProjectBuilder() {
                                 <>
                                   <button
                                     onClick={() => setShowDiff(true)}
-                                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border bg-white/5 border-white/10 text-[#aaa] hover:text-white hover:bg-white/10"
+                                    className="text-[10px] px-2 py-0.5 rounded cursor-pointer border bg-white/5 border-white/10 text-[var(--text-2)] hover:text-white hover:bg-white/10"
                                   >
                                     View Changes
                                   </button>
@@ -997,9 +997,9 @@ export default function ProjectBuilder() {
                               {pendingPlan && (
                                 <button onClick={approvePlan} className="px-3.5 py-1.5 bg-brand border-none rounded-[7px] text-white text-xs font-medium cursor-pointer">✓ Approve & Build</button>
                               )}
-                              <button onClick={() => { setPlanModalContent(msg.content); setShowPlanModal(true) }} className="px-3 py-1.5 bg-surface-3 border border-white/10 rounded-[7px] text-[#aaa] text-xs cursor-pointer hover:text-white hover:border-white/20 transition-colors">📋 View Plan</button>
+                              <button onClick={() => { setPlanModalContent(msg.content); setShowPlanModal(true) }} className="px-3 py-1.5 bg-surface-3 border border-white/10 rounded-[7px] text-[var(--text-2)] text-xs cursor-pointer hover:text-white hover:border-white/20 transition-colors">📋 View Plan</button>
                               {pendingPlan && (
-                                <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[#666] text-xs cursor-pointer">✕ Revise</button>
+                                <button onClick={() => setPendingPlan(null)} className="px-3 py-1.5 bg-transparent border border-white/10 rounded-[7px] text-[var(--text-3)] text-xs cursor-pointer">✕ Revise</button>
                               )}
                             </div>
                           )}
@@ -1010,20 +1010,20 @@ export default function ProjectBuilder() {
                 )}
                 {loading && buildStatus && (
                   <div className="flex flex-col">
-                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[#e0e0e0]">
+                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[var(--text)]">
                       <div className="flex gap-1.5 items-center">
                         <span className="text-[#7c6ef7] text-xs inline-block animate-spin">⚙</span>
-                        <span className="text-[#555] text-xs">{buildStatus}</span>
+                        <span className="text-[var(--text-3)] text-xs">{buildStatus}</span>
                       </div>
                     </div>
                   </div>
                 )}
                 {loading && !buildStatus && messages.length > 0 && messages[messages.length - 1]?.role !== 'assistant' && (
                   <div className="flex flex-col">
-                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[#e0e0e0]">
+                    <div className="max-w-[92%] px-3 py-2 rounded-[10px] bg-surface-3 border border-white/[0.07] text-[var(--text)]">
                       <div className="flex gap-1.5 items-center">
-                        {[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-[#444] inline-block animate-bounce" style={{ animationDelay:`${i*0.2}s` }} />)}
-                        <span className="text-[#555] text-xs ml-1">Building...</span>
+                        {[0,1,2].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-[var(--bg-3)] inline-block animate-bounce" style={{ animationDelay:`${i*0.2}s` }} />)}
+                        <span className="text-[var(--text-3)] text-xs ml-1">Building...</span>
                       </div>
                     </div>
                   </div>
@@ -1040,15 +1040,15 @@ export default function ProjectBuilder() {
               {pendingImage && (
                 <div className="flex items-center gap-2 px-2.5 py-2 bg-surface-3 border-t border-white/[0.06] shrink-0">
                   <img src={pendingImage.preview} alt="pending" className="h-12 w-12 object-cover rounded-md" />
-                  <span className="text-[11px] text-[#888] flex-1">Image attached</span>
-                  <button onClick={() => setPendingImage(null)} className="bg-transparent border-none text-[#666] cursor-pointer text-xs">✕</button>
+                  <span className="text-[11px] text-[var(--text-2)] flex-1">Image attached</span>
+                  <button onClick={() => setPendingImage(null)} className="bg-transparent border-none text-[var(--text-3)] cursor-pointer text-xs">✕</button>
                 </div>
               )}
 
               <div className="p-2.5 border-t border-white/[0.07] flex flex-col gap-2 shrink-0">
                 <div className="flex items-center gap-1.5">
-                  <button onClick={() => { setMode('plan'); setPendingPlan(null) }} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='plan' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Plan</button>
-                  <button onClick={() => setMode('build')} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='build' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>Build</button>
+                  <button onClick={() => { setMode('plan'); setPendingPlan(null) }} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='plan' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[var(--text-3)]'}`}>Plan</button>
+                  <button onClick={() => setMode('build')} className={`px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border ${mode==='build' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[var(--text-3)]'}`}>Build</button>
                   {loading && (
                     <button onClick={handleStop} className="px-2.5 py-1 rounded-md text-[11px] font-medium cursor-pointer border bg-red-500/[0.15] border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors" title="Stop current operation">Stop</button>
                   )}
@@ -1063,7 +1063,7 @@ export default function ProjectBuilder() {
                     onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
                     onPaste={handlePaste}
                     placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
-                    rows={3} className="flex-1 p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
+                    rows={3} className="flex-1 p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[var(--text)] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
                   />
                   {isMobile ? (
                     <button onClick={() => sendMessage()} disabled={loading || (!input.trim() && !pendingImage)} className="w-10 h-10 bg-brand border-none rounded-xl text-white text-lg font-medium cursor-pointer disabled:opacity-50 shrink-0 flex items-center justify-center">
@@ -1086,12 +1086,12 @@ export default function ProjectBuilder() {
                   <div className="flex gap-1.5">
                     <input autoFocus value={newFilePath} onChange={e => setNewFilePath(e.target.value)}
                       onKeyDown={e => { if (e.key==='Enter') handleNewFile() }}
-                      placeholder="e.g. src/pages/Dashboard.tsx" className="flex-1 px-2.5 py-1.5 bg-surface-3 border border-white/10 rounded-md text-[#f0f0f0] text-[13px] outline-none" />
+                      placeholder="e.g. src/pages/Dashboard.tsx" className="flex-1 px-2.5 py-1.5 bg-surface-3 border border-white/10 rounded-md text-[var(--text)] text-[13px] outline-none" />
                     <button onClick={handleNewFile} className="px-3 py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Add</button>
-                    <button onClick={() => { setShowNewFile(false); setNewFilePath('') }} className="px-2.5 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[#555] text-xs cursor-pointer">✕</button>
+                    <button onClick={() => { setShowNewFile(false); setNewFilePath('') }} className="px-2.5 py-1.5 bg-transparent border border-white/[0.08] rounded-md text-[var(--text-3)] text-xs cursor-pointer">✕</button>
                   </div>
                 ) : (
-                  <button onClick={() => setShowNewFile(true)} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#666] text-[13px] cursor-pointer text-left px-3">+ New file</button>
+                  <button onClick={() => setShowNewFile(true)} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[var(--text-3)] text-[13px] cursor-pointer text-left px-3">+ New file</button>
                 )}
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -1129,7 +1129,7 @@ export default function ProjectBuilder() {
           <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-white/[0.07] bg-surface-1 shrink-0">
             {activeTab && (
               <div className="flex items-center gap-1.5 px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-[7px] shrink-0">
-                <span className="text-xs text-[#555]">⊞</span>
+                <span className="text-xs text-[var(--text-3)]">⊞</span>
                 <select
                   value={activeTab || ''}
                   onChange={e => {
@@ -1139,7 +1139,7 @@ export default function ProjectBuilder() {
                       setActiveTab(path)
                     }
                   }}
-                  className="bg-transparent border-none text-[#aaa] text-xs outline-none cursor-pointer max-w-[120px]"
+                  className="bg-transparent border-none text-[var(--text-2)] text-xs outline-none cursor-pointer max-w-[120px]"
                 >
                   {files.filter(f => f.path.startsWith('src/pages/')).map(f => <option key={f.path} value={f.path}>{f.path.replace('src/pages/', '').replace(/\.tsx?$/, '')}</option>)}
                 </select>
@@ -1147,19 +1147,19 @@ export default function ProjectBuilder() {
             )}
             {!isMobile && (
               <div className="flex-1 flex items-center px-3 py-1 bg-surface-2 border border-white/[0.06] rounded-[7px] text-xs overflow-hidden">
-                <span className="text-[#333] select-none">customaidashboard.com / preview /</span>
-                <span className="text-[#666] ml-1.5">
+                <span className="text-[var(--text-3)] select-none">customaidashboard.com / preview /</span>
+                <span className="text-[var(--text-3)] ml-1.5">
                   {activeTab?.split('/').pop() || 'file'}
                 </span>
               </div>
             )}
             {isMobile && (
-              <button onClick={() => setViewMode(viewMode === 'code' ? 'preview' : 'code')} className={`px-3 py-1 rounded-[7px] text-xs cursor-pointer font-mono border ml-auto ${viewMode==='code' ? 'bg-brand/10 border-brand/30 text-[#9d92f5]' : 'bg-transparent border-white/10 text-[#666]'}`}>
+              <button onClick={() => setViewMode(viewMode === 'code' ? 'preview' : 'code')} className={`px-3 py-1 rounded-[7px] text-xs cursor-pointer font-mono border ml-auto ${viewMode==='code' ? 'bg-brand/10 border-brand/30 text-[#9d92f5]' : 'bg-transparent border-white/10 text-[var(--text-3)]'}`}>
                 {'</>'}
               </button>
             )}
             {deployUrl && (
-              <button onClick={() => window.open(`https://${deployUrl}`, '_blank', 'noopener')} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[#555] cursor-pointer text-[13px] shrink-0" title="Open deployed site">↗</button>
+              <button onClick={() => window.open(`https://${deployUrl}`, '_blank', 'noopener')} className="px-2.5 py-1 bg-transparent border border-white/[0.07] rounded-md text-[var(--text-3)] cursor-pointer text-[13px] shrink-0" title="Open deployed site">↗</button>
             )}
           </div>
 
@@ -1168,7 +1168,7 @@ export default function ProjectBuilder() {
             <div className="flex flex-1 overflow-hidden">
               {!isMobile && (
                 <div className="w-[180px] min-w-[180px] border-r border-white/[0.07] flex flex-col overflow-hidden bg-surface-1">
-                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[#555] font-semibold uppercase tracking-wider">Files</div>
+                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[var(--text-3)] font-semibold uppercase tracking-wider">Files</div>
                   <div className="flex-1 overflow-y-auto">
                     <FileTree
                       nodes={fileTree}
@@ -1192,7 +1192,7 @@ export default function ProjectBuilder() {
               {/* Inline file tree for code view */}
               {!isMobile && (
                 <div className="w-[180px] min-w-[180px] border-r border-white/[0.07] flex flex-col overflow-hidden bg-surface-1">
-                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[#555] font-semibold uppercase tracking-wider">Files</div>
+                  <div className="px-3 py-2 border-b border-white/[0.05] text-[11px] text-[var(--text-3)] font-semibold uppercase tracking-wider">Files</div>
                   <div className="flex-1 overflow-y-auto">
                     <FileTree
                       nodes={fileTree}
@@ -1218,11 +1218,11 @@ export default function ProjectBuilder() {
         <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-end px-3 h-[50px] border-t border-white/[0.07] bg-surface-1 pb-safe">
           <div className="flex gap-1">
             <button onClick={() => setMobilePanel('chat')}
-              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'chat' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'chat' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[var(--text-3)]'}`}>
               Chat
             </button>
             <button onClick={() => setMobilePanel('preview')}
-              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'preview' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[#666]'}`}>
+              className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer border ${mobilePanel === 'preview' ? 'bg-brand/[0.15] border-brand/30 text-[#9d92f5]' : 'bg-surface-3 border-white/[0.08] text-[var(--text-3)]'}`}>
               Preview
             </button>
           </div>
@@ -1232,19 +1232,19 @@ export default function ProjectBuilder() {
       {/* Buy Credits Modal */}
       {showBuyCredits && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className={`bg-[#111] border border-white/10 rounded-2xl p-7 w-full flex flex-col gap-3 ${isMobile ? 'max-w-[calc(100%-32px)]' : 'max-w-[400px]'}`}>
-            <h2 className="text-base font-semibold text-[#f0f0f0]">Out of credits</h2>
-            <p className="text-[#888] text-[13px] mb-5">Purchase credits to continue building.</p>
+          <div className={`bg-[var(--bg-2)] border border-white/10 rounded-2xl p-7 w-full flex flex-col gap-3 ${isMobile ? 'max-w-[calc(100%-32px)]' : 'max-w-[400px]'}`}>
+            <h2 className="text-base font-semibold text-[var(--text)]">Out of credits</h2>
+            <p className="text-[var(--text-2)] text-[13px] mb-5">Purchase credits to continue building.</p>
             <div className="grid grid-cols-2 gap-2.5 mb-4">
               {[{id:'pack_5',label:'$5',desc:'~50 builds'},{id:'pack_10',label:'$10',desc:'~100 builds'},{id:'pack_25',label:'$25',desc:'~250 builds'},{id:'pack_50',label:'$50',desc:'~500 builds'}].map(pack => (
                 <div key={pack.id} className="bg-surface-3 border border-white/[0.08] rounded-[10px] p-3.5 text-center">
-                  <div className="text-xl font-bold text-[#f0f0f0] mb-1">{pack.label}</div>
-                  <div className="text-[11px] text-[#666] mb-2.5">{pack.desc}</div>
+                  <div className="text-xl font-bold text-[var(--text)] mb-1">{pack.label}</div>
+                  <div className="text-[11px] text-[var(--text-3)] mb-2.5">{pack.desc}</div>
                   <button onClick={() => buyCredits(pack.id)} className="w-full py-1.5 bg-brand border-none rounded-md text-white text-xs cursor-pointer">Buy {pack.label}</button>
                 </div>
               ))}
             </div>
-            <button onClick={() => setShowBuyCredits(false)} className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer">Cancel</button>
+            <button onClick={() => setShowBuyCredits(false)} className="px-4 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[var(--text-2)] text-[13px] cursor-pointer">Cancel</button>
           </div>
         </div>
       )}
@@ -1296,21 +1296,21 @@ export default function ProjectBuilder() {
 
       {showPlanModal && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowPlanModal(false)}>
-          <div className="bg-[#111] border border-white/10 rounded-xl w-full max-w-[600px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--bg-2)] border border-white/10 rounded-xl w-full max-w-[600px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.07] shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-sm">📋</span>
-                <span className="text-[#e0e0e0] text-sm font-semibold">Build Plan</span>
+                <span className="text-[var(--text)] text-sm font-semibold">Build Plan</span>
               </div>
-              <button onClick={() => setShowPlanModal(false)} className="text-[#555] hover:text-white text-lg bg-transparent border-none cursor-pointer transition-colors">✕</button>
+              <button onClick={() => setShowPlanModal(false)} className="text-[var(--text-3)] hover:text-white text-lg bg-transparent border-none cursor-pointer transition-colors">✕</button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#ccc]">{planModalContent}</div>
+              <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--text-2)]">{planModalContent}</div>
             </div>
             {pendingPlan && (
               <div className="flex gap-2 px-5 py-3 border-t border-white/[0.07] shrink-0">
                 <button onClick={() => { approvePlan(); setShowPlanModal(false) }} className="px-4 py-2 bg-brand border-none rounded-lg text-white text-xs font-medium cursor-pointer flex-1">✓ Approve & Build</button>
-                <button onClick={() => { setPendingPlan(null); setShowPlanModal(false) }} className="px-4 py-2 bg-transparent border border-white/10 rounded-lg text-[#666] text-xs cursor-pointer">✕ Revise</button>
+                <button onClick={() => { setPendingPlan(null); setShowPlanModal(false) }} className="px-4 py-2 bg-transparent border border-white/10 rounded-lg text-[var(--text-3)] text-xs cursor-pointer">✕ Revise</button>
               </div>
             )}
           </div>

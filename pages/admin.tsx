@@ -163,7 +163,21 @@ export default function Admin() {
   const [settings, setSettings] = useState<Settings>({ markup_multiplier: '3.0', input_cost_per_1k: '0.003', output_cost_per_1k: '0.015', image_cost_per_gen: '0.05', stop_limit_per_hour: '5', max_images_per_build: '5' })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training' | 'security' | 'analytics'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'revenue' | 'settings' | 'plans' | 'database' | 'roles' | 'logs' | 'chat_history' | 'welcome' | 'actions' | 'ai_training' | 'security' | 'analytics' | 'themes'>('users')
+  const [themesList, setThemesList] = useState<any[]>([])
+  const [showThemeForm, setShowThemeForm] = useState(false)
+  const [editingTheme, setEditingTheme] = useState<any>(null)
+  const [themeForm, setThemeForm] = useState({
+    name: '',
+    is_available: true,
+    colors: {
+      bg: '#0f0f0f', bg2: '#1a1a1a', bg3: '#242424',
+      border: 'rgba(255,255,255,0.08)', border2: 'rgba(255,255,255,0.14)',
+      text: '#ffffff', text2: '#c0c0c0', text3: '#909090',
+      accent: '#7c6ef7', accent2: '#5b50d6',
+      success: '#1D9E75', warning: '#BA7517', danger: '#A32D2D',
+    },
+  })
   const [analyticsData, setAnalyticsData] = useState<any>(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsPeriod, setAnalyticsPeriod] = useState<'7d' | '30d' | '90d' | 'all'>('30d')
@@ -269,6 +283,7 @@ export default function Admin() {
     if (activeTab === 'actions') loadActionsData()
     if (activeTab === 'ai_training') loadTrainingRules()
     if (activeTab === 'analytics' && !analyticsData) loadAnalytics()
+    if (activeTab === 'themes') loadThemes()
   }, [activeTab])
 
   useEffect(() => {
@@ -778,6 +793,71 @@ export default function Admin() {
     }
   }
 
+  async function loadThemes() {
+    const res = await fetch('/api/admin/themes')
+    if (res.ok) {
+      const data = await res.json()
+      setThemesList(data.themes || [])
+    }
+  }
+
+  async function saveTheme() {
+    const body = editingTheme
+      ? { id: editingTheme.id, name: themeForm.name, colors: themeForm.colors, is_available: themeForm.is_available }
+      : { name: themeForm.name, colors: themeForm.colors, is_available: themeForm.is_available }
+    const res = await fetch('/api/admin/themes', {
+      method: editingTheme ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) {
+      setShowThemeForm(false)
+      setEditingTheme(null)
+      loadThemes()
+    }
+  }
+
+  async function deleteTheme(id: string) {
+    if (!confirm('Delete this theme?')) return
+    await fetch('/api/admin/themes', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    loadThemes()
+  }
+
+  async function toggleThemeAvailability(id: string, current: boolean) {
+    await fetch('/api/admin/themes', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, is_available: !current }),
+    })
+    loadThemes()
+  }
+
+  function openEditTheme(t: any) {
+    setEditingTheme(t)
+    setThemeForm({ name: t.name, is_available: t.is_available, colors: { ...t.colors } })
+    setShowThemeForm(true)
+  }
+
+  function openNewTheme() {
+    setEditingTheme(null)
+    setThemeForm({
+      name: '',
+      is_available: true,
+      colors: {
+        bg: '#0f0f0f', bg2: '#1a1a1a', bg3: '#242424',
+        border: 'rgba(255,255,255,0.08)', border2: 'rgba(255,255,255,0.14)',
+        text: '#ffffff', text2: '#c0c0c0', text3: '#909090',
+        accent: '#7c6ef7', accent2: '#5b50d6',
+        success: '#1D9E75', warning: '#BA7517', danger: '#A32D2D',
+      },
+    })
+    setShowThemeForm(true)
+  }
+
   async function loadRevenue() {
     const { data } = await supabase.from('transactions').select('amount, api_cost, type, description')
     if (!data) return
@@ -988,7 +1068,7 @@ export default function Admin() {
         </div>
         <div style={{ ...s.statCard, border: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fbbf24' }}>Gifted Credits</div>
-          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 18 }}>${totalGifted.toFixed(2)} <span style={{ color: '#888', fontSize: 13 }}>/</span> <span style={{ color: '#5DCAA5' }}>${giftRemaining.toFixed(2)}</span> <span style={{ color: '#888', fontSize: 13 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
+          <div style={{ ...s.statVal, color: '#fbbf24', fontSize: 18 }}>${totalGifted.toFixed(2)} <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#5DCAA5' }}>${giftRemaining.toFixed(2)}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>/</span> <span style={{ color: '#f87171' }}>${totalGiftUsed.toFixed(2)}</span></div>
           <div style={s.statSub}>gifted / remaining / used</div>
         </div>
       </div>
@@ -1028,13 +1108,13 @@ export default function Admin() {
         <div style={{ ...s.statCard, border: '1px solid rgba(251,146,60,0.2)', background: 'rgba(251,146,60,0.05)' }}>
           <div style={{ ...s.statLabel, color: '#fb923c' }}>Continuations</div>
           <div style={{ ...s.statVal, color: '#fb923c', fontSize: 18 }}>
-            {continuationTriggered} <span style={{ color: '#888', fontSize: 13 }}>triggered</span>
+            {continuationTriggered} <span style={{ color: 'var(--text-2)', fontSize: 13 }}>triggered</span>
             {' / '}
-            <span style={{ color: '#60a5fa' }}>{continuationCommands}</span> <span style={{ color: '#888', fontSize: 13 }}>commands</span>
+            <span style={{ color: '#60a5fa' }}>{continuationCommands}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>commands</span>
             {' / '}
-            <span style={{ color: '#f87171' }}>{continuationFailed}</span> <span style={{ color: '#888', fontSize: 13 }}>failed</span>
+            <span style={{ color: '#f87171' }}>{continuationFailed}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>failed</span>
             {' / '}
-            <span style={{ color: '#5DCAA5' }}>{continuationCompleted}</span> <span style={{ color: '#888', fontSize: 13 }}>completed</span>
+            <span style={{ color: '#5DCAA5' }}>{continuationCompleted}</span> <span style={{ color: 'var(--text-2)', fontSize: 13 }}>completed</span>
           </div>
           <div style={s.statSub}>builds that needed multiple API calls due to time limits</div>
         </div>
@@ -1042,9 +1122,9 @@ export default function Admin() {
 
       {/* TABS */}
       <div style={{ ...s.tabRow, flexWrap: 'wrap' as const }}>
-        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions', 'security', 'analytics'] as const).map(tab => (
+        {(['users', 'revenue', 'settings', 'plans', 'database', 'roles', 'logs', 'chat_history', 'welcome', 'ai_training', 'actions', 'security', 'analytics', 'themes'] as const).map(tab => (
           <button key={tab} style={{ ...s.tabBtn, ...(activeTab === tab ? s.tabBtnOn : {}) }} onClick={() => setActiveTab(tab)}>
-            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab === 'security' ? 'Security Audit' : tab === 'analytics' ? '📊 Analytics' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'ai_training' ? 'AI Training' : tab === 'chat_history' ? 'Chat History' : tab === 'security' ? 'Security Audit' : tab === 'analytics' ? '📊 Analytics' : tab === 'themes' ? '🎨 Themes' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -1091,7 +1171,7 @@ export default function Admin() {
                     <td style={s.td}>
                       <div style={s.userCell}>
                         <div style={s.uAvatar}>{u.email[0].toUpperCase()}</div>
-                        <span style={{ fontSize: 13, color: '#e0e0e0' }}>{u.email}</span>
+                        <span style={{ fontSize: 13, color: 'var(--text)' }}>{u.email}</span>
                       </div>
                     </td>
                     <td style={s.td}>
@@ -1156,7 +1236,7 @@ export default function Admin() {
         <div style={s.section}>
           <h2 style={s.sectionTitle}>Gift Credits</h2>
           <div style={s.giftCard}>
-            <p style={{ color: '#888', fontSize: 13, marginBottom: 16 }}>Give a user free credits. This appears as a "gift" transaction in their history.</p>
+            <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 16 }}>Give a user free credits. This appears as a "gift" transaction in their history.</p>
             <div style={{ ...s.giftRow, flexDirection: isMobile ? 'column' : 'row' as const }}>
               <div style={s.field}>
                 <label style={s.label}>User</label>
@@ -1183,15 +1263,15 @@ export default function Admin() {
         <div style={s.section}>
           {/* AI Model Selection (moved from AI Connections tab) */}
           <h2 style={s.sectionTitle}>AI Model Selection</h2>
-          <p style={{ fontSize: 12, color: '#555', marginTop: -10, marginBottom: 16 }}>Choose which AI models power your platform. Changing a model auto-updates the pricing fields below.</p>
+          <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -10, marginBottom: 16 }}>Choose which AI models power your platform. Changing a model auto-updates the pricing fields below.</p>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
             {/* Chat / Text model */}
             <div style={{ ...s.settingsCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                 <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🤖</div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Chat / Text Model</div>
-                  <div style={{ fontSize: 11, color: '#555' }}>Anthropic — powers the AI builder</div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>Chat / Text Model</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Anthropic — powers the AI builder</div>
                 </div>
               </div>
               <div style={s.field}>
@@ -1229,8 +1309,8 @@ export default function Admin() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                 <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(20,184,166,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🎨</div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Image Generation Model</div>
-                  <div style={{ fontSize: 11, color: '#555' }}>Replicate — generates images in built apps</div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>Image Generation Model</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Replicate — generates images in built apps</div>
                 </div>
               </div>
               <div style={s.field}>
@@ -1265,15 +1345,15 @@ export default function Admin() {
 
           {/* API Keys Info */}
           <div style={{ ...s.settingsCard, marginBottom: 24, background: 'rgba(255,255,255,0.02)' }}>
-            <h3 style={{ fontSize: 13, fontWeight: 500, color: '#888', marginBottom: 12 }}>How to add your own API keys</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, fontSize: 12, color: '#555', lineHeight: 1.7 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 12 }}>How to add your own API keys</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, fontSize: 12, color: 'var(--text-3)', lineHeight: 1.7 }}>
               <div>
                 <div style={{ color: '#9d92f5', fontWeight: 500, marginBottom: 4 }}>Anthropic (Chat)</div>
-                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>ANTHROPIC_API_KEY</code> in your Vercel environment variables. Get a key at console.anthropic.com.
+                Set <code style={{ color: 'var(--text)', background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3 }}>ANTHROPIC_API_KEY</code> in your Vercel environment variables. Get a key at console.anthropic.com.
               </div>
               <div>
                 <div style={{ color: '#2dd4bf', fontWeight: 500, marginBottom: 4 }}>Replicate (Images)</div>
-                Set <code style={{ color: '#f0f0f0', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 }}>REPLICATE_API_TOKEN</code> in your Vercel environment variables. Get a token at replicate.com/account/api-tokens.
+                Set <code style={{ color: 'var(--text)', background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3 }}>REPLICATE_API_TOKEN</code> in your Vercel environment variables. Get a token at replicate.com/account/api-tokens.
               </div>
             </div>
           </div>
@@ -1316,25 +1396,25 @@ export default function Admin() {
                 <input type="number" value={settings.max_images_per_build} onChange={e => setSettings(p => ({ ...p, max_images_per_build: e.target.value }))} style={s.input} step="1" min="1" max="10" />
               </div>
             </div>
-            <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 7, fontSize: 11, color: '#888', lineHeight: 1.5 }}>
+            <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 7, fontSize: 11, color: 'var(--text-2)', lineHeight: 1.5 }}>
               💡 Prices auto-populate when you change the model above. You can override them manually. Verify at <a href="https://anthropic.com/pricing" target="_blank" style={{ color: '#9d92f5' }}>anthropic.com/pricing</a> and <a href="https://replicate.com/pricing" target="_blank" style={{ color: '#2dd4bf' }}>replicate.com/pricing</a>
             </div>
             <div style={s.marginPreview}>
-              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Margin Preview</h3>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 12 }}>Margin Preview</h3>
               {[5, 10, 25, 50].map(spend => {
                 const apiCost = spend / parseFloat(settings.markup_multiplier || '3')
                 const profit = spend - apiCost
                 const margin = ((profit / spend) * 100).toFixed(0)
                 return (
                   <div key={spend} style={s.marginRow}>
-                    <span style={{ color: '#888', fontSize: 13 }}>User spends ${spend}</span>
+                    <span style={{ color: 'var(--text-2)', fontSize: 13 }}>User spends ${spend}</span>
                     <span style={{ color: '#f09595', fontSize: 13 }}>API cost: ${apiCost.toFixed(2)}</span>
                     <span style={{ color: '#5DCAA5', fontSize: 13 }}>Your profit: ${profit.toFixed(2)} ({margin}%)</span>
                   </div>
                 )
               })}
-              <div style={{ ...s.marginRow, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, marginTop: 8 }}>
-                <span style={{ color: '#888', fontSize: 13 }}>1 image generation</span>
+              <div style={{ ...s.marginRow, borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 8 }}>
+                <span style={{ color: 'var(--text-2)', fontSize: 13 }}>1 image generation</span>
                 <span style={{ color: '#f09595', fontSize: 13 }}>API cost: ${parseFloat(settings.image_cost_per_gen || '0.05').toFixed(3)}</span>
                 <span style={{ color: '#5DCAA5', fontSize: 13 }}>User pays: ${(parseFloat(settings.image_cost_per_gen || '0.05') * parseFloat(settings.markup_multiplier || '3')).toFixed(3)}</span>
               </div>
@@ -1426,8 +1506,8 @@ export default function Admin() {
                     ) : (
                       // Display row
                       <>
-                        <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>{plan.name}</span></td>
-                        <td style={s.td}><span style={{ fontSize: 13, color: plan.price_monthly === 0 ? '#888' : '#5DCAA5' }}>{plan.price_monthly === 0 ? 'Free' : `$${plan.price_monthly}`}</span></td>
+                        <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{plan.name}</span></td>
+                        <td style={s.td}><span style={{ fontSize: 13, color: plan.price_monthly === 0 ? 'var(--text-2)' : '#5DCAA5' }}>{plan.price_monthly === 0 ? 'Free' : `$${plan.price_monthly}`}</span></td>
                         <td style={s.td}><span style={s.num}>${plan.ai_credits_monthly.toFixed(2)}</span></td>
                         <td style={s.td}><span style={s.num}>{plan.max_projects}</span></td>
                         <td style={s.td}><span style={s.num}>{plan.max_tables_per_project}</span></td>
@@ -1454,7 +1534,7 @@ export default function Admin() {
           {/* New plan form */}
           {showNewPlan && (
             <div style={{ ...s.settingsCard, marginTop: 20 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 16 }}>New Plan</h3>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 16 }}>New Plan</h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
                 <div style={s.field}>
                   <label style={s.label}>Plan Name</label>
@@ -1487,15 +1567,15 @@ export default function Admin() {
                 <div style={s.field}>
                   <label style={s.label}>Builds / month</label>
                   <input type="number" value={newPlan.max_builds_per_month} onChange={e => setNewPlan(p => ({ ...p, max_builds_per_month: parseInt(e.target.value) || 0 }))} style={s.input} min="-1" />
-                  <span style={{ fontSize: 10, color: '#444', marginTop: 2 }}>-1 = unlimited</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>-1 = unlimited</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 16 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-2)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={newPlan.can_connect_own_supabase} onChange={e => setNewPlan(p => ({ ...p, can_connect_own_supabase: e.target.checked }))} />
                   Allow own Supabase connection
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-2)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={newPlan.is_active} onChange={e => setNewPlan(p => ({ ...p, is_active: e.target.checked }))} />
                   Visible to users
                 </label>
@@ -1506,7 +1586,7 @@ export default function Admin() {
               </div>
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                 <button onClick={createPlan} disabled={planSaving} style={s.saveBtn}>{planSaving ? 'Creating...' : 'Create Plan'}</button>
-                <button onClick={() => setShowNewPlan(false)} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+                <button onClick={() => setShowNewPlan(false)} style={{ ...s.saveBtn, background: 'var(--bg-3)' }}>Cancel</button>
               </div>
             </div>
           )}
@@ -1523,10 +1603,10 @@ export default function Admin() {
             <div style={{ ...s.settingsCard, border: '1px solid rgba(124,110,247,0.2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#5DCAA5' }} />
-                <span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>App Database</span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>App Database</span>
                 <span style={{ ...s.badge, ...s.badgeGreen }}>Connected</span>
               </div>
-              <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>Stores user auth, profiles, projects, pages, transactions, chat history</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>Stores user auth, profiles, projects, pages, transactions, chat history</div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Provider</span><span style={s.dbVal}>Supabase</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Tables</span><span style={s.dbVal}>profiles · projects · pages · transactions · settings · plans · chat_history</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Users</span><span style={s.dbVal}>{users.length} accounts</span></div>
@@ -1534,15 +1614,15 @@ export default function Admin() {
             </div>
 
             {/* Clients DB */}
-            <div style={{ ...s.settingsCard, border: `1px solid ${clientsDbStatus === 'connected' ? 'rgba(20,184,166,0.2)' : clientsDbStatus === 'checking' ? 'rgba(255,255,255,0.07)' : 'rgba(163,45,45,0.2)'}` }}>
+            <div style={{ ...s.settingsCard, border: `1px solid ${clientsDbStatus === 'connected' ? 'rgba(20,184,166,0.2)' : clientsDbStatus === 'checking' ? 'var(--border)' : 'rgba(163,45,45,0.2)'}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'checking' ? '#666' : '#f09595' }} />
-                <span style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>Clients Database</span>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'checking' ? 'var(--text-3)' : '#f09595' }} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Clients Database</span>
                 <span style={{ ...s.badge, ...(clientsDbStatus === 'connected' ? s.badgeGreen : clientsDbStatus === 'checking' ? s.badgeGray : s.badgeRed) }}>
                   {clientsDbStatus === 'connected' ? 'Connected' : clientsDbStatus === 'checking' ? 'Checking...' : 'Not connected'}
                 </span>
               </div>
-              <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>Stores user-generated app data (schemas, tables, rows) in isolated per-project schemas</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>Stores user-generated app data (schemas, tables, rows) in isolated per-project schemas</div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Provider</span><span style={s.dbVal}>Supabase (separate project)</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Isolation</span><span style={s.dbVal}>Schema per project (proj_{'{project_id}'})</span></div>
               <div style={s.dbInfoRow}><span style={s.dbLabel}>Registry</span><span style={s.dbVal}>schema_registry · schema_usage</span></div>
@@ -1557,7 +1637,7 @@ export default function Admin() {
           </div>
 
           {/* Per-plan limits summary */}
-          <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Plan Limits Overview</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 12 }}>Plan Limits Overview</h3>
           <div style={s.tableWrap}>
             <table style={s.table}>
               <thead>
@@ -1576,7 +1656,7 @@ export default function Admin() {
               <tbody>
                 {plans.map(plan => (
                   <tr key={plan.id} style={s.tr}>
-                    <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: plan.is_active ? '#f0f0f0' : '#555' }}>{plan.name}{!plan.is_active && ' (hidden)'}</span></td>
+                    <td style={s.td}><span style={{ fontSize: 13, fontWeight: 500, color: plan.is_active ? 'var(--text)' : 'var(--text-3)' }}>{plan.name}{!plan.is_active && ' (hidden)'}</span></td>
                     <td style={s.td}><span style={s.num}>{plan.price_monthly === 0 ? 'Free' : `$${plan.price_monthly}/mo`}</span></td>
                     <td style={s.td}><span style={s.num}>{plan.max_projects}</span></td>
                     <td style={s.td}><span style={s.num}>{plan.max_tables_per_project}</span></td>
@@ -1590,7 +1670,7 @@ export default function Admin() {
               </tbody>
             </table>
           </div>
-          <p style={{ fontSize: 11, color: '#444', marginTop: 10 }}>Edit limits in the Plans tab. Changes apply immediately to new usage checks.</p>
+          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 10 }}>Edit limits in the Plans tab. Changes apply immediately to new usage checks.</p>
         </div>
       )}
 
@@ -1615,10 +1695,10 @@ export default function Admin() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <span style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{role.name}</span>
+                        <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{role.name}</span>
                         {role.is_system && <span style={{ ...s.badge, ...s.badgeGray, fontSize: 9 }}>🔒 system</span>}
                       </div>
-                      <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>{role.description || 'No description'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>{role.description || 'No description'}</div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' as const }}>
                         {role.can_access_admin && <span style={{ ...s.badge, ...s.badgePurple }}>Admin Panel</span>}
                         {role.can_build && <span style={{ ...s.badge, ...s.badgeGreen }}>Can Build</span>}
@@ -1642,7 +1722,7 @@ export default function Admin() {
             {/* Edit / New Role form */}
             {(editingRole || showNewRole) && (
               <div style={s.settingsCard}>
-                <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 16 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 16 }}>
                   {editingRole ? `Edit: ${editingRole.name}` : 'New Role'}
                 </h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1674,7 +1754,7 @@ export default function Admin() {
                     ] as [keyof Omit<Role, 'id' | 'name' | 'description' | 'is_system'>, string][]).map(([key, label]) => {
                       const checked = editingRole ? editingRole[key] as boolean : newRoleForm[key] as boolean
                       return (
-                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: '#ccc' }}>
+                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--text-2)' }}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -1693,7 +1773,7 @@ export default function Admin() {
                     <button onClick={() => editingRole ? saveRole(editingRole) : createRole()} style={s.saveBtn}>
                       {editingRole ? 'Save Changes' : 'Create Role'}
                     </button>
-                    <button onClick={() => { setEditingRole(null); setShowNewRole(false) }} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+                    <button onClick={() => { setEditingRole(null); setShowNewRole(false) }} style={{ ...s.saveBtn, background: 'var(--bg-3)' }}>Cancel</button>
                   </div>
                 </div>
               </div>
@@ -1703,7 +1783,7 @@ export default function Admin() {
           {/* Page Access Management */}
           <div style={{ marginTop: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>Page Access by Role</h3>
+              <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>Page Access by Role</h3>
               <button onClick={() => setShowNewPage(true)} style={{ ...s.actionBtn, ...s.actionPurple, fontSize: 11, padding: '6px 12px' }}>+ Register New Page</button>
             </div>
 
@@ -1718,13 +1798,13 @@ export default function Admin() {
                   <input style={s.input} value={newPageLabel} onChange={e => setNewPageLabel(e.target.value)} placeholder="Reports Dashboard" />
                 </div>
                 <button onClick={registerNewPage} style={s.saveBtn}>Add</button>
-                <button onClick={() => setShowNewPage(false)} style={{ ...s.saveBtn, background: '#2a2a2a' }}>Cancel</button>
+                <button onClick={() => setShowNewPage(false)} style={{ ...s.saveBtn, background: 'var(--bg-3)' }}>Cancel</button>
               </div>
             )}
 
             {(() => {
               const uniquePaths = Array.from(new Set(pageAccessMap.map(pa => pa.page_path))).sort()
-              if (uniquePaths.length === 0) return <p style={{ fontSize: 12, color: '#555' }}>No pages registered yet. Click "+ Register New Page" to add pages, or they will be seeded automatically on next load.</p>
+              if (uniquePaths.length === 0) return <p style={{ fontSize: 12, color: 'var(--text-3)' }}>No pages registered yet. Click "+ Register New Page" to add pages, or they will be seeded automatically on next load.</p>
               return (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={s.table}>
@@ -1740,7 +1820,7 @@ export default function Admin() {
                     <tbody>
                       {roles.map(role => (
                         <tr key={role.id}>
-                          <td style={s.td}><span style={{ fontSize: 12, color: '#f0f0f0' }}>{role.name}</span></td>
+                          <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text)' }}>{role.name}</span></td>
                           {uniquePaths.map(path => {
                             const access = pageAccessMap.find(pa => pa.role_id === role.id && pa.page_path === path)
                             return (
@@ -1752,7 +1832,7 @@ export default function Admin() {
                                     onChange={e => togglePageAccess(access.id, e.target.checked)}
                                     style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }}
                                   />
-                                ) : <span style={{ color: '#333' }}>-</span>}
+                                ) : <span style={{ color: 'var(--text-3)' }}>-</span>}
                               </td>
                             )
                           })}
@@ -1775,21 +1855,21 @@ export default function Admin() {
           {/* System Health */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
             <div style={s.settingsCard}>
-              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Clients DB</div>
-              <div style={{ fontSize: 14, fontWeight: 500, color: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'error' ? '#f09595' : '#888' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>Clients DB</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: clientsDbStatus === 'connected' ? '#5DCAA5' : clientsDbStatus === 'error' ? '#f09595' : 'var(--text-2)' }}>
                 {clientsDbStatus === 'connected' ? 'Connected' : clientsDbStatus === 'error' ? 'Error' : 'Checking...'}
               </div>
             </div>
             <div style={s.settingsCard}>
-              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Total Users</div>
-              <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{users.length}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>Total Users</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{users.length}</div>
             </div>
             <div style={s.settingsCard}>
-              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Active Roles</div>
-              <div style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0' }}>{roles.length}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>Active Roles</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{roles.length}</div>
             </div>
             <div style={s.settingsCard}>
-              <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>Suspicious Activity</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>Suspicious Activity</div>
               <div style={{ fontSize: 14, fontWeight: 500, color: suspiciousUsers.length > 0 ? '#f09595' : '#5DCAA5' }}>
                 {suspiciousUsers.length > 0 ? `${suspiciousUsers.length} alerts` : 'None detected'}
               </div>
@@ -1804,7 +1884,7 @@ export default function Admin() {
                 {suspiciousUsers.map((su, i) => (
                   <div key={i} style={{ ...s.settingsCard, borderColor: 'rgba(163,45,45,0.3)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
                     <div>
-                      <span style={{ fontSize: 13, color: '#f0f0f0' }}>{su.email}</span>
+                      <span style={{ fontSize: 13, color: 'var(--text)' }}>{su.email}</span>
                       <span style={{ fontSize: 11, color: '#f09595', marginLeft: 12 }}>{su.reason}</span>
                     </div>
                     <span style={{ ...s.badge, ...s.badgeRed }}>{su.count} events</span>
@@ -1816,7 +1896,7 @@ export default function Admin() {
 
           {/* Access Matrix */}
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Role Access Overview</h3>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 12 }}>Role Access Overview</h3>
             <div style={{ overflowX: 'auto' }}>
               <table style={s.table}>
                 <thead>
@@ -1831,11 +1911,11 @@ export default function Admin() {
                 <tbody>
                   {roles.map(role => (
                     <tr key={role.id}>
-                      <td style={s.td}><span style={{ fontSize: 12, color: '#f0f0f0' }}>{role.name}</span></td>
+                      <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text)' }}>{role.name}</span></td>
                       <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_access_admin ? '#5DCAA5' : '#f09595' }}>{role.can_access_admin ? '✓' : '✗'}</span></td>
                       <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_build ? '#5DCAA5' : '#f09595' }}>{role.can_build ? '✓' : '✗'}</span></td>
                       <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.can_create_projects ? '#5DCAA5' : '#f09595' }}>{role.can_create_projects ? '✓' : '✗'}</span></td>
-                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.is_system ? '#f0a952' : '#555' }}>{role.is_system ? '🔒' : '-'}</span></td>
+                      <td style={{ ...s.td, textAlign: 'center' as const }}><span style={{ color: role.is_system ? '#f0a952' : 'var(--text-3)' }}>{role.is_system ? '🔒' : '-'}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1845,8 +1925,8 @@ export default function Admin() {
 
           {/* Security Events */}
           <div style={{ marginBottom: 24 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Security Events (Recent 100)</h3>
-            <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 12 }}>Security Events (Recent 100)</h3>
+            <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10 }}>
               <table style={s.table}>
                 <thead>
                   <tr>
@@ -1868,11 +1948,11 @@ export default function Admin() {
                         </span>
                       </td>
                       <td style={s.td}><span style={s.num}>{event.email || '-'}</span></td>
-                      <td style={s.td}><span style={{ fontSize: 11, color: '#888' }}>{event.message?.slice(0, 100)}</span></td>
+                      <td style={s.td}><span style={{ fontSize: 11, color: 'var(--text-2)' }}>{event.message?.slice(0, 100)}</span></td>
                     </tr>
                   ))}
                   {securityEvents.length === 0 && (
-                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center' as const, color: '#555' }}>No security events found</td></tr>
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center' as const, color: 'var(--text-3)' }}>No security events found</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1881,7 +1961,7 @@ export default function Admin() {
 
           {/* Admin Notes */}
           <div>
-            <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 12 }}>Security Notes</h3>
+            <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 12 }}>Security Notes</h3>
             <div style={s.settingsCard}>
               <textarea
                 value={securityNotes}
@@ -1889,7 +1969,7 @@ export default function Admin() {
                 placeholder="Add security observations, audit notes, or reminders here. This is saved automatically and persists across sessions."
                 style={{ ...s.input, width: '100%', minHeight: 150, resize: 'vertical' as const, fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }}
               />
-              <p style={{ fontSize: 10, color: '#444', marginTop: 8 }}>Auto-saved. Use this to track security observations, audit findings, and follow-up items.</p>
+              <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 8 }}>Auto-saved. Use this to track security observations, audit findings, and follow-up items.</p>
             </div>
           </div>
         </div>
@@ -1899,20 +1979,20 @@ export default function Admin() {
       {activeTab === 'analytics' && (
         <div style={s.section}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: '#f0f0f0' }}>Platform Analytics</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>Platform Analytics</h2>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               {(['7d', '30d', '90d', 'all'] as const).map(p => (
-                <button key={p} onClick={() => { setAnalyticsPeriod(p); loadAnalytics() }} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid', background: analyticsPeriod === p ? 'rgba(124,110,247,0.15)' : 'transparent', borderColor: analyticsPeriod === p ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)', color: analyticsPeriod === p ? '#9d92f5' : '#666' }}>{p === 'all' ? 'All Time' : p}</button>
+                <button key={p} onClick={() => { setAnalyticsPeriod(p); loadAnalytics() }} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid', background: analyticsPeriod === p ? 'rgba(124,110,247,0.15)' : 'transparent', borderColor: analyticsPeriod === p ? 'rgba(124,110,247,0.3)' : 'var(--border)', color: analyticsPeriod === p ? '#9d92f5' : 'var(--text-3)' }}>{p === 'all' ? 'All Time' : p}</button>
               ))}
-              <button onClick={loadAnalytics} style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: '#888' }}>Refresh</button>
+              <button onClick={loadAnalytics} style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-2)' }}>Refresh</button>
             </div>
           </div>
 
           {analyticsLoading ? (
-            <div style={{ textAlign: 'center' as const, color: '#555', padding: 40 }}>Loading analytics...</div>
+            <div style={{ textAlign: 'center' as const, color: 'var(--text-3)', padding: 40 }}>Loading analytics...</div>
           ) : !analyticsData ? (
             <div style={{ textAlign: 'center' as const, padding: 40 }}>
-              <button onClick={loadAnalytics} style={{ padding: '10px 24px', borderRadius: 8, fontSize: 13, cursor: 'pointer', border: 'none', background: '#7c6ef7', color: 'white' }}>Load Analytics</button>
+              <button onClick={loadAnalytics} style={{ padding: '10px 24px', borderRadius: 8, fontSize: 13, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: 'white' }}>Load Analytics</button>
             </div>
           ) : (
             <>
@@ -1925,8 +2005,8 @@ export default function Admin() {
                   { label: 'Margin', value: `${analyticsData.margin.toFixed(1)}%`, color: analyticsData.margin >= 50 ? '#5DCAA5' : '#f5a623' },
                   { label: 'Users', value: String(analyticsData.userCount), color: '#9d92f5' },
                 ].map(stat => (
-                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
-                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                  <div key={stat.label} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: stat.color }}>{stat.value}</div>
                   </div>
                 ))}
@@ -1941,9 +2021,9 @@ export default function Admin() {
                   { label: 'Images Generated', value: String(analyticsData.totals.images) },
                   { label: 'Projects', value: String(analyticsData.projectCount) },
                 ].map(stat => (
-                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
-                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 600, color: '#f0f0f0' }}>{stat.value}</div>
+                  <div key={stat.label} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{stat.value}</div>
                   </div>
                 ))}
               </div>
@@ -1956,16 +2036,16 @@ export default function Admin() {
                   { label: 'Fn Executions', value: String(analyticsData.totals.functionExecs) },
                   { label: 'Cron Runs', value: String(analyticsData.totals.cronExecs) },
                 ].map(stat => (
-                  <div key={stat.label} style={{ background: '#0f0f0f', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 16 }}>
-                    <div style={{ fontSize: 10, color: '#555', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
-                    <div style={{ fontSize: 16, fontWeight: 600, color: '#ccc' }}>{stat.value}</div>
+                  <div key={stat.label} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 }}>{stat.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-2)' }}>{stat.value}</div>
                   </div>
                 ))}
               </div>
 
               {/* Per-User Breakdown */}
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: '#f0f0f0', marginBottom: 12 }}>Per-User Breakdown</h3>
-              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, marginBottom: 24 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 12 }}>Per-User Breakdown</h3>
+              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid var(--border)', borderRadius: 10, marginBottom: 24 }}>
                 <table style={s.table}>
                   <thead>
                     <tr>
@@ -1986,10 +2066,10 @@ export default function Admin() {
                         const profit = u.revenue - cost
                         return (
                           <tr key={uid}>
-                            <td style={s.td}><span style={{ fontSize: 11, color: '#ccc' }}>{u.email}</span></td>
+                            <td style={s.td}><span style={{ fontSize: 11, color: 'var(--text-2)' }}>{u.email}</span></td>
                             <td style={s.td}>{u.projects}</td>
                             <td style={s.td}>{u.builds}</td>
-                            <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{((u.tokensInput + u.tokensOutput) / 1000).toFixed(0)}K</span></td>
+                            <td style={s.td}><span style={{ fontSize: 10, color: 'var(--text-2)' }}>{((u.tokensInput + u.tokensOutput) / 1000).toFixed(0)}K</span></td>
                             <td style={s.td}><span style={{ color: '#f09595', fontSize: 11 }}>${cost.toFixed(4)}</span></td>
                             <td style={s.td}><span style={{ color: '#5DCAA5', fontSize: 11 }}>${u.revenue.toFixed(2)}</span></td>
                             <td style={s.td}><span style={{ color: profit >= 0 ? '#5DCAA5' : '#f09595', fontSize: 11, fontWeight: 600 }}>${profit.toFixed(2)}</span></td>
@@ -2001,8 +2081,8 @@ export default function Admin() {
               </div>
 
               {/* Per-Project Breakdown */}
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: '#f0f0f0', marginBottom: 12 }}>Per-Project Breakdown</h3>
-              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, marginBottom: 24 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 12 }}>Per-Project Breakdown</h3>
+              <div style={{ maxHeight: 400, overflowY: 'auto' as const, border: '1px solid var(--border)', borderRadius: 10, marginBottom: 24 }}>
                 <table style={s.table}>
                   <thead>
                     <tr>
@@ -2018,10 +2098,10 @@ export default function Admin() {
                       .sort((a: any, b: any) => b[1].costAnthropic - a[1].costAnthropic)
                       .map(([pid, p]: [string, any]) => (
                         <tr key={pid}>
-                          <td style={s.td}><span style={{ fontSize: 11, color: '#ccc' }}>{p.name}</span></td>
-                          <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{p.ownerEmail}</span></td>
+                          <td style={s.td}><span style={{ fontSize: 11, color: 'var(--text-2)' }}>{p.name}</span></td>
+                          <td style={s.td}><span style={{ fontSize: 10, color: 'var(--text-2)' }}>{p.ownerEmail}</span></td>
                           <td style={s.td}>{p.builds}</td>
-                          <td style={s.td}><span style={{ fontSize: 10, color: '#888' }}>{((p.tokensInput || 0) / 1000).toFixed(0)}K</span></td>
+                          <td style={s.td}><span style={{ fontSize: 10, color: 'var(--text-2)' }}>{((p.tokensInput || 0) / 1000).toFixed(0)}K</span></td>
                           <td style={s.td}><span style={{ color: '#f09595', fontSize: 11 }}>${(p.costAnthropic || 0).toFixed(4)}</span></td>
                         </tr>
                       ))}
@@ -2092,7 +2172,7 @@ export default function Admin() {
         const typeColor: Record<string, string> = {
           login_attempt: '#9d92f5', login_success: '#5DCAA5', login_failure: '#f09595',
           signup_attempt: '#9d92f5', signup_success: '#5DCAA5', signup_failure: '#f09595',
-          form_typing: '#888', payment_success: '#f0a952', project_created: '#2dd4bf',
+          form_typing: 'var(--text-2)', payment_success: '#f0a952', project_created: '#2dd4bf',
           console_error: '#f09595', unhandled_error: '#f09595',
           builder_error: '#f09595', api_error: '#f09595', credits_error: '#f0a952',
           auto_fix: '#60a5fa', auto_fix_error: '#f09595',
@@ -2105,8 +2185,8 @@ export default function Admin() {
             <div style={{ ...s.settingsCard, marginBottom: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <div>
-                  <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Email Alerts</h3>
-                  <p style={{ fontSize: 11, color: '#555' }}>Choose which events send you an email. Requires <code style={{ color: '#9d92f5' }}>RESEND_API_KEY</code> and <code style={{ color: '#9d92f5' }}>ALERT_TO_EMAIL</code> env vars.</p>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>Email Alerts</h3>
+                  <p style={{ fontSize: 11, color: 'var(--text-3)' }}>Choose which events send you an email. Requires <code style={{ color: '#9d92f5' }}>RESEND_API_KEY</code> and <code style={{ color: '#9d92f5' }}>ALERT_TO_EMAIL</code> env vars.</p>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   {alertMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{alertMsg}</span>}
@@ -2117,7 +2197,7 @@ export default function Admin() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
                 {alertSettings.map(setting => (
-                  <label key={setting.event_type} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#0a0a0a', borderRadius: 8, border: `1px solid ${setting.send_email ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.05)'}`, cursor: 'pointer' }}>
+                  <label key={setting.event_type} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, border: `1px solid ${setting.send_email ? 'rgba(124,110,247,0.3)' : 'var(--border)'}`, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={setting.send_email}
@@ -2125,7 +2205,7 @@ export default function Admin() {
                       style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }}
                     />
                     <div>
-                      <div style={{ fontSize: 12, color: typeColor[setting.event_type] || '#888', fontWeight: 500 }}>
+                      <div style={{ fontSize: 12, color: typeColor[setting.event_type] || 'var(--text-2)', fontWeight: 500 }}>
                         {EVENT_LABELS[setting.event_type] || setting.event_type}
                       </div>
                     </div>
@@ -2141,15 +2221,15 @@ export default function Admin() {
                 <div style={{ ...s.settingsCard, marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div>
-                      <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Auto-Fix Logs</h3>
-                      <p style={{ fontSize: 11, color: '#555' }}>Tracks when the builder auto-detects iframe JS errors (runtime bugs in generated code) and attempts to fix them via Claude. Build timeouts and API errors are logged separately in the table above — Auto-Fix only triggers for code that was successfully generated but has runtime bugs.</p>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>Auto-Fix Logs</h3>
+                      <p style={{ fontSize: 11, color: 'var(--text-3)' }}>Tracks when the builder auto-detects iframe JS errors (runtime bugs in generated code) and attempts to fix them via Claude. Build timeouts and API errors are logged separately in the table above — Auto-Fix only triggers for code that was successfully generated but has runtime bugs.</p>
                     </div>
-                    <span style={{ fontSize: 12, color: '#444' }}>{autoFixLogs.length} events</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{autoFixLogs.length} events</span>
                   </div>
                   {autoFixLogs.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#444', fontSize: 12, background: '#0a0a0a', borderRadius: 8 }}>No auto-fix events yet</div>
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 12, background: 'var(--bg)', borderRadius: 8 }}>No auto-fix events yet</div>
                   ) : (
-                    <div style={{ maxHeight: 300, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                    <div style={{ maxHeight: 300, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--border)' }}>
                       <table style={s.table}>
                         <thead>
                           <tr style={s.thead}>
@@ -2163,7 +2243,7 @@ export default function Admin() {
                         <tbody>
                           {autoFixLogs.map(log => (
                             <tr key={log.id} style={s.tr}>
-                              <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                              <td style={{ ...s.td, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
                                 {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                               </td>
                               <td style={s.td}>
@@ -2171,10 +2251,10 @@ export default function Admin() {
                                   {log.event_type === 'auto_fix' ? 'Fixed' : 'Failed'}
                                 </span>
                               </td>
-                              <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                              <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text-3)' }}>{log.email || '—'}</span></td>
                               <td style={s.td}><span style={{ fontSize: 12, color: '#9d92f5' }}>{(log.metadata as any)?.pageName || '—'}</span></td>
                               <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{log.message}</span>
                               </td>
                             </tr>
                           ))}
@@ -2280,8 +2360,8 @@ export default function Admin() {
                 <div style={{ ...s.settingsCard, marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div>
-                      <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>AI Builder Errors</h3>
-                      <p style={{ fontSize: 11, color: '#555' }}>Console errors, unhandled exceptions, builder failures and API errors from the AI Builder. Helps debug issues users are experiencing.</p>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>AI Builder Errors</h3>
+                      <p style={{ fontSize: 11, color: 'var(--text-3)' }}>Console errors, unhandled exceptions, builder failures and API errors from the AI Builder. Helps debug issues users are experiencing.</p>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       {selectedBuilderErrors.size > 0 && (
@@ -2291,17 +2371,17 @@ export default function Admin() {
                       )}
                       <input value={builderErrorSearch} onChange={e => { setBuilderErrorSearch(e.target.value); setBuilderErrorPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
                       <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
-                      <span style={{ fontSize: 12, color: '#444' }}>{builderErrors.length} errors</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{builderErrors.length} errors</span>
                     </div>
                   </div>
                   {builderErrors.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: '#444', fontSize: 12, background: '#0a0a0a', borderRadius: 8 }}>No AI Builder errors logged</div>
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 12, background: 'var(--bg)', borderRadius: 8 }}>No AI Builder errors logged</div>
                   ) : (
                     <>
-                      <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
                         Showing {startIdx + 1}–{Math.min(endIdx, builderErrors.length)} of {builderErrors.length}
                       </div>
-                      <div style={{ maxHeight: builderErrorCardHeight, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                      <div style={{ maxHeight: builderErrorCardHeight, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--border)' }}>
                         <table style={s.table}>
                           <thead>
                             <tr style={s.thead}>
@@ -2323,7 +2403,7 @@ export default function Admin() {
                                   <td style={{ ...s.td, width: 30 }} onClick={e => e.stopPropagation()}>
                                     <input type="checkbox" checked={selectedBuilderErrors.has(log.id)} onChange={() => toggleSelectError(log.id)} style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }} />
                                   </td>
-                                  <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                  <td style={{ ...s.td, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
                                     {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                   </td>
                                   <td style={s.td}>
@@ -2336,16 +2416,16 @@ export default function Admin() {
                                       {log.severity}
                                     </span>
                                   </td>
-                                  <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                  <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text-3)' }}>{log.email || '—'}</span></td>
                                   <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                    <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{log.message}</span>
                                   </td>
                                   <td style={s.td}>
-                                    {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>{expandedBuilderErrors.has(log.id) ? '▼ collapse' : '▶ expand'}</span>}
+                                    {log.metadata && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{expandedBuilderErrors.has(log.id) ? '▼ collapse' : '▶ expand'}</span>}
                                   </td>
                                 </tr>
                                 {expandedBuilderErrors.has(log.id) && log.metadata && (
-                                  <tr style={{ background: '#0d0d0d' }}>
+                                  <tr style={{ background: 'var(--bg)' }}>
                                     <td colSpan={7} style={{ padding: '10px 14px' }}>
                                       <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                         {JSON.stringify(log.metadata, null, 2)}
@@ -2364,7 +2444,7 @@ export default function Admin() {
                         onMouseDown={handleResizeMouseDown}
                         style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 12, cursor: 'ns-resize', userSelect: 'none', marginTop: 4 }}
                       >
-                        <div style={{ width: 40, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.1)' }} />
+                        <div style={{ width: 40, height: 3, borderRadius: 2, background: 'var(--border-2)' }} />
                       </div>
 
                       {/* Pagination controls */}
@@ -2377,7 +2457,7 @@ export default function Admin() {
                           >
                             ← Previous
                           </button>
-                          <span style={{ fontSize: 12, color: '#666' }}>Page {builderErrorPage + 1} of {totalPages}</span>
+                          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Page {builderErrorPage + 1} of {totalPages}</span>
                           <button
                             onClick={() => setBuilderErrorPage(p => Math.min(totalPages - 1, p + 1))}
                             disabled={builderErrorPage >= totalPages - 1}
@@ -2403,7 +2483,7 @@ export default function Admin() {
             <div style={{ ...s.settingsCard }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
                 <div>
-                  <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Recent Logs <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h3>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>Recent Logs <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h3>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input value={logSearch} onChange={e => { setLogSearch(e.target.value); setLogPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
@@ -2429,12 +2509,12 @@ export default function Admin() {
 
                 return (
                   <>
-                    <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
                       Showing {filteredLogs.length === 0 ? 0 : startIdx + 1}–{Math.min(endIdx, filteredLogs.length)} of {filteredLogs.length}
                     </div>
-                    <div style={{ borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)', overflow: 'auto' }}>
+                    <div style={{ borderRadius: 8, border: '1px solid var(--border)', overflow: 'auto' }}>
                       {filteredLogs.length === 0 ? (
-                        <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
+                        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>No logs yet</div>
                       ) : (
                         <table style={s.table}>
                           <thead>
@@ -2451,11 +2531,11 @@ export default function Admin() {
                             {pagedLogs.map(log => (
                               <React.Fragment key={log.id}>
                                 <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
-                                  <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                  <td style={{ ...s.td, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
                                     {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                   </td>
                                   <td style={s.td}>
-                                    <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
+                                    <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || 'var(--text-2)' }}>
                                       {EVENT_LABELS[log.event_type] || log.event_type}
                                     </span>
                                   </td>
@@ -2464,16 +2544,16 @@ export default function Admin() {
                                       {log.severity}
                                     </span>
                                   </td>
-                                  <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                  <td style={s.td}><span style={{ fontSize: 12, color: 'var(--text-3)' }}>{log.email || '—'}</span></td>
                                   <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                    <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{log.message}</span>
                                   </td>
                                   <td style={s.td}>
-                                    {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
+                                    {log.metadata && <span style={{ fontSize: 10, color: 'var(--text-3)' }}>▶ expand</span>}
                                   </td>
                                 </tr>
                                 {expandedLog === log.id && log.metadata && (
-                                  <tr style={{ background: '#0d0d0d' }}>
+                                  <tr style={{ background: 'var(--bg)' }}>
                                     <td colSpan={6} style={{ padding: '10px 14px' }}>
                                       <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                         {JSON.stringify(log.metadata, null, 2)}
@@ -2499,7 +2579,7 @@ export default function Admin() {
                           >
                             ← Previous
                           </button>
-                          <span style={{ fontSize: 12, color: '#666' }}>Page {logPage + 1} of {totalPages}</span>
+                          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Page {logPage + 1} of {totalPages}</span>
                           <button
                             onClick={() => setLogPage(p => Math.min(totalPages - 1, p + 1))}
                             disabled={logPage >= totalPages - 1}
@@ -2577,7 +2657,7 @@ export default function Admin() {
         return (
           <div style={s.section}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
-              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Chat History <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredTurns.length} turns of {chatMessages.length} messages)</span></h2>
+              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Chat History <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 400 }}>({filteredTurns.length} turns of {chatMessages.length} messages)</span></h2>
               <div style={{ display: 'flex', gap: 8 }}>
                 <select value={chatUserFilter} onChange={e => setChatUserFilter(e.target.value)} style={s.planSelect}>
                   <option value="all">All users</option>
@@ -2593,7 +2673,7 @@ export default function Admin() {
             </div>
             <div style={s.tableWrap}>
               {filteredTurns.length === 0 ? (
-                <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No chat history yet</div>
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>No chat history yet</div>
               ) : (
                 <table style={s.table}>
                   <thead>
@@ -2614,10 +2694,10 @@ export default function Admin() {
                       return (
                         <React.Fragment key={turnKey}>
                           <tr style={{ ...s.tr, cursor: 'pointer' }} onClick={() => setExpandedChat(expandedChat === turnKey ? null : turnKey)}>
-                            <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                            <td style={{ ...s.td, fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
                               {new Date(turn.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                             </td>
-                            <td style={{ ...s.td, fontSize: 12, color: '#666', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <td style={{ ...s.td, fontSize: 12, color: 'var(--text-3)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {users.find(u => u.id === turn.userId)?.email || turn.userId.slice(0, 8) + '…'}
                             </td>
                             <td style={{ ...s.td, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -2637,17 +2717,17 @@ export default function Admin() {
                                   ? <span style={{ ...s.badge, background: 'rgba(240,169,82,0.12)', color: '#f0a952', fontSize: 10 }}>plan</span>
                                   : hasResponse
                                     ? <span style={{ ...s.badge, background: 'rgba(93,202,165,0.12)', color: '#5DCAA5', fontSize: 10 }}>ok</span>
-                                    : <span style={{ ...s.badge, background: 'rgba(255,255,255,0.05)', color: '#555', fontSize: 10 }}>pending</span>
+                                    : <span style={{ ...s.badge, background: 'rgba(255,255,255,0.05)', color: 'var(--text-3)', fontSize: 10 }}>pending</span>
                               }
                             </td>
                           </tr>
                           {expandedChat === turnKey && (
-                            <tr style={{ background: '#0d0d0d' }}>
+                            <tr style={{ background: 'var(--bg)' }}>
                               <td colSpan={5} style={{ padding: '12px 16px' }}>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                                   <div>
                                     <div style={{ fontSize: 10, color: '#5DCAA5', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>User:</div>
-                                    <pre style={{ fontSize: 11, color: '#aaa', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                    <pre style={{ fontSize: 11, color: 'var(--text-2)', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                       {turn.userMsg?.content || '(no user message)'}
                                     </pre>
                                   </div>
@@ -2680,7 +2760,7 @@ export default function Admin() {
           icon: 'Icon', title: 'Title', subtitle: 'Subtitle', box: 'Highlight Box', text: 'Text',
         }
         const TYPE_COLORS: Record<SectionType, string> = {
-          icon: '#f0a952', title: '#f0f0f0', subtitle: '#888', box: '#9d92f5', text: '#aaa',
+          icon: '#f0a952', title: 'var(--text)', subtitle: 'var(--text-2)', box: '#9d92f5', text: 'var(--text-2)',
         }
         const previewHtml = generateWelcomeHtml(welcomeConfig)
 
@@ -2689,7 +2769,7 @@ export default function Admin() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h2 style={s.sectionTitle}>Welcome Page Editor</h2>
-                <p style={{ fontSize: 12, color: '#555', marginTop: -10 }}>This is what users see when they first open a new project.</p>
+                <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -10 }}>This is what users see when they first open a new project.</p>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 {welcomeMsg && <span style={{ fontSize: 12, color: '#5DCAA5' }}>{welcomeMsg}</span>}
@@ -2706,7 +2786,7 @@ export default function Admin() {
                 {/* Section list */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
                   {welcomeConfig.sections.map((sec, idx) => (
-                    <div key={sec.id} style={{ background: '#111', border: `1px solid ${editingSectionId === sec.id ? 'rgba(124,110,247,0.4)' : 'rgba(255,255,255,0.07)'}`, borderRadius: 10, overflow: 'hidden' }}>
+                    <div key={sec.id} style={{ background: 'var(--bg-2)', border: `1px solid ${editingSectionId === sec.id ? 'rgba(124,110,247,0.4)' : 'var(--border)'}`, borderRadius: 10, overflow: 'hidden' }}>
                       {/* Section header row */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
                         {/* Visibility toggle */}
@@ -2722,7 +2802,7 @@ export default function Admin() {
                         {/* Content preview — click to edit */}
                         <span
                           onClick={() => setEditingSectionId(editingSectionId === sec.id ? null : sec.id)}
-                          style={{ flex: 1, fontSize: 12, color: sec.visible ? '#ccc' : '#444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                          style={{ flex: 1, fontSize: 12, color: sec.visible ? 'var(--text-2)' : 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
                         >
                           {sec.content || '(empty)'}
                         </span>
@@ -2736,16 +2816,16 @@ export default function Admin() {
 
                       {/* Inline editor — shown when expanded */}
                       {editingSectionId === sec.id && (
-                        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '10px 12px', background: '#0d0d0d' }}>
+                        <div style={{ borderTop: '1px solid var(--border)', padding: '10px 12px', background: 'var(--bg)' }}>
                           <label style={{ ...s.label, marginBottom: 6, display: 'block' }}>Content</label>
                           <textarea
                             value={sec.content}
                             onChange={e => updateSection(sec.id, { content: e.target.value })}
                             rows={sec.type === 'text' || sec.type === 'subtitle' ? 3 : 2}
-                            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 7, color: '#f0f0f0', fontSize: 13, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
                           />
                           {sec.type === 'icon' && (
-                            <p style={{ fontSize: 11, color: '#555', marginTop: 6 }}>Paste any emoji — it will be displayed in a styled rounded box.</p>
+                            <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>Paste any emoji — it will be displayed in a styled rounded box.</p>
                           )}
                         </div>
                       )}
@@ -2766,8 +2846,8 @@ export default function Admin() {
 
               {/* Live preview panel */}
               <div style={{ position: 'sticky', top: 20 }}>
-                <div style={{ fontSize: 11, color: '#555', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Live Preview</div>
-                <div style={{ border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Live Preview</div>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
                   <iframe
                     srcDoc={previewHtml}
                     sandbox="allow-scripts"
@@ -2775,7 +2855,7 @@ export default function Admin() {
                     title="Welcome page preview"
                   />
                 </div>
-                <p style={{ fontSize: 11, color: '#444', marginTop: 8 }}>Preview updates as you edit. Hit "Save & Publish" to apply to new projects.</p>
+                <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>Preview updates as you edit. Hit "Save & Publish" to apply to new projects.</p>
               </div>
             </div>
           </div>
@@ -2787,13 +2867,13 @@ export default function Admin() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
             <div>
               <h3 style={s.sectionTitle}>AI Training Rules</h3>
-              <p style={{ fontSize: 12, color: '#666', marginTop: -8, marginBottom: 0 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -8, marginBottom: 0 }}>
                 These rules are injected into the AI's system prompt to control how it builds pages.<br/>
                 <strong>Global</strong> rules always apply. <strong>Keyword</strong> rules activate when the user's prompt contains matching words.
               </p>
             </div>
             <button onClick={() => { setShowNewRule(true); setEditingRuleId(null); setRuleForm({ type: 'global', keywords: '', instructions: '', priority: 0 }) }}
-              style={{ padding: '8px 16px', background: '#7c6ef7', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+              style={{ padding: '8px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
               + Add Rule
             </button>
           </div>
@@ -2802,44 +2882,44 @@ export default function Admin() {
 
           {/* New / Edit Rule Form */}
           {(showNewRule || editingRuleId) && (
-            <div style={{ background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
               <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
                 <div style={{ flex: '0 0 auto' }}>
-                  <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Type</label>
+                  <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Type</label>
                   <select value={ruleForm.type} onChange={e => setRuleForm(f => ({ ...f, type: e.target.value as any }))}
-                    style={{ padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12 }}>
+                    style={{ padding: '7px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12 }}>
                     <option value="global">Global (always active)</option>
                     <option value="keyword">Keyword (triggered by words)</option>
                   </select>
                 </div>
                 {ruleForm.type === 'keyword' && (
                   <div style={{ flex: 1, minWidth: 200 }}>
-                    <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Keywords (comma separated)</label>
+                    <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Keywords (comma separated)</label>
                     <input value={ruleForm.keywords} onChange={e => setRuleForm(f => ({ ...f, keywords: e.target.value }))}
                       placeholder="landing page, landing, homepage"
-                      style={{ width: '100%', padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none' }} />
+                      style={{ width: '100%', padding: '7px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none' }} />
                   </div>
                 )}
                 <div style={{ flex: '0 0 80px' }}>
-                  <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Priority</label>
+                  <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Priority</label>
                   <input type="number" value={ruleForm.priority} onChange={e => setRuleForm(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))}
-                    style={{ width: '100%', padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none' }} />
+                    style={{ width: '100%', padding: '7px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none' }} />
                 </div>
               </div>
               <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Instructions (what to tell the AI)</label>
+                <label style={{ fontSize: 11, color: 'var(--text-2)', display: 'block', marginBottom: 4 }}>Instructions (what to tell the AI)</label>
                 <textarea value={ruleForm.instructions} onChange={e => setRuleForm(f => ({ ...f, instructions: e.target.value }))}
                   rows={5}
                   placeholder="Example: Always create stunning hero sections with gradient text, animated hover effects, professional imagery, and clear visual hierarchy..."
-                  style={{ width: '100%', padding: '10px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                  style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={saveTrainingRule} disabled={trainingSaving || !ruleForm.instructions.trim()}
-                  style={{ padding: '8px 20px', background: trainingSaving ? '#555' : '#7c6ef7', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: trainingSaving ? 'default' : 'pointer', fontWeight: 500 }}>
+                  style={{ padding: '8px 20px', background: trainingSaving ? 'var(--text-3)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, cursor: trainingSaving ? 'default' : 'pointer', fontWeight: 500 }}>
                   {trainingSaving ? 'Saving...' : editingRuleId ? 'Update Rule' : 'Create Rule'}
                 </button>
                 <button onClick={() => { setShowNewRule(false); setEditingRuleId(null) }}
-                  style={{ padding: '8px 16px', background: '#1a1a1a', color: '#999', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>
+                  style={{ padding: '8px 16px', background: 'var(--bg-3)', color: 'var(--text-2)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>
                   Cancel
                 </button>
               </div>
@@ -2848,13 +2928,13 @@ export default function Admin() {
 
           {/* Rules List */}
           {trainingRules.length === 0 && !showNewRule && (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#555', fontSize: 13 }}>
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-3)', fontSize: 13 }}>
               No training rules yet. Click "Add Rule" to teach the AI how to build better pages.
             </div>
           )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {trainingRules.map(rule => (
-              <div key={rule.id} style={{ background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '14px 16px', opacity: rule.enabled ? 1 : 0.5 }}>
+              <div key={rule.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', opacity: rule.enabled ? 1 : 0.5 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
@@ -2864,23 +2944,23 @@ export default function Admin() {
                         {rule.type.toUpperCase()}
                       </span>
                       {rule.type === 'keyword' && rule.keywords && rule.keywords.split(',').map((kw, i) => (
-                        <span key={i} style={{ padding: '2px 6px', borderRadius: 4, fontSize: 10, background: 'rgba(255,255,255,0.06)', color: '#aaa' }}>
+                        <span key={i} style={{ padding: '2px 6px', borderRadius: 4, fontSize: 10, background: 'rgba(255,255,255,0.06)', color: 'var(--text-2)' }}>
                           {kw.trim()}
                         </span>
                       ))}
-                      <span style={{ fontSize: 10, color: '#444' }}>Priority: {rule.priority}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-3)' }}>Priority: {rule.priority}</span>
                     </div>
-                    <p style={{ fontSize: 12, color: '#ccc', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                    <p style={{ fontSize: 12, color: 'var(--text-2)', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
                       {rule.instructions.length > 200 ? rule.instructions.slice(0, 200) + '...' : rule.instructions}
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
                     <button onClick={() => toggleTrainingRule(rule.id, !rule.enabled)}
-                      style={{ padding: '4px 10px', background: rule.enabled ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)', border: '1px solid ' + (rule.enabled ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.08)'), borderRadius: 5, fontSize: 10, color: rule.enabled ? '#34d399' : '#666', cursor: 'pointer' }}>
+                      style={{ padding: '4px 10px', background: rule.enabled ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)', border: '1px solid ' + (rule.enabled ? 'rgba(16,185,129,0.3)' : 'var(--border)'), borderRadius: 5, fontSize: 10, color: rule.enabled ? '#34d399' : 'var(--text-3)', cursor: 'pointer' }}>
                       {rule.enabled ? 'ON' : 'OFF'}
                     </button>
                     <button onClick={() => { setEditingRuleId(rule.id); setShowNewRule(false); setRuleForm({ type: rule.type, keywords: rule.keywords || '', instructions: rule.instructions, priority: rule.priority }) }}
-                      style={{ padding: '4px 10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, fontSize: 10, color: '#888', cursor: 'pointer' }}>
+                      style={{ padding: '4px 10px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', borderRadius: 5, fontSize: 10, color: 'var(--text-2)', cursor: 'pointer' }}>
                       Edit
                     </button>
                     <button onClick={() => deleteTrainingRule(rule.id)}
@@ -2905,7 +2985,7 @@ export default function Admin() {
             <div style={s.tableTop}>
               <div>
                 <h2 style={s.sectionTitle}>User Actions</h2>
-                <p style={{ fontSize: 12, color: '#555', marginTop: -10, marginBottom: 0 }}>Manage user accounts — resend confirmation emails or manually confirm users</p>
+                <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -10, marginBottom: 0 }}>Manage user accounts — resend confirmation emails or manually confirm users</p>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <input value={actionsUserSearch} onChange={e => setActionsUserSearch(e.target.value)} placeholder="Search by email..." style={s.searchInput} />
@@ -2934,9 +3014,9 @@ export default function Admin() {
                 </thead>
                 <tbody>
                   {actionsDataLoading ? (
-                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: '#555', padding: 32 }}>Loading users…</td></tr>
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: 'var(--text-3)', padding: 32 }}>Loading users…</td></tr>
                   ) : filtered.length === 0 ? (
-                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: '#555', padding: 32 }}>No users found</td></tr>
+                    <tr><td colSpan={5} style={{ ...s.td, textAlign: 'center', color: 'var(--text-3)', padding: 32 }}>No users found</td></tr>
                   ) : filtered.map(u => {
                     const confirmed = !!u.email_confirmed_at
                     const isLoading = actionsLoading[u.id] || actionsLoading[u.id + '_force']
@@ -2950,7 +3030,7 @@ export default function Admin() {
                         <td style={s.td}>
                           <div style={s.userCell}>
                             <div style={s.uAvatar}>{(u.email || '?')[0].toUpperCase()}</div>
-                            <span style={{ fontSize: 12, color: '#ccc' }}>{u.email}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{u.email}</span>
                           </div>
                         </td>
                         <td style={{ ...s.td, ...s.num }}>{joinDate}</td>
@@ -2994,6 +3074,137 @@ export default function Admin() {
         )
       })()}
 
+      {/* THEMES TAB */}
+      {activeTab === 'themes' && (
+        <div style={{ ...s.section, padding: isMobile ? '12px 16px 24px' : '16px 28px 28px' }}>
+          <div style={{ ...s.tableTop, flexDirection: isMobile ? 'column' : 'row' as const, alignItems: isMobile ? 'flex-start' : 'center', gap: 10 }}>
+            <h2 style={s.sectionTitle}>Color Themes</h2>
+            <button onClick={openNewTheme} style={{ ...s.giftBtn, fontSize: 12 }}>+ New Theme</button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+            {themesList.map((t: any) => (
+              <div key={t.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{t.name}</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {t.is_builtin && <span style={{ ...s.badge, ...s.badgePurple }}>Built-in</span>}
+                    <span style={{ ...s.badge, ...(t.is_available ? s.badgeGreen : s.badgeRed) }}>
+                      {t.is_available ? 'Available' : 'Hidden'}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+                  {[t.colors.bg, t.colors.bg2, t.colors.bg3, t.colors.text, t.colors.text2, t.colors.accent].map((c: string, i: number) => (
+                    <div key={i} style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: '1px solid rgba(255,255,255,0.15)' }} title={c} />
+                  ))}
+                </div>
+                {/* Preview card */}
+                <div style={{ background: t.colors.bg, border: `1px solid ${t.colors.border}`, borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: t.colors.text, marginBottom: 4 }}>Preview</div>
+                  <div style={{ fontSize: 11, color: t.colors.text2, marginBottom: 2 }}>Secondary text</div>
+                  <div style={{ fontSize: 10, color: t.colors.text3, marginBottom: 6 }}>Muted text</div>
+                  <div style={{ display: 'inline-block', padding: '3px 10px', background: t.colors.accent, borderRadius: 4, color: 'white', fontSize: 10 }}>Button</div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => openEditTheme(t)} style={{ ...s.actionBtn, ...s.actionPurple }}>Edit</button>
+                  <button onClick={() => toggleThemeAvailability(t.id, t.is_available)} style={{ ...s.actionBtn, ...s.actionOrange }}>
+                    {t.is_available ? 'Hide' : 'Show'}
+                  </button>
+                  {!t.is_builtin && (
+                    <button onClick={() => deleteTheme(t.id)} style={{ ...s.actionBtn, ...s.actionRed }}>Delete</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* THEME CREATE/EDIT MODAL */}
+          {showThemeForm && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
+              <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border-2)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 600, maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 20 }}>
+                  {editingTheme ? 'Edit Theme' : 'New Theme'}
+                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={s.field}>
+                    <label style={s.label}>Theme Name</label>
+                    <input
+                      value={themeForm.name}
+                      onChange={e => setThemeForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="e.g. Ocean Breeze"
+                      style={s.input}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={themeForm.is_available}
+                      onChange={e => setThemeForm(f => ({ ...f, is_available: e.target.checked }))}
+                    />
+                    <label style={{ fontSize: 12, color: 'var(--text-2)' }}>Available to users</label>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: '0.05em' }}>
+                    Colors
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+                    {Object.entries(themeForm.colors).map(([key, val]) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          type="color"
+                          value={val.startsWith('rgba') ? '#888888' : val}
+                          onChange={e => setThemeForm(f => ({ ...f, colors: { ...f.colors, [key]: e.target.value } }))}
+                          style={{ width: 32, height: 32, border: 'none', borderRadius: 6, cursor: 'pointer', background: 'none' }}
+                        />
+                        <div>
+                          <div style={{ fontSize: 11, color: 'var(--text)', fontWeight: 500 }}>{key}</div>
+                          <input
+                            value={val}
+                            onChange={e => setThemeForm(f => ({ ...f, colors: { ...f.colors, [key]: e.target.value } }))}
+                            style={{ ...s.input, padding: '3px 6px', fontSize: 10, width: 120 }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Live Preview */}
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginTop: 8 }}>
+                    Live Preview
+                  </div>
+                  <div style={{ background: themeForm.colors.bg, border: `1px solid ${themeForm.colors.border}`, borderRadius: 10, padding: 16 }}>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                      <div style={{ width: 60, background: themeForm.colors.bg2, borderRadius: 8, padding: 8 }}>
+                        <div style={{ fontSize: 9, color: themeForm.colors.text2 }}>Sidebar</div>
+                      </div>
+                      <div style={{ flex: 1, background: themeForm.colors.bg2, borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: themeForm.colors.text, marginBottom: 4 }}>Page Title</div>
+                        <div style={{ fontSize: 11, color: themeForm.colors.text2, marginBottom: 2 }}>Secondary text content</div>
+                        <div style={{ fontSize: 10, color: themeForm.colors.text3, marginBottom: 8 }}>Muted / label text</div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <div style={{ padding: '4px 12px', background: themeForm.colors.accent, borderRadius: 6, color: 'white', fontSize: 10 }}>Primary</div>
+                          <div style={{ padding: '4px 12px', background: themeForm.colors.bg3, border: `1px solid ${themeForm.colors.border2}`, borderRadius: 6, color: themeForm.colors.text2, fontSize: 10 }}>Secondary</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <span style={{ ...s.badge, background: 'rgba(29,158,117,0.12)', color: themeForm.colors.success || '#5DCAA5' }}>Success</span>
+                      <span style={{ ...s.badge, background: 'rgba(186,117,23,0.12)', color: themeForm.colors.warning || '#f0a952' }}>Warning</span>
+                      <span style={{ ...s.badge, background: 'rgba(163,45,45,0.12)', color: themeForm.colors.danger || '#f09595' }}>Danger</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button onClick={() => { setShowThemeForm(false); setEditingTheme(null) }} style={{ ...s.actionBtn, padding: '8px 16px', fontSize: 12 }}>Cancel</button>
+                    <button onClick={saveTheme} disabled={!themeForm.name.trim()} style={{ ...s.giftBtn, fontSize: 12, opacity: themeForm.name.trim() ? 1 : 0.5 }}>
+                      {editingTheme ? 'Update Theme' : 'Create Theme'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -3003,59 +3214,59 @@ Admin.getLayout = function getLayout(page: React.ReactNode) {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  loadingInner: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 14 },
+  loadingInner: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 14 },
   main: { flex: 1, overflow: 'auto' },
   topbar: { padding: '24px 28px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  title: { fontSize: 20, fontWeight: 600, color: '#f0f0f0', marginBottom: 4 },
-  sub: { fontSize: 12, color: '#555' },
+  title: { fontSize: 20, fontWeight: 600, color: 'var(--text)', marginBottom: 4 },
+  sub: { fontSize: 12, color: 'var(--text-3)' },
   statsGrid: { display: 'grid', gap: 12, padding: '16px 16px 0' },
-  statCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '14px 16px' },
-  statLabel: { fontSize: 11, color: '#555', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
-  statVal: { fontSize: 20, fontWeight: 600, color: '#f0f0f0', marginBottom: 2 },
-  statSub: { fontSize: 10, color: '#444' },
+  statCard: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' },
+  statLabel: { fontSize: 11, color: 'var(--text-3)', marginBottom: 6, textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
+  statVal: { fontSize: 20, fontWeight: 600, color: 'var(--text)', marginBottom: 2 },
+  statSub: { fontSize: 10, color: 'var(--text-3)' },
   tabRow: { display: 'flex', gap: 4, padding: '16px 16px 0', flexWrap: 'wrap' as const },
-  tabBtn: { padding: '7px 16px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#666', fontSize: 12, cursor: 'pointer' },
+  tabBtn: { padding: '7px 16px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-3)', fontSize: 12, cursor: 'pointer' },
   tabBtnOn: { background: 'rgba(124,110,247,0.15)', borderColor: 'rgba(124,110,247,0.3)', color: '#9d92f5' },
   section: { padding: '16px 16px 28px' },
-  sectionTitle: { fontSize: 15, fontWeight: 500, color: '#f0f0f0', marginBottom: 14 },
+  sectionTitle: { fontSize: 15, fontWeight: 500, color: 'var(--text)', marginBottom: 14 },
   tableTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  searchInput: { padding: '7px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#f0f0f0', fontSize: 12, outline: 'none', width: 220 },
-  tableWrap: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflow: 'auto' },
+  searchInput: { padding: '7px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none', width: 220 },
+  tableWrap: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse' as const },
-  thead: { background: '#1a1a1a' },
-  th: { padding: '10px 14px', textAlign: 'left' as const, fontSize: 10, fontWeight: 500, color: '#555', textTransform: 'uppercase' as const, letterSpacing: '0.05em', whiteSpace: 'nowrap' as const },
-  tr: { borderTop: '1px solid rgba(255,255,255,0.05)' },
+  thead: { background: 'var(--bg-3)' },
+  th: { padding: '10px 14px', textAlign: 'left' as const, fontSize: 10, fontWeight: 500, color: 'var(--text-3)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', whiteSpace: 'nowrap' as const },
+  tr: { borderTop: '1px solid var(--border)' },
   td: { padding: '10px 14px', verticalAlign: 'middle' as const, whiteSpace: 'nowrap' as const },
   userCell: { display: 'flex', alignItems: 'center', gap: 8 },
   uAvatar: { width: 24, height: 24, borderRadius: '50%', background: 'rgba(124,110,247,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 600, color: '#9d92f5', flexShrink: 0 },
-  num: { fontSize: 12, color: '#888' },
+  num: { fontSize: 12, color: 'var(--text-2)' },
   badge: { display: 'inline-flex', padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 500 },
   badgeGreen: { background: 'rgba(29,158,117,0.12)', color: '#5DCAA5' },
   badgeRed: { background: 'rgba(163,45,45,0.12)', color: '#f09595' },
   badgePurple: { background: 'rgba(124,110,247,0.12)', color: '#9d92f5' },
-  badgeGray: { background: 'rgba(255,255,255,0.05)', color: '#888' },
-  actionBtn: { padding: '4px 10px', border: 'none', borderRadius: 5, fontSize: 10, fontWeight: 500, cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: '#888' },
+  badgeGray: { background: 'rgba(255,255,255,0.05)', color: 'var(--text-2)' },
+  actionBtn: { padding: '4px 10px', border: 'none', borderRadius: 5, fontSize: 10, fontWeight: 500, cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: 'var(--text-2)' },
   actionRed: { background: 'rgba(163,45,45,0.12)', color: '#f09595' },
   actionGreen: { background: 'rgba(29,158,117,0.12)', color: '#5DCAA5' },
   actionPurple: { background: 'rgba(124,110,247,0.12)', color: '#9d92f5' },
   actionOrange: { background: 'rgba(186,117,23,0.12)', color: '#f0a952' },
-  planSelect: { padding: '3px 6px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 5, color: '#f0f0f0', fontSize: 11, outline: 'none', cursor: 'pointer' },
-  inlineInput: { padding: '3px 6px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 5, color: '#f0f0f0', fontSize: 12, outline: 'none', width: 90 },
-  giftCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 24 },
+  planSelect: { padding: '3px 6px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text)', fontSize: 11, outline: 'none', cursor: 'pointer' },
+  inlineInput: { padding: '3px 6px', background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 5, color: 'var(--text)', fontSize: 12, outline: 'none', width: 90 },
+  giftCard: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 24 },
   giftRow: { display: 'flex', gap: 16, alignItems: 'flex-end' },
   field: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1 },
-  label: { fontSize: 11, color: '#666' },
-  fieldDesc: { fontSize: 11, color: '#444', marginBottom: 4, lineHeight: 1.5 },
-  select: { padding: '8px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#f0f0f0', fontSize: 13, outline: 'none' },
-  input: { padding: '8px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#f0f0f0', fontSize: 13, outline: 'none' },
-  giftBtn: { padding: '9px 20px', background: '#7c6ef7', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' as const },
-  settingsCard: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 24 },
+  label: { fontSize: 11, color: 'var(--text-3)' },
+  fieldDesc: { fontSize: 11, color: 'var(--text-3)', marginBottom: 4, lineHeight: 1.5 },
+  select: { padding: '8px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 13, outline: 'none' },
+  input: { padding: '8px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 13, outline: 'none' },
+  giftBtn: { padding: '9px 20px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  settingsCard: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 24 },
   settingsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 24 },
   previewBox: { marginTop: 8, padding: '8px 12px', background: 'rgba(124,110,247,0.07)', border: '1px solid rgba(124,110,247,0.15)', borderRadius: 7, fontSize: 11, color: '#9d92f5', lineHeight: 1.5 },
-  marginPreview: { background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, padding: 16, marginBottom: 20 },
-  marginRow: { display: 'flex', gap: 32, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 13 },
-  saveBtn: { padding: '10px 24px', background: '#7c6ef7', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
-  dbInfoRow: { display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' },
-  dbLabel: { fontSize: 11, color: '#555', width: 70, flexShrink: 0 },
-  dbVal: { fontSize: 12, color: '#888' },
+  marginPreview: { background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 20 },
+  marginRow: { display: 'flex', gap: 32, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 },
+  saveBtn: { padding: '10px 24px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  dbInfoRow: { display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' },
+  dbLabel: { fontSize: 11, color: 'var(--text-3)', width: 70, flexShrink: 0 },
+  dbVal: { fontSize: 12, color: 'var(--text-2)' },
 }

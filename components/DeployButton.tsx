@@ -43,7 +43,7 @@ export default function DeployButton({ projectId, userId }: DeployButtonProps) {
       </button>
 
       {(deployUrl || error) && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-[#111] border border-white/10 rounded-xl p-4 z-50 shadow-xl">
+        <div className="absolute right-0 top-full mt-2 w-72 bg-[var(--bg-2)] border border-white/10 rounded-xl p-4 z-50 shadow-xl">
           {deployUrl ? (
             <>
               <div className="text-emerald-400 text-xs font-medium mb-2">Deployed successfully!</div>
@@ -57,7 +57,7 @@ export default function DeployButton({ projectId, userId }: DeployButtonProps) {
               </a>
               <button
                 onClick={() => { navigator.clipboard.writeText(deployUrl); }}
-                className="mt-2 px-2 py-1 bg-surface-3 border border-white/[0.08] rounded text-[#888] text-[10px] cursor-pointer"
+                className="mt-2 px-2 py-1 bg-surface-3 border border-[var(--border)] rounded text-[var(--text-2)] text-[10px] cursor-pointer"
               >
                 Copy URL
               </button>
@@ -65,12 +65,12 @@ export default function DeployButton({ projectId, userId }: DeployButtonProps) {
           ) : error ? (
             <>
               <div className="text-red-400 text-xs font-medium mb-1">Deploy failed</div>
-              <div className="text-[#888] text-[11px]">{error}</div>
+              <div className="text-[var(--text-2)] text-[11px]">{error}</div>
             </>
           ) : null}
           <button
             onClick={() => { setDeployUrl(null); setError(null) }}
-            className="absolute top-2 right-2 bg-transparent border-none text-[#555] text-xs cursor-pointer"
+            className="absolute top-2 right-2 bg-transparent border-none text-[var(--text-3)] text-xs cursor-pointer"
           >
             ✕
           </button>

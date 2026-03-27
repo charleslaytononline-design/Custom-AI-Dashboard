@@ -115,25 +115,25 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', justifyContent: 'flex-end', zIndex: 50,
   },
   panel: {
-    width: 360, maxWidth: '100%', background: '#111', borderLeft: '1px solid rgba(255,255,255,0.08)',
+    width: 360, maxWidth: '100%', background: 'var(--bg-2)', borderLeft: '1px solid var(--border)',
     display: 'flex', flexDirection: 'column', height: '100%',
   },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0,
+    padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0,
   },
-  title: { fontSize: 14, fontWeight: 600, color: '#f0f0f0', margin: 0 },
+  title: { fontSize: 14, fontWeight: 600, color: 'var(--text)', margin: 0 },
   closeBtn: {
-    background: 'none', border: 'none', color: '#666', fontSize: 14, cursor: 'pointer',
+    background: 'none', border: 'none', color: 'var(--text-3)', fontSize: 14, cursor: 'pointer',
     padding: '4px 8px',
   },
   list: { flex: 1, overflowY: 'auto', padding: '8px 12px' },
   empty: {
-    color: '#555', fontSize: 13, textAlign: 'center', padding: '40px 20px', lineHeight: 1.6,
+    color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '40px 20px', lineHeight: 1.6,
   },
   item: {
     padding: '12px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.06)',
-    background: '#1a1a1a', marginBottom: 8, cursor: 'pointer',
+    background: 'var(--bg-3)', marginBottom: 8, cursor: 'pointer',
     transition: 'border-color 0.15s',
   },
   itemSelected: {
@@ -142,10 +142,10 @@ const styles: Record<string, React.CSSProperties> = {
   itemTop: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6,
   },
-  itemSource: { fontSize: 11, fontWeight: 500, color: '#aaa' },
-  itemTime: { fontSize: 11, color: '#555' },
+  itemSource: { fontSize: 11, fontWeight: 500, color: 'var(--text-2)' },
+  itemTime: { fontSize: 11, color: 'var(--text-3)' },
   itemPreview: {
-    fontSize: 11, color: '#555', fontFamily: 'monospace', lineHeight: 1.4,
+    fontSize: 11, color: 'var(--text-3)', fontFamily: 'monospace', lineHeight: 1.4,
     overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
   },
   restoreBtn: {

@@ -65,7 +65,8 @@
       "Read(//c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/$LOCALAPPDATA/Programs/node/**)",
       "Read(//c/Users/charl/Documents/GitHub/Custom-AI-Dashboard/$HOME/.nvm/*/bin/**)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/.bin/tsc --noEmit)",
-      "Bash(\"/c/Program Files/nodejs/node.exe\" ./node_modules/typescript/bin/tsc --noEmit)"
+      "Bash(\"/c/Program Files/nodejs/node.exe\" ./node_modules/typescript/bin/tsc --noEmit)",
+      "Bash(node ./node_modules/.bin/next build)"
     ]
   }
 }

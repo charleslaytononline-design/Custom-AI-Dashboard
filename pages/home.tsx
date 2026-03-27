@@ -155,8 +155,8 @@ export default function Dashboard() {
             }}>
               <span>⚡</span>
               <div style={{ flex: 1, minWidth: 180 }}>
-                <strong style={{ color: '#f0f0f0' }}>You need credits to build</strong>
-                <p style={{ color: '#888', fontSize: 12, marginTop: 2 }}>Purchase credits to create projects and use the AI builder.</p>
+                <strong style={{ color: 'var(--text)' }}>You need credits to build</strong>
+                <p style={{ color: 'var(--text-2)', fontSize: 12, marginTop: 2 }}>Purchase credits to create projects and use the AI builder.</p>
               </div>
               <button onClick={openBuyModal} style={s.buyNowBtn}>Buy Credits →</button>
             </div>
@@ -173,7 +173,7 @@ export default function Dashboard() {
             }}>
               <span>🔒</span>
               <div style={{ flex: 1, minWidth: 180 }}>
-                <strong style={{ color: '#f0f0f0' }}>Plan limit reached</strong>
+                <strong style={{ color: 'var(--text)' }}>Plan limit reached</strong>
                 <p style={{ color: '#e0c060', fontSize: 12, marginTop: 2 }}>{limitMsg}</p>
               </div>
               <button onClick={() => setLimitMsg(null)} style={{ ...s.buyNowBtn, background: 'rgba(200,150,50,0.2)', color: '#e0c060' }}>Dismiss</button>
@@ -254,7 +254,7 @@ export default function Dashboard() {
                       padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid',
                       background: !selectedTemplate ? 'rgba(124,110,247,0.15)' : 'transparent',
                       borderColor: !selectedTemplate ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)',
-                      color: !selectedTemplate ? '#9d92f5' : '#666',
+                      color: !selectedTemplate ? '#9d92f5' : 'var(--text-3)',
                     }}
                   >
                     Blank
@@ -268,7 +268,7 @@ export default function Dashboard() {
                         padding: '6px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', border: '1px solid',
                         background: selectedTemplate === t.id ? 'rgba(124,110,247,0.15)' : 'transparent',
                         borderColor: selectedTemplate === t.id ? 'rgba(124,110,247,0.3)' : 'rgba(255,255,255,0.08)',
-                        color: selectedTemplate === t.id ? '#9d92f5' : '#666',
+                        color: selectedTemplate === t.id ? '#9d92f5' : 'var(--text-3)',
                       }}
                     >
                       {t.name}
@@ -297,37 +297,37 @@ Dashboard.getLayout = function getLayout(page: React.ReactNode) {
 
 const s: Record<string, React.CSSProperties> = {
   main: { flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' },
-  loadingInner: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 14 },
+  loadingInner: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 14 },
   topbar: { padding: '28px 32px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' },
-  pageTitle: { fontSize: 22, fontWeight: 600, color: '#f0f0f0' },
-  pageSub: { fontSize: 13, color: '#555', marginTop: 2 },
-  newBtn: { padding: '9px 18px', background: '#7c6ef7', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', flexShrink: 0 },
+  pageTitle: { fontSize: 22, fontWeight: 600, color: 'var(--text)' },
+  pageSub: { fontSize: 13, color: 'var(--text-3)', marginTop: 2 },
+  newBtn: { padding: '9px 18px', background: 'var(--accent)', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', flexShrink: 0 },
   noCreditsBanner: { margin: '20px 32px 0', padding: '16px 20px', background: 'rgba(186,117,23,0.1)', border: '1px solid rgba(186,117,23,0.25)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 14, fontSize: 20 },
   buyNowBtn: { marginLeft: 'auto', padding: '8px 16px', background: '#BA7517', border: 'none', borderRadius: 7, color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   grid: { padding: 32, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 },
-  newCard: { border: '2px dashed rgba(255,255,255,0.08)', borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, cursor: 'pointer', minHeight: 180 },
-  newCardIcon: { fontSize: 24, color: '#444' },
-  newCardLabel: { fontSize: 13, color: '#555' },
-  card: { background: '#111', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 14, overflow: 'hidden' },
-  cardPreview: { height: 120, background: '#0a0a0a', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)' },
+  newCard: { border: '2px dashed var(--border)', borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, cursor: 'pointer', minHeight: 180 },
+  newCardIcon: { fontSize: 24, color: 'var(--text-3)' },
+  newCardLabel: { fontSize: 13, color: 'var(--text-3)' },
+  card: { background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' },
+  cardPreview: { height: 120, background: 'var(--bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--border)' },
   cardBody: { padding: 16, display: 'flex', flexDirection: 'column', gap: 10 },
-  cardName: { fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 3 },
-  cardDesc: { fontSize: 12, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  cardDate: { fontSize: 11, color: '#444' },
+  cardName: { fontSize: 14, fontWeight: 500, color: 'var(--text)', marginBottom: 3 },
+  cardDesc: { fontSize: 12, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  cardDate: { fontSize: 11, color: 'var(--text-3)' },
   cardActions: { display: 'flex', gap: 8 },
-  openBtn: { flex: 1, padding: '7px 0', background: '#7c6ef7', border: 'none', borderRadius: 7, color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
-  deleteBtn: { padding: '7px 12px', background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#666', fontSize: 12, cursor: 'pointer' },
+  openBtn: { flex: 1, padding: '7px 0', background: 'var(--accent)', border: 'none', borderRadius: 7, color: 'white', fontSize: 12, fontWeight: 500, cursor: 'pointer' },
+  deleteBtn: { padding: '7px 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-3)', fontSize: 12, cursor: 'pointer' },
   empty: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 40 },
-  emptyTitle: { fontSize: 18, fontWeight: 600, color: '#f0f0f0' },
-  emptyText: { fontSize: 13, color: '#555', textAlign: 'center' as const },
-  emptyBtn: { padding: '10px 22px', background: '#7c6ef7', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', marginTop: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: 600, color: 'var(--text)' },
+  emptyText: { fontSize: 13, color: 'var(--text-3)', textAlign: 'center' as const },
+  emptyBtn: { padding: '10px 22px', background: 'var(--accent)', border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer', marginTop: 8 },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 },
-  modal: { background: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: 16 },
-  modalTitle: { fontSize: 16, fontWeight: 600, color: '#f0f0f0' },
+  modal: { background: 'var(--bg-2)', border: '1px solid var(--border-2)', borderRadius: 16, padding: 28, width: '100%', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: 16 },
+  modalTitle: { fontSize: 16, fontWeight: 600, color: 'var(--text)' },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
-  label: { fontSize: 12, color: '#666' },
-  input: { padding: '10px 12px', background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#f0f0f0', fontSize: 14, outline: 'none' },
+  label: { fontSize: 12, color: 'var(--text-3)' },
+  input: { padding: '10px 12px', background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 14, outline: 'none' },
   modalActions: { display: 'flex', gap: 10, justifyContent: 'flex-end' },
-  cancelBtn: { padding: '8px 16px', background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: '#888', fontSize: 13, cursor: 'pointer' },
-  createBtn: { padding: '8px 20px', background: '#7c6ef7', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
+  cancelBtn: { padding: '8px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-2)', fontSize: 13, cursor: 'pointer' },
+  createBtn: { padding: '8px 20px', background: 'var(--accent)', border: 'none', borderRadius: 8, color: 'white', fontSize: 13, fontWeight: 500, cursor: 'pointer' },
 }

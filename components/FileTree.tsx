@@ -14,7 +14,7 @@ export default function FileTree({ nodes, activeFilePath, onFileSelect, onNewFil
     <div className="flex flex-col flex-1 overflow-hidden">
       {onNewFile && (
         <div className="p-3 shrink-0">
-          <button onClick={onNewFile} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#666] text-[13px] cursor-pointer text-left px-3">
+          <button onClick={onNewFile} className="w-full py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[var(--text-3)] text-[13px] cursor-pointer text-left px-3">
             + New file
           </button>
         </div>
@@ -60,9 +60,9 @@ function TreeNode({
           style={{ paddingLeft: indent + 8 }}
           onClick={() => setExpanded(!expanded)}
         >
-          <span className="text-[#555] text-[10px] w-3">{expanded ? '▾' : '▸'}</span>
-          <span className="text-[#888]">📁</span>
-          <span className="text-[#aaa] font-medium">{node.name}</span>
+          <span className="text-[var(--text-3)] text-[10px] w-3">{expanded ? '▾' : '▸'}</span>
+          <span className="text-[var(--text-2)]">📁</span>
+          <span className="text-[var(--text-2)] font-medium">{node.name}</span>
         </div>
         {expanded && node.children?.map(child => (
           <TreeNode
@@ -87,18 +87,18 @@ function TreeNode({
   return (
     <div
       className={`flex items-center gap-1.5 px-2 py-1.5 cursor-pointer rounded-md text-[12px] group ${
-        isActive ? 'bg-brand/10 text-[#f0f0f0]' : 'hover:bg-white/[0.04] text-[#888]'
+        isActive ? 'bg-brand/10 text-[var(--text)]' : 'hover:bg-white/[0.04] text-[var(--text-2)]'
       }`}
       style={{ paddingLeft: indent + 8 }}
       onClick={() => onFileSelect(node)}
     >
       <span className="w-3" />
       <span>{icon}</span>
-      <span className={`flex-1 truncate ${isActive ? 'text-[#f0f0f0] font-medium' : ''}`}>{node.name}</span>
+      <span className={`flex-1 truncate ${isActive ? 'text-[var(--text)] font-medium' : ''}`}>{node.name}</span>
       {onDeleteFile && (
         <button
           onClick={(e) => { e.stopPropagation(); onDeleteFile(node.path) }}
-          className="opacity-0 group-hover:opacity-100 bg-transparent border-none text-[#555] text-[10px] cursor-pointer px-1"
+          className="opacity-0 group-hover:opacity-100 bg-transparent border-none text-[var(--text-3)] text-[10px] cursor-pointer px-1"
         >
           ✕
         </button>

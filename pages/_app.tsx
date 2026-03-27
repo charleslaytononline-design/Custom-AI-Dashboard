@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import Head from 'next/head'
 import '../styles/globals.css'
 import { useSessionTimeout } from '../hooks/useSessionTimeout'
+import { ThemeProvider } from '../contexts/ThemeContext'
 
 function sendLog(event_type: string, severity: string, message: string, metadata?: object) {
   // Fire-and-forget — don't await, don't block the UI
@@ -82,11 +83,11 @@ export default function App({ Component, pageProps }: AppProps) {
 
   const getLayout = (Component as any).getLayout ?? ((page: React.ReactNode) => page)
   return (
-    <>
+    <ThemeProvider>
       <Head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
       </Head>
       {getLayout(<Component {...pageProps} />)}
-    </>
+    </ThemeProvider>
   )
 }

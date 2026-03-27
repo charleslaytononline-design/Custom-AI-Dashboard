@@ -14,9 +14,9 @@
   --bg-3: #242424;
   --border: rgba(255,255,255,0.08);
   --border-2: rgba(255,255,255,0.14);
-  --text: #f0f0f0;
-  --text-2: #a0a0a0;
-  --text-3: #606060;
+  --text: #ffffff;
+  --text-2: #c0c0c0;
+  --text-3: #909090;
   --accent: #7c6ef7;
   --accent-2: #5b50d6;
   --success: #1D9E75;
@@ -78,7 +78,7 @@ input, textarea {
   background: none;
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
-  color: #888;
+  color: var(--text-2);
   font-size: 16px;
   cursor: pointer;
   flex-shrink: 0;

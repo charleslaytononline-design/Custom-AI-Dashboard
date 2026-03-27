@@ -120,26 +120,26 @@ export default function SupabaseConnect({
   return (
     <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
-        className="bg-[#111] border border-white/10 rounded-2xl p-6 w-full max-w-[480px] flex flex-col gap-4"
+        className="bg-[var(--bg-2)] border border-white/10 rounded-2xl p-6 w-full max-w-[480px] flex flex-col gap-4"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-lg">⚡</span>
-            <h2 className="text-base font-semibold text-[#f0f0f0]">Connect Supabase</h2>
+            <h2 className="text-base font-semibold text-[var(--text)]">Connect Supabase</h2>
           </div>
           {isConnected && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Connected</span>
           )}
         </div>
 
-        <p className="text-[#888] text-[13px] -mt-1">
+        <p className="text-[var(--text-2)] text-[13px] -mt-1">
           Connect your own Supabase project to enable auth, database, and storage in your app.
         </p>
 
         {/* URL Input */}
         <div>
-          <label className="text-[11px] text-[#666] font-medium uppercase tracking-wider mb-1.5 block">
+          <label className="text-[11px] text-[var(--text-3)] font-medium uppercase tracking-wider mb-1.5 block">
             Project URL
           </label>
           <input
@@ -147,13 +147,13 @@ export default function SupabaseConnect({
             value={url}
             onChange={e => { setUrl(e.target.value); setStatus('idle') }}
             placeholder="https://your-project.supabase.co"
-            className="w-full px-3 py-2 bg-[#0a0a0a] border border-white/10 rounded-lg text-[#f0f0f0] text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20"
+            className="w-full px-3 py-2 bg-[var(--bg)] border border-white/10 rounded-lg text-[var(--text)] text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20"
           />
         </div>
 
         {/* Anon Key Input */}
         <div>
-          <label className="text-[11px] text-[#666] font-medium uppercase tracking-wider mb-1.5 block">
+          <label className="text-[11px] text-[var(--text-3)] font-medium uppercase tracking-wider mb-1.5 block">
             Anon / Public Key
           </label>
           <input
@@ -161,9 +161,9 @@ export default function SupabaseConnect({
             value={anonKey}
             onChange={e => { setAnonKey(e.target.value); setStatus('idle') }}
             placeholder="eyJhbGciOiJIUzI1NiIs..."
-            className="w-full px-3 py-2 bg-[#0a0a0a] border border-white/10 rounded-lg text-[#f0f0f0] text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 font-mono text-xs"
+            className="w-full px-3 py-2 bg-[var(--bg)] border border-white/10 rounded-lg text-[var(--text)] text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 font-mono text-xs"
           />
-          <p className="text-[10px] text-[#555] mt-1.5">
+          <p className="text-[10px] text-[var(--text-3)] mt-1.5">
             Found in your Supabase Dashboard → Settings → API → Project API Keys
           </p>
         </div>
@@ -187,7 +187,7 @@ export default function SupabaseConnect({
           <button
             onClick={testConnection}
             disabled={testing || !url.trim() || !anonKey.trim()}
-            className="px-4 py-2 bg-surface-3 border border-white/[0.08] rounded-lg text-[#ccc] text-[13px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.08]"
+            className="px-4 py-2 bg-surface-3 border border-[var(--border)] rounded-lg text-[var(--text-2)] text-[13px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/[0.08]"
           >
             {testing ? 'Testing...' : 'Test Connection'}
           </button>
@@ -214,7 +214,7 @@ export default function SupabaseConnect({
 
           <button
             onClick={onClose}
-            className="px-3 py-2 bg-transparent border border-white/[0.08] rounded-lg text-[#888] text-[13px] cursor-pointer"
+            className="px-3 py-2 bg-transparent border border-[var(--border)] rounded-lg text-[var(--text-2)] text-[13px] cursor-pointer"
           >
             Cancel
           </button>
