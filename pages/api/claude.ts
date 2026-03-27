@@ -488,10 +488,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         const tableResults = await Promise.allSettled(allowedDefs.map(async (match) => {
           const tableDef = JSON.parse(match[1].trim())
-          // Auto-fix bare string defaults the AI may generate without single quotes
-          // e.g. "default":"pending" → "default":"'pending'"
+          // Auto-fix defaults the AI may generate as wrong JSON types
           for (const col of tableDef.columns || []) {
-            if (col.default && typeof col.default === 'string' &&
+            if (col.default === undefined || col.default === null) continue
+            // Convert boolean defaults to string: true → 'true'
+            if (typeof col.default === 'boolean') {
+              col.default = String(col.default)
+            }
+            // Convert numeric defaults to string: 1 → '1'
+            if (typeof col.default === 'number' && Number.isFinite(col.default)) {
+              col.default = String(col.default)
+            }
+            // Wrap bare string defaults in single quotes: "pending" → "'pending'"
+            if (typeof col.default === 'string' &&
                 !isSafeDefaultValue(col.default) &&
                 /^[a-zA-Z][a-zA-Z0-9_ ]{0,98}$/.test(col.default)) {
               col.default = `'${col.default}'`

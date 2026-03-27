@@ -2268,8 +2268,15 @@ export default function Admin() {
 
             {/* AI Builder Errors */}
             {(() => {
-              const builderErrorTypes = ['console_error', 'unhandled_error', 'builder_error', 'api_error']
-              const allBuilderErrors = logs.filter(l => builderErrorTypes.includes(l.event_type))
+              const allBuilderErrors = logs.filter(l => {
+                // builder_error and api_error are always builder-related
+                if (l.event_type === 'builder_error' || l.event_type === 'api_error') return true
+                // console_error and unhandled_error only from the builder/project page
+                if (l.event_type === 'console_error' || l.event_type === 'unhandled_error') {
+                  return l.metadata?.url?.startsWith('/project/')
+                }
+                return false
+              })
               const builderErrors = allBuilderErrors.filter(l => {
                 if (builderErrorSearch) {
                   const q = builderErrorSearch.toLowerCase()

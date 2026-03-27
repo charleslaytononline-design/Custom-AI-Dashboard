@@ -73,6 +73,8 @@ const SAFE_DEFAULT_RE = /^(now\(\)|gen_random_uuid\(\)|true|false|0|'[^']{0,100}
 
 export function isSafeDefaultValue(val: unknown): boolean {
   if (val === undefined || val === null) return true
+  if (typeof val === 'boolean') return true
+  if (typeof val === 'number' && Number.isFinite(val)) return true
   if (typeof val !== 'string') return false
   return SAFE_DEFAULT_RE.test(val)
 }
