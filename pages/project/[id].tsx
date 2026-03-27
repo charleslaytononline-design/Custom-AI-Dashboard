@@ -933,17 +933,25 @@ export default function ProjectBuilder() {
                   <button onClick={() => fileInputRef.current?.click()} className="px-2 py-0.5 bg-surface-3 border border-white/[0.08] rounded-md cursor-pointer text-sm" title="Attach image">🖼</button>
                   <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                 </div>
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  onPaste={handlePaste}
-                  placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
-                  rows={3} className="p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
-                />
-                <button onClick={() => sendMessage()} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
-                  {loading ? 'Working...' : mode==='plan' ? 'Create Plan' : 'Build'}
-                </button>
+                <div className={`flex ${isMobile ? 'flex-row items-end gap-2' : 'flex-col gap-2'}`}>
+                  <textarea
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                    onPaste={handlePaste}
+                    placeholder={pendingImage ? 'Describe what you want based on the image...' : 'Paste an image or describe what to build...'}
+                    rows={3} className="flex-1 p-2.5 bg-surface-3 border border-white/[0.08] rounded-lg text-[#f0f0f0] text-[13px] resize-none outline-none leading-relaxed" disabled={loading}
+                  />
+                  {isMobile ? (
+                    <button onClick={() => sendMessage()} disabled={loading || (!input.trim() && !pendingImage)} className="w-10 h-10 bg-brand border-none rounded-xl text-white text-lg font-medium cursor-pointer disabled:opacity-50 shrink-0 flex items-center justify-center">
+                      {loading ? '⏳' : '▶'}
+                    </button>
+                  ) : (
+                    <button onClick={() => sendMessage()} disabled={loading || (!input.trim() && !pendingImage)} className="py-2 bg-brand border-none rounded-lg text-white text-[13px] font-medium cursor-pointer disabled:opacity-50">
+                      {loading ? 'Working...' : mode==='plan' ? 'Create Plan' : 'Build'}
+                    </button>
+                  )}
+                </div>
               </div>
             </>
           )}
