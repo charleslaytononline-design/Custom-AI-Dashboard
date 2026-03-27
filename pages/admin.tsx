@@ -224,7 +224,12 @@ export default function Admin() {
   const [expandedLog, setExpandedLog] = useState<string | null>(null)
   const [logPage, setLogPage] = useState(0)
   const [logsPerPage, setLogsPerPage] = useState(20)
-  const [expandedBuilderError, setExpandedBuilderError] = useState<string | null>(null)
+  const [expandedBuilderErrors, setExpandedBuilderErrors] = useState<Set<string>>(new Set())
+  const [builderErrorPage, setBuilderErrorPage] = useState(0)
+  const [builderErrorsPerPage, setBuilderErrorsPerPage] = useState(20)
+  const [builderErrorSearch, setBuilderErrorSearch] = useState('')
+  const [selectedBuilderErrors, setSelectedBuilderErrors] = useState<Set<string>>(new Set())
+  const [builderErrorCardHeight, setBuilderErrorCardHeight] = useState(400)
 
   // Chat History state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
@@ -2184,8 +2189,20 @@ export default function Admin() {
             {/* AI Builder Errors */}
             {(() => {
               const builderErrorTypes = ['console_error', 'unhandled_error', 'builder_error', 'api_error']
-              const builderErrors = logs.filter(l => builderErrorTypes.includes(l.event_type))
-              const shownErrors = builderErrors.slice(0, 15)
+              const allBuilderErrors = logs.filter(l => builderErrorTypes.includes(l.event_type))
+              const builderErrors = allBuilderErrors.filter(l => {
+                if (builderErrorSearch) {
+                  const q = builderErrorSearch.toLowerCase()
+                  if (!l.message.toLowerCase().includes(q) && !(l.email || '').toLowerCase().includes(q)) return false
+                }
+                return true
+              })
+              const totalPages = Math.ceil(builderErrors.length / builderErrorsPerPage)
+              const startIdx = builderErrorPage * builderErrorsPerPage
+              const endIdx = startIdx + builderErrorsPerPage
+              const pagedErrors = builderErrors.slice(startIdx, endIdx)
+              const allPageSelected = pagedErrors.length > 0 && pagedErrors.every(l => selectedBuilderErrors.has(l.id))
+
               const errorTypeLabel: Record<string, string> = {
                 console_error: 'Console Error',
                 unhandled_error: 'Unhandled Error',
@@ -2198,6 +2215,67 @@ export default function Admin() {
                 builder_error: '#f0a952',
                 api_error: '#e879f9',
               }
+
+              const toggleBuilderExpand = (id: string) => {
+                setExpandedBuilderErrors(prev => {
+                  const next = new Set(prev)
+                  if (next.has(id)) next.delete(id); else next.add(id)
+                  return next
+                })
+              }
+
+              const toggleSelectError = (id: string) => {
+                setSelectedBuilderErrors(prev => {
+                  const next = new Set(prev)
+                  if (next.has(id)) next.delete(id); else next.add(id)
+                  return next
+                })
+              }
+
+              const toggleSelectAll = () => {
+                if (allPageSelected) {
+                  setSelectedBuilderErrors(prev => {
+                    const next = new Set(prev)
+                    pagedErrors.forEach(l => next.delete(l.id))
+                    return next
+                  })
+                } else {
+                  setSelectedBuilderErrors(prev => {
+                    const next = new Set(prev)
+                    pagedErrors.forEach(l => next.add(l.id))
+                    return next
+                  })
+                }
+              }
+
+              const copySelectedErrors = () => {
+                const selected = allBuilderErrors.filter(l => selectedBuilderErrors.has(l.id))
+                const text = selected.map(l => {
+                  const time = new Date(l.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  const type = errorTypeLabel[l.event_type] || l.event_type
+                  let line = `[${time}] [${type}] [${l.severity}] [${l.email || '—'}] ${l.message}`
+                  if (l.metadata) line += `\nMetadata: ${JSON.stringify(l.metadata, null, 2)}`
+                  return line
+                }).join('\n\n---\n\n')
+                navigator.clipboard.writeText(text)
+              }
+
+              const handleResizeMouseDown = (e: React.MouseEvent) => {
+                e.preventDefault()
+                const startY = e.clientY
+                const startHeight = builderErrorCardHeight
+                const onMove = (ev: MouseEvent) => {
+                  const diff = ev.clientY - startY
+                  setBuilderErrorCardHeight(Math.max(150, startHeight + diff))
+                }
+                const onUp = () => {
+                  document.removeEventListener('mousemove', onMove)
+                  document.removeEventListener('mouseup', onUp)
+                }
+                document.addEventListener('mousemove', onMove)
+                document.addEventListener('mouseup', onUp)
+              }
+
               return (
                 <div style={{ ...s.settingsCard, marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -2205,184 +2283,243 @@ export default function Admin() {
                       <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>AI Builder Errors</h3>
                       <p style={{ fontSize: 11, color: '#555' }}>Console errors, unhandled exceptions, builder failures and API errors from the AI Builder. Helps debug issues users are experiencing.</p>
                     </div>
-                    <span style={{ fontSize: 12, color: '#444' }}>{builderErrors.length} errors</span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {selectedBuilderErrors.size > 0 && (
+                        <button onClick={copySelectedErrors} style={{ ...s.actionBtn, padding: '6px 12px', background: 'rgba(124,110,247,0.12)', color: '#9d92f5' }}>
+                          Copy {selectedBuilderErrors.size} Error{selectedBuilderErrors.size > 1 ? 's' : ''}
+                        </button>
+                      )}
+                      <input value={builderErrorSearch} onChange={e => { setBuilderErrorSearch(e.target.value); setBuilderErrorPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
+                      <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+                      <span style={{ fontSize: 12, color: '#444' }}>{builderErrors.length} errors</span>
+                    </div>
                   </div>
                   {builderErrors.length === 0 ? (
                     <div style={{ padding: 24, textAlign: 'center', color: '#444', fontSize: 12, background: '#0a0a0a', borderRadius: 8 }}>No AI Builder errors logged</div>
                   ) : (
-                    <div style={{ maxHeight: 400, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
-                      <table style={s.table}>
-                        <thead>
-                          <tr style={s.thead}>
-                            <th style={s.th}>Time</th>
-                            <th style={s.th}>Error Type</th>
-                            <th style={s.th}>Severity</th>
-                            <th style={s.th}>Email</th>
-                            <th style={s.th}>Message</th>
-                            <th style={s.th}>Meta</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {shownErrors.map(log => (
-                            <React.Fragment key={log.id}>
-                              <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedBuilderError(expandedBuilderError === log.id ? null : log.id)}>
-                                <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
-                                  {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                </td>
-                                <td style={s.td}>
-                                  <span style={{ ...s.badge, background: 'rgba(163,45,45,0.12)', color: errorTypeColor[log.event_type] || '#f09595' }}>
-                                    {errorTypeLabel[log.event_type] || log.event_type}
-                                  </span>
-                                </td>
-                                <td style={s.td}>
-                                  <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
-                                    {log.severity}
-                                  </span>
-                                </td>
-                                <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
-                                <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
-                                </td>
-                                <td style={s.td}>
-                                  {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
-                                </td>
-                              </tr>
-                              {expandedBuilderError === log.id && log.metadata && (
-                                <tr style={{ background: '#0d0d0d' }}>
-                                  <td colSpan={6} style={{ padding: '10px 14px' }}>
-                                    <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                      {JSON.stringify(log.metadata, null, 2)}
-                                    </pre>
+                    <>
+                      <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
+                        Showing {startIdx + 1}–{Math.min(endIdx, builderErrors.length)} of {builderErrors.length}
+                      </div>
+                      <div style={{ maxHeight: builderErrorCardHeight, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                        <table style={s.table}>
+                          <thead>
+                            <tr style={s.thead}>
+                              <th style={{ ...s.th, width: 30 }}>
+                                <input type="checkbox" checked={allPageSelected} onChange={toggleSelectAll} style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }} />
+                              </th>
+                              <th style={s.th}>Time</th>
+                              <th style={s.th}>Error Type</th>
+                              <th style={s.th}>Severity</th>
+                              <th style={s.th}>Email</th>
+                              <th style={s.th}>Message</th>
+                              <th style={s.th}>Meta</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedErrors.map(log => (
+                              <React.Fragment key={log.id}>
+                                <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => toggleBuilderExpand(log.id)}>
+                                  <td style={{ ...s.td, width: 30 }} onClick={e => e.stopPropagation()}>
+                                    <input type="checkbox" checked={selectedBuilderErrors.has(log.id)} onChange={() => toggleSelectError(log.id)} style={{ width: 14, height: 14, cursor: 'pointer', accentColor: '#7c6ef7' }} />
+                                  </td>
+                                  <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                    {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </td>
+                                  <td style={s.td}>
+                                    <span style={{ ...s.badge, background: 'rgba(163,45,45,0.12)', color: errorTypeColor[log.event_type] || '#f09595' }}>
+                                      {errorTypeLabel[log.event_type] || log.event_type}
+                                    </span>
+                                  </td>
+                                  <td style={s.td}>
+                                    <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                                      {log.severity}
+                                    </span>
+                                  </td>
+                                  <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                  <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                  </td>
+                                  <td style={s.td}>
+                                    {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>{expandedBuilderErrors.has(log.id) ? '▼ collapse' : '▶ expand'}</span>}
                                   </td>
                                 </tr>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                                {expandedBuilderErrors.has(log.id) && log.metadata && (
+                                  <tr style={{ background: '#0d0d0d' }}>
+                                    <td colSpan={7} style={{ padding: '10px 14px' }}>
+                                      <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                        {JSON.stringify(log.metadata, null, 2)}
+                                      </pre>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Drag handle to resize */}
+                      <div
+                        onMouseDown={handleResizeMouseDown}
+                        style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 12, cursor: 'ns-resize', userSelect: 'none', marginTop: 4 }}
+                      >
+                        <div style={{ width: 40, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.1)' }} />
+                      </div>
+
+                      {/* Pagination controls */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, padding: '8px 0' }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button
+                            onClick={() => setBuilderErrorPage(p => Math.max(0, p - 1))}
+                            disabled={builderErrorPage === 0}
+                            style={{ ...s.actionBtn, padding: '6px 14px', opacity: builderErrorPage === 0 ? 0.4 : 1, cursor: builderErrorPage === 0 ? 'not-allowed' : 'pointer' }}
+                          >
+                            ← Previous
+                          </button>
+                          <span style={{ fontSize: 12, color: '#666' }}>Page {builderErrorPage + 1} of {totalPages}</span>
+                          <button
+                            onClick={() => setBuilderErrorPage(p => Math.min(totalPages - 1, p + 1))}
+                            disabled={builderErrorPage >= totalPages - 1}
+                            style={{ ...s.actionBtn, padding: '6px 14px', opacity: builderErrorPage >= totalPages - 1 ? 0.4 : 1, cursor: builderErrorPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                          >
+                            Next Page →
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => { setBuilderErrorsPerPage(p => p + 20); setBuilderErrorPage(0) }}
+                          style={{ ...s.actionBtn, padding: '6px 14px' }}
+                        >
+                          Show More ({builderErrorsPerPage} → {builderErrorsPerPage + 20} per page)
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               )
             })()}
 
             {/* Log viewer */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
-              <h2 style={{ ...s.sectionTitle, margin: 0 }}>Recent Logs <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h2>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={logSearch} onChange={e => { setLogSearch(e.target.value); setLogPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
-                <select value={logTypeFilter} onChange={e => { setLogTypeFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
-                  <option value="all">All types</option>
-                  {Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-                <select value={logSeverityFilter} onChange={e => { setLogSeverityFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
-                  <option value="all">All severity</option>
-                  <option value="info">Info</option>
-                  <option value="warn">Warn</option>
-                  <option value="error">Error</option>
-                </select>
-                <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+            <div style={{ ...s.settingsCard }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>Recent Logs <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h3>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input value={logSearch} onChange={e => { setLogSearch(e.target.value); setLogPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
+                  <select value={logTypeFilter} onChange={e => { setLogTypeFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
+                    <option value="all">All types</option>
+                    {Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                  <select value={logSeverityFilter} onChange={e => { setLogSeverityFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
+                    <option value="all">All severity</option>
+                    <option value="info">Info</option>
+                    <option value="warn">Warn</option>
+                    <option value="error">Error</option>
+                  </select>
+                  <button onClick={loadLogs} style={{ ...s.actionBtn, padding: '6px 12px' }}>↺ Refresh</button>
+                </div>
               </div>
-            </div>
 
-            {(() => {
-              const totalPages = Math.ceil(filteredLogs.length / logsPerPage)
-              const startIdx = logPage * logsPerPage
-              const endIdx = startIdx + logsPerPage
-              const pagedLogs = filteredLogs.slice(startIdx, endIdx)
+              {(() => {
+                const totalPages = Math.ceil(filteredLogs.length / logsPerPage)
+                const startIdx = logPage * logsPerPage
+                const endIdx = startIdx + logsPerPage
+                const pagedLogs = filteredLogs.slice(startIdx, endIdx)
 
-              return (
-                <>
-                  <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
-                    Showing {filteredLogs.length === 0 ? 0 : startIdx + 1}–{Math.min(endIdx, filteredLogs.length)} of {filteredLogs.length}
-                  </div>
-                  <div style={s.tableWrap}>
-                    {filteredLogs.length === 0 ? (
-                      <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
-                    ) : (
-                      <table style={s.table}>
-                        <thead>
-                          <tr style={s.thead}>
-                            <th style={s.th}>Time</th>
-                            <th style={s.th}>Event</th>
-                            <th style={s.th}>Severity</th>
-                            <th style={s.th}>Email</th>
-                            <th style={s.th}>Message</th>
-                            <th style={s.th}>Meta</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pagedLogs.map(log => (
-                            <React.Fragment key={log.id}>
-                              <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
-                                <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
-                                  {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                </td>
-                                <td style={s.td}>
-                                  <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
-                                    {EVENT_LABELS[log.event_type] || log.event_type}
-                                  </span>
-                                </td>
-                                <td style={s.td}>
-                                  <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
-                                    {log.severity}
-                                  </span>
-                                </td>
-                                <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
-                                <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
-                                </td>
-                                <td style={s.td}>
-                                  {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
-                                </td>
-                              </tr>
-                              {expandedLog === log.id && log.metadata && (
-                                <tr style={{ background: '#0d0d0d' }}>
-                                  <td colSpan={6} style={{ padding: '10px 14px' }}>
-                                    <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                      {JSON.stringify(log.metadata, null, 2)}
-                                    </pre>
+                return (
+                  <>
+                    <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
+                      Showing {filteredLogs.length === 0 ? 0 : startIdx + 1}–{Math.min(endIdx, filteredLogs.length)} of {filteredLogs.length}
+                    </div>
+                    <div style={{ borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)', overflow: 'auto' }}>
+                      {filteredLogs.length === 0 ? (
+                        <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
+                      ) : (
+                        <table style={s.table}>
+                          <thead>
+                            <tr style={s.thead}>
+                              <th style={s.th}>Time</th>
+                              <th style={s.th}>Event</th>
+                              <th style={s.th}>Severity</th>
+                              <th style={s.th}>Email</th>
+                              <th style={s.th}>Message</th>
+                              <th style={s.th}>Meta</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedLogs.map(log => (
+                              <React.Fragment key={log.id}>
+                                <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
+                                  <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                    {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </td>
+                                  <td style={s.td}>
+                                    <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
+                                      {EVENT_LABELS[log.event_type] || log.event_type}
+                                    </span>
+                                  </td>
+                                  <td style={s.td}>
+                                    <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                                      {log.severity}
+                                    </span>
+                                  </td>
+                                  <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                  <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                  </td>
+                                  <td style={s.td}>
+                                    {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
                                   </td>
                                 </tr>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
+                                {expandedLog === log.id && log.metadata && (
+                                  <tr style={{ background: '#0d0d0d' }}>
+                                    <td colSpan={6} style={{ padding: '10px 14px' }}>
+                                      <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                        {JSON.stringify(log.metadata, null, 2)}
+                                      </pre>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
 
-                  {/* Pagination controls */}
-                  {filteredLogs.length > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, padding: '8px 0' }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {/* Pagination controls */}
+                    {filteredLogs.length > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, padding: '8px 0' }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <button
+                            onClick={() => setLogPage(p => Math.max(0, p - 1))}
+                            disabled={logPage === 0}
+                            style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage === 0 ? 0.4 : 1, cursor: logPage === 0 ? 'not-allowed' : 'pointer' }}
+                          >
+                            ← Previous
+                          </button>
+                          <span style={{ fontSize: 12, color: '#666' }}>Page {logPage + 1} of {totalPages}</span>
+                          <button
+                            onClick={() => setLogPage(p => Math.min(totalPages - 1, p + 1))}
+                            disabled={logPage >= totalPages - 1}
+                            style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage >= totalPages - 1 ? 0.4 : 1, cursor: logPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                          >
+                            Next Page →
+                          </button>
+                        </div>
                         <button
-                          onClick={() => setLogPage(p => Math.max(0, p - 1))}
-                          disabled={logPage === 0}
-                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage === 0 ? 0.4 : 1, cursor: logPage === 0 ? 'not-allowed' : 'pointer' }}
+                          onClick={() => { setLogsPerPage(p => p + 20); setLogPage(0) }}
+                          style={{ ...s.actionBtn, padding: '6px 14px' }}
                         >
-                          ← Previous
-                        </button>
-                        <span style={{ fontSize: 12, color: '#666' }}>Page {logPage + 1} of {totalPages}</span>
-                        <button
-                          onClick={() => setLogPage(p => Math.min(totalPages - 1, p + 1))}
-                          disabled={logPage >= totalPages - 1}
-                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage >= totalPages - 1 ? 0.4 : 1, cursor: logPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
-                        >
-                          Next Page →
+                          Show More ({logsPerPage} → {logsPerPage + 20} per page)
                         </button>
                       </div>
-                      <button
-                        onClick={() => { setLogsPerPage(p => p + 20); setLogPage(0) }}
-                        style={{ ...s.actionBtn, padding: '6px 14px' }}
-                      >
-                        Show More ({logsPerPage} → {logsPerPage + 20} per page)
-                      </button>
-                    </div>
-                  )}
-                </>
-              )
-            })()}
+                    )}
+                  </>
+                )
+              })()}
+            </div>
           </div>
         )
       })()}
