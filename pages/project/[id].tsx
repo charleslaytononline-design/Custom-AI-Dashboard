@@ -525,73 +525,82 @@ export default function ProjectBuilder() {
                 if (event.imagePrompts?.length > 0 && projectId) {
                   const prompts = event.imagePrompts as string[]
                   ;(async () => {
-                    for (let i = 0; i < prompts.length; i++) {
-                      try {
-                        setBuildStatus(`Generating image ${i + 1} of ${prompts.length}...`)
-                        const imgRes = await fetch('/api/generate-image', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ prompt: prompts[i] }),
-                        })
-                        if (!imgRes.ok) {
-                          const errBody = await imgRes.text()
-                          throw new Error(`Image API returned ${imgRes.status}: ${errBody}`)
-                        }
-                        const imgData = await imgRes.json()
-                        if (imgData.url) {
-                          // Build placeholder URL that matches what the backend inserted
-                          const placeholder = i === 0
-                            ? `https://placehold.co/1024x768/141414/444444?text=Loading+image...`
-                            : `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
-                          const numberedPlaceholder = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
+                    setBuildStatus(`Generating ${prompts.length} image${prompts.length > 1 ? 's' : ''}...`)
 
-                          // Replace placeholders in all project files (DB)
-                          const { data: allFiles } = await supabase
-                            .from('project_files')
-                            .select('id, path, content')
-                            .eq('project_id', projectId as string)
-                          for (const file of allFiles || []) {
-                            if (!file.content) continue
-                            let updated = file.content
-                            // Replace numbered placeholder
-                            updated = updated.split(numberedPlaceholder).join(imgData.url)
-                            // For image 1, also replace the shorthand placeholder
-                            if (i === 0) {
-                              updated = updated.split(placeholder).join(imgData.url)
-                            }
-                            // Replace __GENERATED_IMAGE_X__ placeholder
-                            updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(imgData.url)
-                            if (updated !== file.content) {
-                              await supabase
-                                .from('project_files')
-                                .update({ content: updated, updated_at: new Date().toISOString() })
-                                .eq('id', file.id)
-                            }
+                    // Generate all images in parallel
+                    const results = await Promise.all(
+                      prompts.map(async (prompt, i) => {
+                        try {
+                          const imgRes = await fetch('/api/generate-image', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ prompt }),
+                          })
+                          if (!imgRes.ok) {
+                            const errBody = await imgRes.text()
+                            throw new Error(`Image API returned ${imgRes.status}: ${errBody}`)
                           }
-
-                          // Update local files state
-                          setFiles(prev => prev.map(f => {
-                            if (!f.content) return f
-                            let updated = f.content
-                            updated = updated.split(numberedPlaceholder).join(imgData.url)
-                            if (i === 0) {
-                              updated = updated.split(placeholder).join(imgData.url)
-                            }
-                            // Replace __GENERATED_IMAGE_X__ placeholder
-                            updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(imgData.url)
-                            return updated !== f.content ? { ...f, content: updated } : f
-                          }))
-
-                          // Refresh preview
-                          setBuildTrigger(prev => prev + 1)
-
-                          // Update credit balance if returned
-                          if (imgData.newBalance !== undefined) setCreditBalance(imgData.newBalance)
+                          const imgData = await imgRes.json()
+                          return { index: i, url: imgData.url || null, newBalance: imgData.newBalance }
+                        } catch (err: any) {
+                          console.error(`Image ${i + 1} generation failed:`, err?.message || String(err))
+                          return { index: i, url: null, newBalance: undefined }
                         }
-                      } catch (err: any) {
-                        console.error(`Image ${i + 1} generation failed:`, err?.message || String(err))
+                      })
+                    )
+
+                    // Batch-replace all placeholders in one pass
+                    const successful = results.filter(r => r.url)
+                    if (successful.length > 0) {
+                      const { data: allFiles } = await supabase
+                        .from('project_files')
+                        .select('id, path, content')
+                        .eq('project_id', projectId as string)
+
+                      for (const file of allFiles || []) {
+                        if (!file.content) continue
+                        let updated = file.content
+                        for (const r of successful) {
+                          const i = r.index
+                          const numberedPlaceholder = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
+                          updated = updated.split(numberedPlaceholder).join(r.url!)
+                          if (i === 0) {
+                            updated = updated.split(`https://placehold.co/1024x768/141414/444444?text=Loading+image...`).join(r.url!)
+                          }
+                          updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(r.url!)
+                        }
+                        if (updated !== file.content) {
+                          await supabase
+                            .from('project_files')
+                            .update({ content: updated, updated_at: new Date().toISOString() })
+                            .eq('id', file.id)
+                        }
                       }
+
+                      // Update local files state in one pass
+                      setFiles(prev => prev.map(f => {
+                        if (!f.content) return f
+                        let updated = f.content
+                        for (const r of successful) {
+                          const i = r.index
+                          const numberedPlaceholder = `https://placehold.co/1024x768/141414/444444?text=Loading+image+${i + 1}...`
+                          updated = updated.split(numberedPlaceholder).join(r.url!)
+                          if (i === 0) {
+                            updated = updated.split(`https://placehold.co/1024x768/141414/444444?text=Loading+image...`).join(r.url!)
+                          }
+                          updated = updated.split(`__GENERATED_IMAGE_${i + 1}__`).join(r.url!)
+                        }
+                        return updated !== f.content ? { ...f, content: updated } : f
+                      }))
+
+                      // Refresh preview once
+                      setBuildTrigger(prev => prev + 1)
+
+                      // Update credit balance from last successful result
+                      const lastBalance = [...successful].reverse().find(r => r.newBalance !== undefined)
+                      if (lastBalance?.newBalance !== undefined) setCreditBalance(lastBalance.newBalance)
                     }
+
                     setBuildStatus(null)
                   })()
                 }

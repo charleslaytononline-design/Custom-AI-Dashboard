@@ -333,6 +333,7 @@ RULES:
 - Use Tailwind classes only — no inline styles, no CSS files (except index.css)
 - Every button and interaction must be functional
 - Keep ALL existing features when editing files — do not remove functionality
+- When the user asks to change only a specific thing (images, colors, text, etc.), modify ONLY what they asked for — do not restructure components, change layouts, or rewrite styling
 - Write concise TypeScript — no comments, no lorem ipsum
 - Build core functionality first, skip decorative extras on large requests
 - Decompose into components: if a section exceeds ~80 lines, extract to a component
