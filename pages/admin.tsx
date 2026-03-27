@@ -222,6 +222,9 @@ export default function Admin() {
   const [alertSaving, setAlertSaving] = useState(false)
   const [alertMsg, setAlertMsg] = useState('')
   const [expandedLog, setExpandedLog] = useState<string | null>(null)
+  const [logPage, setLogPage] = useState(0)
+  const [logsPerPage, setLogsPerPage] = useState(20)
+  const [expandedBuilderError, setExpandedBuilderError] = useState<string | null>(null)
 
   // Chat History state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
@@ -2176,16 +2179,101 @@ export default function Admin() {
               )
             })()}
 
+            {/* AI Builder Errors */}
+            {(() => {
+              const builderErrorTypes = ['console_error', 'unhandled_error', 'builder_error', 'api_error']
+              const builderErrors = logs.filter(l => builderErrorTypes.includes(l.event_type))
+              const shownErrors = builderErrors.slice(0, 15)
+              const errorTypeLabel: Record<string, string> = {
+                console_error: 'Console Error',
+                unhandled_error: 'Unhandled Error',
+                builder_error: 'Builder Error',
+                api_error: 'API Error',
+              }
+              const errorTypeColor: Record<string, string> = {
+                console_error: '#f09595',
+                unhandled_error: '#ff6b6b',
+                builder_error: '#f0a952',
+                api_error: '#e879f9',
+              }
+              return (
+                <div style={{ ...s.settingsCard, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, color: '#f0f0f0', marginBottom: 4 }}>AI Builder Errors</h3>
+                      <p style={{ fontSize: 11, color: '#555' }}>Console errors, unhandled exceptions, builder failures and API errors from the AI Builder. Helps debug issues users are experiencing.</p>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#444' }}>{builderErrors.length} errors</span>
+                  </div>
+                  {builderErrors.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#444', fontSize: 12, background: '#0a0a0a', borderRadius: 8 }}>No AI Builder errors logged</div>
+                  ) : (
+                    <div style={{ maxHeight: 400, overflowY: 'auto', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                      <table style={s.table}>
+                        <thead>
+                          <tr style={s.thead}>
+                            <th style={s.th}>Time</th>
+                            <th style={s.th}>Error Type</th>
+                            <th style={s.th}>Severity</th>
+                            <th style={s.th}>Email</th>
+                            <th style={s.th}>Message</th>
+                            <th style={s.th}>Meta</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shownErrors.map(log => (
+                            <React.Fragment key={log.id}>
+                              <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedBuilderError(expandedBuilderError === log.id ? null : log.id)}>
+                                <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                  {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td style={s.td}>
+                                  <span style={{ ...s.badge, background: 'rgba(163,45,45,0.12)', color: errorTypeColor[log.event_type] || '#f09595' }}>
+                                    {errorTypeLabel[log.event_type] || log.event_type}
+                                  </span>
+                                </td>
+                                <td style={s.td}>
+                                  <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                                    {log.severity}
+                                  </span>
+                                </td>
+                                <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                <td style={{ ...s.td, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                </td>
+                                <td style={s.td}>
+                                  {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
+                                </td>
+                              </tr>
+                              {expandedBuilderError === log.id && log.metadata && (
+                                <tr style={{ background: '#0d0d0d' }}>
+                                  <td colSpan={6} style={{ padding: '10px 14px' }}>
+                                    <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {JSON.stringify(log.metadata, null, 2)}
+                                    </pre>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Log viewer */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
               <h2 style={{ ...s.sectionTitle, margin: 0 }}>Recent Logs <span style={{ fontSize: 11, color: '#444', fontWeight: 400 }}>({filteredLogs.length} of {logs.length})</span></h2>
               <div style={{ display: 'flex', gap: 8 }}>
-                <input value={logSearch} onChange={e => setLogSearch(e.target.value)} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
-                <select value={logTypeFilter} onChange={e => setLogTypeFilter(e.target.value)} style={s.planSelect}>
+                <input value={logSearch} onChange={e => { setLogSearch(e.target.value); setLogPage(0) }} placeholder="Search message or email..." style={{ ...s.searchInput, width: 200 }} />
+                <select value={logTypeFilter} onChange={e => { setLogTypeFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
                   <option value="all">All types</option>
                   {Object.entries(EVENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
-                <select value={logSeverityFilter} onChange={e => setLogSeverityFilter(e.target.value)} style={s.planSelect}>
+                <select value={logSeverityFilter} onChange={e => { setLogSeverityFilter(e.target.value); setLogPage(0) }} style={s.planSelect}>
                   <option value="all">All severity</option>
                   <option value="info">Info</option>
                   <option value="warn">Warn</option>
@@ -2195,61 +2283,104 @@ export default function Admin() {
               </div>
             </div>
 
-            <div style={s.tableWrap}>
-              {filteredLogs.length === 0 ? (
-                <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
-              ) : (
-                <table style={s.table}>
-                  <thead>
-                    <tr style={s.thead}>
-                      <th style={s.th}>Time</th>
-                      <th style={s.th}>Event</th>
-                      <th style={s.th}>Severity</th>
-                      <th style={s.th}>Email</th>
-                      <th style={s.th}>Message</th>
-                      <th style={s.th}>Meta</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredLogs.map(log => (
-                      <React.Fragment key={log.id}>
-                        <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
-                          <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
-                            {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                          </td>
-                          <td style={s.td}>
-                            <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
-                              {EVENT_LABELS[log.event_type] || log.event_type}
-                            </span>
-                          </td>
-                          <td style={s.td}>
-                            <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
-                              {log.severity}
-                            </span>
-                          </td>
-                          <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
-                          <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
-                          </td>
-                          <td style={s.td}>
-                            {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
-                          </td>
-                        </tr>
-                        {expandedLog === log.id && log.metadata && (
-                          <tr style={{ background: '#0d0d0d' }}>
-                            <td colSpan={6} style={{ padding: '10px 14px' }}>
-                              <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                {JSON.stringify(log.metadata, null, 2)}
-                              </pre>
-                            </td>
+            {(() => {
+              const totalPages = Math.ceil(filteredLogs.length / logsPerPage)
+              const startIdx = logPage * logsPerPage
+              const endIdx = startIdx + logsPerPage
+              const pagedLogs = filteredLogs.slice(startIdx, endIdx)
+
+              return (
+                <>
+                  <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
+                    Showing {filteredLogs.length === 0 ? 0 : startIdx + 1}–{Math.min(endIdx, filteredLogs.length)} of {filteredLogs.length}
+                  </div>
+                  <div style={s.tableWrap}>
+                    {filteredLogs.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: '#444', fontSize: 13 }}>No logs yet</div>
+                    ) : (
+                      <table style={s.table}>
+                        <thead>
+                          <tr style={s.thead}>
+                            <th style={s.th}>Time</th>
+                            <th style={s.th}>Event</th>
+                            <th style={s.th}>Severity</th>
+                            <th style={s.th}>Email</th>
+                            <th style={s.th}>Message</th>
+                            <th style={s.th}>Meta</th>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                        </thead>
+                        <tbody>
+                          {pagedLogs.map(log => (
+                            <React.Fragment key={log.id}>
+                              <tr style={{ ...s.tr, cursor: log.metadata ? 'pointer' : 'default' }} onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
+                                <td style={{ ...s.td, fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>
+                                  {new Date(log.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td style={s.td}>
+                                  <span style={{ fontSize: 11, fontWeight: 500, color: typeColor[log.event_type] || '#888' }}>
+                                    {EVENT_LABELS[log.event_type] || log.event_type}
+                                  </span>
+                                </td>
+                                <td style={s.td}>
+                                  <span style={{ ...s.badge, background: severityBg[log.severity] || severityBg.info, color: severityColor[log.severity] || severityColor.info }}>
+                                    {log.severity}
+                                  </span>
+                                </td>
+                                <td style={s.td}><span style={{ fontSize: 12, color: '#666' }}>{log.email || '—'}</span></td>
+                                <td style={{ ...s.td, maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <span style={{ fontSize: 12, color: '#ccc' }}>{log.message}</span>
+                                </td>
+                                <td style={s.td}>
+                                  {log.metadata && <span style={{ fontSize: 10, color: '#444' }}>▶ expand</span>}
+                                </td>
+                              </tr>
+                              {expandedLog === log.id && log.metadata && (
+                                <tr style={{ background: '#0d0d0d' }}>
+                                  <td colSpan={6} style={{ padding: '10px 14px' }}>
+                                    <pre style={{ fontSize: 11, color: '#9d92f5', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                                      {JSON.stringify(log.metadata, null, 2)}
+                                    </pre>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Pagination controls */}
+                  {filteredLogs.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, padding: '8px 0' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button
+                          onClick={() => setLogPage(p => Math.max(0, p - 1))}
+                          disabled={logPage === 0}
+                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage === 0 ? 0.4 : 1, cursor: logPage === 0 ? 'not-allowed' : 'pointer' }}
+                        >
+                          ← Previous
+                        </button>
+                        <span style={{ fontSize: 12, color: '#666' }}>Page {logPage + 1} of {totalPages}</span>
+                        <button
+                          onClick={() => setLogPage(p => Math.min(totalPages - 1, p + 1))}
+                          disabled={logPage >= totalPages - 1}
+                          style={{ ...s.actionBtn, padding: '6px 14px', opacity: logPage >= totalPages - 1 ? 0.4 : 1, cursor: logPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                        >
+                          Next Page →
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => { setLogsPerPage(p => p + 20); setLogPage(0) }}
+                        style={{ ...s.actionBtn, padding: '6px 14px' }}
+                      >
+                        Show More ({logsPerPage} → {logsPerPage + 20} per page)
+                      </button>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
         )
       })()}
