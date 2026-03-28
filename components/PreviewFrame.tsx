@@ -53,6 +53,8 @@ interface PreviewFrameProps {
   buildTrigger?: number
   /** When true, show welcome screen instead of bundling the blank template */
   isNewProject?: boolean
+  /** When true, the AI is still actively building (streaming files) */
+  loading?: boolean
 }
 
 export default memo(function PreviewFrame({
@@ -67,6 +69,7 @@ export default memo(function PreviewFrame({
   onFixError,
   buildTrigger = 0,
   isNewProject = false,
+  loading = false,
 }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
@@ -80,6 +83,7 @@ export default memo(function PreviewFrame({
   const [previewSource, setPreviewSource] = useState<'live' | 'deployed'>('live')
   const bundleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasMountBundledRef = useRef(false)
+  const retryCountRef = useRef(0)
 
   // Convert files array to a map for the bundler
   const fileMap = useMemo(() => {
@@ -138,14 +142,34 @@ export default memo(function PreviewFrame({
         envVars,
       })
 
-      console.log(`[PreviewFrame] Bundle result — js: ${result.js.length} chars, css: ${result.css.length} chars, errors: ${result.errors.length}, cdnMap keys: ${Object.keys(result.cdnMap).length}`)
-
-      // Warn if bundle output is suspiciously small relative to number of files
       const fileCount = Object.keys(fileMap).length
-      if (result.errors.length === 0 && result.js.length < 1000 && fileCount > 3) {
+      const loadedCount = result.loadedFiles?.length || 0
+      console.log(`[PreviewFrame] Bundle result — js: ${result.js.length} chars, css: ${result.css.length} chars, errors: ${result.errors.length}, cdnMap keys: ${Object.keys(result.cdnMap).length}, loaded: ${loadedCount}/${fileCount} files`)
+
+      // Log which files were loaded vs skipped for debugging import chain issues
+      if (loadedCount < fileCount && loadedCount > 0) {
+        const allFiles = new Set(Object.keys(fileMap))
+        const loaded = new Set(result.loadedFiles || [])
+        const skipped = [...allFiles].filter(f => !loaded.has(f))
+        if (skipped.length > 0) {
+          console.warn(`[PreviewFrame] ${skipped.length} file(s) not reachable from entry point:`, skipped.join(', '))
+        }
+      }
+
+      // Warn if bundle output is suspiciously small relative to number of files (only after build completes)
+      // Auto-retry once after 1.5s in case file state hadn't fully settled
+      if (!loading && result.errors.length === 0 && result.js.length < 1000 && fileCount > 3) {
+        if (retryCountRef.current < 1) {
+          retryCountRef.current++
+          console.log(`[PreviewFrame] Bundle too small (${result.js.length} chars for ${fileCount} files), auto-retrying in 1.5s...`)
+          setTimeout(() => bundleAndRender(), 1500)
+          return // skip rendering this small bundle — wait for retry
+        }
         const warnMsg = `Bundle output is only ${result.js.length} chars for ${fileCount} files — most file content may not be included. Check that src/App.tsx imports all components.`
         console.warn(`[PreviewFrame] ${warnMsg}`)
         setConsoleEntries(prev => [...prev, { level: 'warn' as const, message: warnMsg, timestamp: Date.now() }])
+      } else {
+        retryCountRef.current = 0 // reset on successful bundle
       }
 
       if (result.errors.length > 0) {
@@ -197,6 +221,23 @@ export default memo(function PreviewFrame({
       if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     }
   }, [fileMap, buildTrigger, bundleAndRender, isNewProject, isReactProject])
+
+  // When AI build finishes (loading goes false), check if the preview rendered anything
+  const prevLoadingRef = useRef(loading)
+  useEffect(() => {
+    const wasLoading = prevLoadingRef.current
+    prevLoadingRef.current = loading
+
+    // Only trigger when loading transitions from true → false
+    if (wasLoading && !loading && iframeRef.current?.contentWindow) {
+      const timer = setTimeout(() => {
+        try {
+          iframeRef.current?.contentWindow?.postMessage({ type: 'check-render' }, '*')
+        } catch (_) { /* cross-origin safety */ }
+      }, 3000) // Wait 3s after build completes for React to finish rendering
+      return () => clearTimeout(timer)
+    }
+  }, [loading])
 
   // Listen for messages from the preview iframe
   useEffect(() => {

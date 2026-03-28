@@ -218,16 +218,6 @@ export function generatePreviewHtml(options: PreviewOptions): string {
       loaded = true;
       clearTimeout(timeoutId);
       console.log('[Preview] Module loaded in ' + ((Date.now() - loadStart) / 1000).toFixed(1) + 's');
-      // Check if anything actually rendered after a short delay
-      setTimeout(() => {
-        const root = document.getElementById('root');
-        if (root && (root.children.length === 0 || root.innerHTML.includes('preview-loader') || root.innerText.trim() === '')) {
-          const msg = 'Module loaded but nothing rendered — the app component may be returning null, failing silently, or its files may not be imported in App.tsx.';
-          console.warn('[Preview] ' + msg);
-          root.innerHTML = '<div style="padding:32px;font-family:monospace;"><div style="background:#1a1100;border:1px solid #ff8800;border-radius:8px;padding:16px;"><div style="color:#ffaa44;font-size:14px;font-weight:600;margin-bottom:8px;">Empty Render</div><pre style="color:#ffcc88;font-size:12px;white-space:pre-wrap;margin:0;">' + msg + '</pre><pre style="color:#997744;font-size:11px;white-space:pre-wrap;margin-top:8px;">Possible causes:\\n- src/App.tsx does not import or render the generated components\\n- Component files are at wrong paths (must be under src/)\\n- A required CDN package failed to load\\n- The app throws an error during React render</pre></div></div>';
-          window.parent.postMessage({ type: 'preview-error', message: msg, source: 'empty-render', line: 0, col: 0, stack: '', timestamp: Date.now() }, '*');
-        }
-      }, 2000);
     } catch (err) {
       loaded = true;
       clearTimeout(timeoutId);
@@ -256,6 +246,19 @@ export function generatePreviewHtml(options: PreviewOptions): string {
         timestamp: Date.now(),
       }, '*');
     }
+
+    // Listen for parent asking to check if anything rendered (sent after build completes)
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'check-render') {
+        const root = document.getElementById('root');
+        if (root && (root.children.length === 0 || root.innerHTML.includes('preview-loader') || root.innerText.trim() === '')) {
+          const msg = 'Module loaded but nothing rendered — the app component may be returning null, failing silently, or its files may not be imported in App.tsx.';
+          console.warn('[Preview] ' + msg);
+          root.innerHTML = '<div style="padding:32px;font-family:monospace;"><div style="background:#1a1100;border:1px solid #ff8800;border-radius:8px;padding:16px;"><div style="color:#ffaa44;font-size:14px;font-weight:600;margin-bottom:8px;">Empty Render</div><pre style="color:#ffcc88;font-size:12px;white-space:pre-wrap;margin:0;">' + msg + '</pre><pre style="color:#997744;font-size:11px;white-space:pre-wrap;margin-top:8px;">Possible causes:\\n- src/App.tsx does not import or render the generated components\\n- Component files are at wrong paths (must be under src/)\\n- A required CDN package failed to load\\n- The app throws an error during React render</pre></div></div>';
+          window.parent.postMessage({ type: 'preview-error', message: msg, source: 'empty-render', line: 0, col: 0, stack: '', timestamp: Date.now() }, '*');
+        }
+      }
+    });
   </script>
 </body>
 </html>`

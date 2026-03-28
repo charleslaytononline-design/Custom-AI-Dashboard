@@ -53,6 +53,8 @@ export interface BundleResult {
   warnings: string[]
   /** Any errors from esbuild */
   errors: string[]
+  /** Files actually loaded by the bundler (reachable from entry point) */
+  loadedFiles: string[]
 }
 
 /**
@@ -182,6 +184,8 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
 
   // Collect CSS imports to concatenate separately
   let collectedCss = ''
+  // Track which files are actually loaded by the bundler
+  const loadedFiles: string[] = []
 
   try {
     const result = await esbuild.build({
@@ -257,6 +261,7 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
               if (content === undefined) {
                 return { errors: [{ text: `File not found: ${args.path}` }] }
               }
+              loadedFiles.push(args.path)
               const loader = getLoader(args.path)
               // Collect CSS separately
               if (loader === 'css') {
@@ -297,7 +302,7 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
     const warnings = result.warnings.map(w => `${w.text} (${w.location?.file}:${w.location?.line})`)
     const errors = result.errors.map(e => `${e.text} (${e.location?.file}:${e.location?.line})`)
 
-    return { js, css, cdnMap, warnings, errors }
+    return { js, css, cdnMap, warnings, errors, loadedFiles }
   } catch (err: any) {
     // esbuild throws on fatal errors
     const errorMsg = err.message || String(err)
@@ -306,6 +311,6 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
       ? err.errors.map((e: any) => `${e.text}${e.location ? ` (${e.location.file}:${e.location.line})` : ''}`)
       : [errorMsg]
 
-    return { js: '', css: '', cdnMap, warnings: [], errors }
+    return { js: '', css: '', cdnMap, warnings: [], errors, loadedFiles }
   }
 }

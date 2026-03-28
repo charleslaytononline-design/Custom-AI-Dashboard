@@ -432,7 +432,7 @@ export default function ProjectBuilder() {
                 setBuildStatus(event.text)
               } else if (event.type === 'file_op') {
                 fileOps.push({ action: event.action, path: event.path })
-                fileContentUpdates.push({ action: event.action, path: event.path, content: event.content || null })
+                fileContentUpdates.push({ action: event.action, path: event.path, content: event.content ?? null })
                 setBuildStatus(`${event.action === 'create' ? 'Created' : event.action === 'edit' ? 'Updated' : 'Deleted'} ${event.path}`)
                 setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
                 setTimeout(() => {
@@ -473,8 +473,9 @@ export default function ProjectBuilder() {
                     return updated
                   })
                 }
-                // Also fetch from DB to ensure consistency (non-blocking)
-                loadFiles()
+                // Stream content already applied above — skip loadFiles() to avoid
+                // race condition where DB fetch overwrites stream state before bundle runs.
+                // DB write is already confirmed (API awaits Promise.allSettled before sending done).
                 // Defer build trigger to ensure files state has propagated
                 setIsNewProject(false)
                 setTimeout(() => setBuildTrigger(prev => prev + 1), 50)
@@ -792,6 +793,7 @@ export default function ProjectBuilder() {
       onFixError={handleFixError}
       buildTrigger={buildTrigger}
       isNewProject={isNewProject}
+      loading={loading}
       envVars={previewEnvVars}
       extraPackages={extraPackages}
     />
