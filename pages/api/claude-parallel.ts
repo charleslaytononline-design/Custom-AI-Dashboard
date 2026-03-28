@@ -407,7 +407,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Get files ready to generate (all deps completed, not already in flight)
-    function getReadyFiles(): PlanFile[] {
+    const getReadyFiles = (): PlanFile[] => {
       const ready: PlanFile[] = []
       for (const [path, file] of pending) {
         if (inFlight.has(path)) continue
@@ -420,7 +420,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Generate a single file (with streaming for progress)
-    function generateFile(file: PlanFile): Promise<{ path: string; content: string } | null> {
+    const generateFile = (file: PlanFile): Promise<{ path: string; content: string } | null> => {
       return (async () => {
         if (clientDisconnected) return null
 

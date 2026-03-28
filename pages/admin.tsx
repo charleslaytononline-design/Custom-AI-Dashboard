@@ -259,6 +259,7 @@ export default function Admin() {
   // AI Connections state
   const [aiChatModel, setAiChatModel] = useState('claude-sonnet-4-5')
   const [aiImageModel, setAiImageModel] = useState('black-forest-labs/flux-2-pro')
+  const [aiPlanModel, setAiPlanModel] = useState('claude-haiku-4-5-20251001')
   // aiConnectionsSaving and aiConnectionsMsg removed — AI Connections merged into Settings tab
 
   // AI Training state
@@ -314,12 +315,13 @@ export default function Admin() {
   }
 
   async function loadAiConnections() {
-    const { data } = await supabase.from('settings').select('key, value').in('key', ['ai_chat_model', 'ai_image_model'])
+    const { data } = await supabase.from('settings').select('key, value').in('key', ['ai_chat_model', 'ai_image_model', 'ai_plan_model'])
     if (data) {
       const map: Record<string, string> = {}
       data.forEach((s: any) => { map[s.key] = s.value })
       if (map.ai_chat_model) setAiChatModel(map.ai_chat_model)
       if (map.ai_image_model) setAiImageModel(map.ai_image_model)
+      if (map.ai_plan_model) setAiPlanModel(map.ai_plan_model)
     }
   }
 
@@ -907,6 +909,7 @@ export default function Admin() {
       ...settings,
       ai_chat_model: aiChatModel,
       ai_image_model: aiImageModel,
+      ai_plan_model: aiPlanModel,
     }
     for (const [key, value] of Object.entries(allSettings)) {
       await supabase.from('settings').upsert({ key, value, updated_at: new Date().toISOString() })
@@ -1281,7 +1284,7 @@ export default function Admin() {
           {/* AI Model Selection (moved from AI Connections tab) */}
           <h2 style={s.sectionTitle}>AI Model Selection</h2>
           <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: -10, marginBottom: 16 }}>Choose which AI models power your platform. Changing a model auto-updates the pricing fields below.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: 16, marginBottom: 24 }}>
             {/* Chat / Text model */}
             <div style={{ ...s.settingsCard, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
@@ -1318,6 +1321,39 @@ export default function Admin() {
                   <strong>Current:</strong> {aiChatModel}<br />
                   <strong>Input:</strong> ${MODEL_PRICING[aiChatModel]?.input_cost_per_1k ?? '?'}/1K tokens | <strong>Output:</strong> ${MODEL_PRICING[aiChatModel]?.output_cost_per_1k ?? '?'}/1K tokens
                 </div>
+              </div>
+            </div>
+
+            {/* Plan model */}
+            <div style={{ ...s.settingsCard, border: '1px solid rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(245,158,11,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>⚡</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>Plan Model</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Planning step — faster = cheaper builds</div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Model</label>
+                <select value={aiPlanModel} onChange={e => {
+                  setAiPlanModel(e.target.value)
+                }} style={{ ...s.select, marginBottom: 12 }}>
+                  <optgroup label="Claude 4.6">
+                    <option value="claude-opus-4-6">claude-opus-4-6 — most capable, slowest</option>
+                    <option value="claude-sonnet-4-6">claude-sonnet-4-6 — best balance</option>
+                  </optgroup>
+                  <optgroup label="Claude 4.5">
+                    <option value="claude-sonnet-4-5">claude-sonnet-4-5 — fast, capable</option>
+                    <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 — fastest, cheapest (recommended)</option>
+                  </optgroup>
+                </select>
+                <div style={{ padding: '10px 14px', background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 8, fontSize: 11, color: '#f59e0b', lineHeight: 1.6 }}>
+                  <strong>Current:</strong> {aiPlanModel}<br />
+                  <strong>Input:</strong> ${MODEL_PRICING[aiPlanModel]?.input_cost_per_1k ?? '?'}/1K tokens | <strong>Output:</strong> ${MODEL_PRICING[aiPlanModel]?.output_cost_per_1k ?? '?'}/1K tokens
+                </div>
+              </div>
+              <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 7, fontSize: 11, color: '#f59e0b', lineHeight: 1.5 }}>
+                💡 <strong>Haiku recommended:</strong> The plan step generates a JSON blueprint — it doesn't need Sonnet-level quality. Haiku is 3-5x faster and significantly cheaper.
               </div>
             </div>
 
