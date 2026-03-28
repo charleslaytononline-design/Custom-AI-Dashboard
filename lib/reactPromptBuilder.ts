@@ -65,9 +65,16 @@ FILE_OP RULES:
 - For "edit": always output the ENTIRE file with your changes applied
 - For "delete": self-closing tag, no content needed
 - You may output multiple FILE_OP tags in a single response
-- CRITICAL ENTRY POINT: src/main.tsx is the bundler entry point — it MUST exist and MUST call ReactDOM.createRoot(document.getElementById('root')!).render(). src/App.tsx MUST import and render ALL your components. Never create component files without importing them from App.tsx (directly or through child components). If a file is not imported from App.tsx's component tree, it will NOT appear in the preview.
 - Always update src/App.tsx routes when creating new pages
 - Always update src/components/Layout.tsx navigation when adding pages
+
+APP.TSX IS THE ROOT — NEVER LEAVE IT AS A STUB:
+- src/main.tsx is the bundler entry point — it MUST call ReactDOM.createRoot(document.getElementById('root')!).render(<App />).
+- src/App.tsx MUST import and render your top-level component(s). NEVER generate App.tsx as just \`export default function App() { return <div /> }\` — this is a stub that breaks the preview and shows a blank screen.
+- The component tree flows: main.tsx → App.tsx → your components → their children. Any file NOT imported (directly or transitively) from App.tsx will NOT appear in the preview.
+- For single-page apps (games, tools, etc.): App.tsx imports and renders the main component directly (e.g., <GameCanvas />, <Dashboard />).
+- For multi-page apps: App.tsx sets up React Router with <Routes> mapping paths to page components.
+- ALWAYS output App.tsx LAST so it can import all previously created components. This is the most important file — get it right.
 
 CRITICAL: You can ONLY use these tags: <MESSAGE>, <FILE_OP>, <CREATE_TABLE>, <ALTER_TABLE>, <ENABLE_RLS>, <ENABLE_REALTIME>, <SETUP_STORAGE>, <ADD_PACKAGE>, <SERVER_FUNCTION>, <CRON_JOB>.
 NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax. Those are NOT supported and will be ignored. Only the tags listed above work in this system.

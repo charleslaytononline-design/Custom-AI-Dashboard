@@ -167,53 +167,69 @@ function isStubAppTsx(content: string): boolean {
   return !hasProjectImports
 }
 
+/** Check if a file exports a default component (broadened to catch forwardRef, memo, etc.) */
+function hasDefaultExport(content: string): boolean {
+  return /export\s+default\b/.test(content) ||
+    /export\s*\{[^}]*\bdefault\b/.test(content) ||
+    (/\bforwardRef\b/.test(content) && /export\s+default\b/.test(content))
+}
+
+/** Root-likelihood name bonus for common root component names */
+function rootNameScore(filePath: string): number {
+  const name = (filePath.split('/').pop() || '').replace(/\.(tsx|jsx)$/, '').toLowerCase()
+  const highPriority = ['app', 'game', 'main', 'root', 'layout', 'canvas', 'world', 'scene']
+  const medPriority = ['dashboard', 'home', 'page', 'screen', 'view', 'container', 'shell']
+  if (highPriority.some(n => name.includes(n))) return 5
+  if (medPriority.some(n => name.includes(n))) return 3
+  return 0
+}
+
 /**
- * Find the root component among unreachable files by analyzing import relationships.
- * The root is the component that imports the most other unreachable files.
+ * Find the root component among unreachable files by scoring:
+ *   score = importCount * 3 + nameBonus + sizeBonus
  */
 function findRootComponent(
   unreachableFiles: string[],
   files: Record<string, string>
 ): string | null {
-  // Only consider .tsx/.jsx files that have a default export (likely React components)
+  // Only consider .tsx/.jsx files that export a default (likely React components)
   const componentFiles = unreachableFiles.filter(f => {
     if (!f.match(/\.(tsx|jsx)$/)) return false
     const content = files[f]
     if (!content) return false
-    return /export\s+default\b/.test(content)
+    return hasDefaultExport(content)
   })
 
   if (componentFiles.length === 0) return null
   if (componentFiles.length === 1) return componentFiles[0]
 
-  // Count how many other unreachable files each component imports
-  const importCounts: Array<{ file: string; count: number }> = []
+  // Score each component
+  const scored: Array<{ file: string; score: number }> = []
 
   for (const file of componentFiles) {
     const content = files[file]
     if (!content) continue
-    // Extract all import paths from this file
-    const importPaths: string[] = []
+
+    // Count imports that reference other unreachable files
     const importRegex = /import\s+.*?from\s+['"](.*?)['"]/g
+    let importCount = 0
     let match
     while ((match = importRegex.exec(content)) !== null) {
-      importPaths.push(match[1])
-    }
-    // Count how many of those imports reference other unreachable files
-    let count = 0
-    for (const imp of importPaths) {
-      // Check if this import resolves to any unreachable file
-      const resolved = resolveFilePath(file, imp, files)
+      const resolved = resolveFilePath(file, match[1], files)
       if (resolved && unreachableFiles.includes(resolved)) {
-        count++
+        importCount++
       }
     }
-    importCounts.push({ file, count })
+
+    const nameBonus = rootNameScore(file)
+    const sizeBonus = content.length > 5000 ? 2 : content.length > 2000 ? 1 : 0
+    const score = importCount * 3 + nameBonus + sizeBonus
+
+    scored.push({ file, score })
   }
 
-  // Sort by import count descending — the one importing the most others is likely the root
-  importCounts.sort((a, b) => b.count - a.count)
-  return importCounts[0]?.file || componentFiles[0]
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.file || componentFiles[0]
 }
 
 /**
