@@ -55,6 +55,8 @@ export interface BundleResult {
   errors: string[]
   /** Files actually loaded by the bundler (reachable from entry point) */
   loadedFiles: string[]
+  /** Whether App.tsx was auto-patched to import unreachable components */
+  autoPatched?: boolean
 }
 
 /**
@@ -153,6 +155,95 @@ function buildCdnMap(extraPackages?: Record<string, string>): Record<string, str
     }
   }
   return map
+}
+
+/**
+ * Check if App.tsx is a stub (placeholder with no real component imports).
+ */
+function isStubAppTsx(content: string): boolean {
+  if (content.length > 400) return false
+  // Check if it imports any project files (relative, alias, or src/ imports)
+  const hasProjectImports = /import\s+.*from\s+['"](\.\/?components|\.\/hooks|\.\/lib|\.\/pages|\.\/views|@\/|src\/)/.test(content)
+  return !hasProjectImports
+}
+
+/**
+ * Find the root component among unreachable files by analyzing import relationships.
+ * The root is the component that imports the most other unreachable files.
+ */
+function findRootComponent(
+  unreachableFiles: string[],
+  files: Record<string, string>
+): string | null {
+  // Only consider .tsx/.jsx files that have a default export (likely React components)
+  const componentFiles = unreachableFiles.filter(f => {
+    if (!f.match(/\.(tsx|jsx)$/)) return false
+    const content = files[f]
+    if (!content) return false
+    return /export\s+default\b/.test(content)
+  })
+
+  if (componentFiles.length === 0) return null
+  if (componentFiles.length === 1) return componentFiles[0]
+
+  // Count how many other unreachable files each component imports
+  const importCounts: Array<{ file: string; count: number }> = []
+
+  for (const file of componentFiles) {
+    const content = files[file]
+    if (!content) continue
+    // Extract all import paths from this file
+    const importPaths: string[] = []
+    const importRegex = /import\s+.*?from\s+['"](.*?)['"]/g
+    let match
+    while ((match = importRegex.exec(content)) !== null) {
+      importPaths.push(match[1])
+    }
+    // Count how many of those imports reference other unreachable files
+    let count = 0
+    for (const imp of importPaths) {
+      // Check if this import resolves to any unreachable file
+      const resolved = resolveFilePath(file, imp, files)
+      if (resolved && unreachableFiles.includes(resolved)) {
+        count++
+      }
+    }
+    importCounts.push({ file, count })
+  }
+
+  // Sort by import count descending — the one importing the most others is likely the root
+  importCounts.sort((a, b) => b.count - a.count)
+  return importCounts[0]?.file || componentFiles[0]
+}
+
+/**
+ * Generate a patched App.tsx that imports and renders a root component.
+ */
+function generatePatchedAppTsx(rootFile: string, allComponentFiles: string[]): string {
+  // Convert file path to relative import from src/App.tsx
+  const toRelative = (filePath: string) => {
+    // Remove src/ prefix and extension
+    const withoutSrc = filePath.replace(/^src\//, '')
+    const withoutExt = withoutSrc.replace(/\.(tsx|ts|jsx|js)$/, '')
+    return './' + withoutExt
+  }
+
+  if (rootFile) {
+    const name = rootFile.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || 'Root'
+    const importPath = toRelative(rootFile)
+    return `import ${name} from '${importPath}'\n\nexport default function App() {\n  return <${name} />\n}\n`
+  }
+
+  // Fallback: import and render all component files
+  const imports: string[] = []
+  const elements: string[] = []
+  for (let i = 0; i < allComponentFiles.length; i++) {
+    const file = allComponentFiles[i]
+    const name = 'Comp' + i
+    imports.push(`import ${name} from '${toRelative(file)}'`)
+    elements.push(`<${name} />`)
+  }
+  return `${imports.join('\n')}\n\nexport default function App() {\n  return <>${elements.join('')}</>\n}\n`
 }
 
 /**
@@ -303,6 +394,124 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
     const css = collectedCss
     const warnings = result.warnings.map(w => `${w.text} (${w.location?.file}:${w.location?.line})`)
     const errors = result.errors.map(e => `${e.text} (${e.location?.file}:${e.location?.line})`)
+
+    // Auto-patch: if App.tsx is a stub and most files are unreachable, inject imports and re-bundle
+    const sourceFiles = Object.keys(files).filter(f => f.match(/^src\/.*\.(tsx|ts|jsx|js)$/))
+    const unreachableSource = sourceFiles.filter(f => !loadedFiles.includes(f))
+    const appContent = files['src/App.tsx'] || ''
+
+    if (
+      result.errors.length === 0 &&
+      files['src/App.tsx'] &&
+      isStubAppTsx(appContent) &&
+      unreachableSource.length > sourceFiles.length * 0.4
+    ) {
+      console.log(`[Bundler] Detected stub App.tsx with ${unreachableSource.length}/${sourceFiles.length} source files unreachable — auto-patching...`)
+
+      const rootComponent = findRootComponent(unreachableSource, files)
+      const componentFiles = unreachableSource.filter(f =>
+        f.match(/\.(tsx|jsx)$/) && files[f] && /export\s+default\b/.test(files[f])
+      )
+
+      if (rootComponent || componentFiles.length > 0) {
+        const patchedApp = generatePatchedAppTsx(rootComponent || '', componentFiles)
+        console.log(`[Bundler] Auto-patched App.tsx — root: ${rootComponent || 'all components'}\n${patchedApp}`)
+
+        // Re-bundle with patched App.tsx
+        const patchedFiles: Record<string, string> = { ...files, 'src/App.tsx': patchedApp }
+        let patchedCss = ''
+        const patchedLoadedFiles: string[] = []
+
+        const patchedResult = await esbuild.build({
+          entryPoints: ['src/main.tsx'],
+          bundle: true,
+          format: 'esm',
+          jsx: 'automatic',
+          jsxImportSource: 'react',
+          define,
+          write: false,
+          plugins: [
+            {
+              name: 'virtual-fs-patched',
+              setup(build) {
+                build.onResolve({ filter: /^src\/main\.tsx$/ }, () => {
+                  return { path: 'src/main.tsx', namespace: 'virtual' }
+                })
+                build.onResolve({ filter: /^(\.\/|\.\.\/|@\/|src\/)/ }, (args) => {
+                  if (patchedFiles[args.path]) {
+                    return { path: args.path, namespace: 'virtual' }
+                  }
+                  const resolved = resolveFilePath(args.importer, args.path, patchedFiles)
+                  if (resolved) {
+                    return { path: resolved, namespace: 'virtual' }
+                  }
+                  return { errors: [{ text: `Could not resolve "${args.path}" from "${args.importer}"` }] }
+                })
+                build.onResolve({ filter: /^[^./]/ }, (args) => {
+                  if (patchedFiles[args.path]) {
+                    return { path: args.path, namespace: 'virtual' }
+                  }
+                  const resolvedVirtual = resolveFilePath(args.importer, args.path, patchedFiles)
+                  if (resolvedVirtual) {
+                    return { path: resolvedVirtual, namespace: 'virtual' }
+                  }
+                  if (!cdnMap[args.path]) {
+                    const pkgName = args.path.startsWith('@')
+                      ? args.path.split('/').slice(0, 2).join('/')
+                      : args.path.split('/')[0]
+                    const baseCdn = cdnMap[pkgName]
+                    if (baseCdn) {
+                      const subPath = args.path.slice(pkgName.length)
+                      const baseUrl = baseCdn.split('?')[0]
+                      const params = baseCdn.includes('?') ? '?' + baseCdn.split('?')[1] : ''
+                      cdnMap[args.path] = `${baseUrl}${subPath}${params}`
+                    } else {
+                      cdnMap[args.path] = `https://esm.sh/${args.path}`
+                    }
+                  }
+                  return { path: args.path, external: true }
+                })
+                build.onLoad({ filter: /.*/, namespace: 'virtual' }, (args) => {
+                  let content = patchedFiles[args.path]
+                  if (content === undefined) {
+                    return { errors: [{ text: `File not found: ${args.path}` }] }
+                  }
+                  patchedLoadedFiles.push(args.path)
+                  const loader = getLoader(args.path)
+                  if (loader === 'css') {
+                    const cleanedCss = content
+                      .replace(/@tailwind\s+(base|components|utilities);?\s*/g, '')
+                      .replace(/@apply\s+[^;]+;?\s*/g, '')
+                      .trim()
+                    if (cleanedCss) patchedCss += '\n' + cleanedCss
+                    return { contents: '', loader: 'js' }
+                  }
+                  if ((loader === 'tsx' || loader === 'ts' || loader === 'jsx' || loader === 'js') && content.includes('BrowserRouter')) {
+                    content = content
+                      .replace(/\bBrowserRouter\b/g, 'MemoryRouter')
+                      .replace(/<MemoryRouter>/g, '<MemoryRouter future={{v7_startTransition:true,v7_relativeSplatPath:true}}>')
+                  }
+                  return { contents: content, loader }
+                })
+              },
+            },
+          ],
+        })
+
+        const patchedJsFile = patchedResult.outputFiles?.find(f => f.path.endsWith('.js'))
+          || patchedResult.outputFiles?.[0]
+        const patchedJs = patchedJsFile?.text || ''
+        const patchedWarnings = patchedResult.warnings.map(w => `${w.text} (${w.location?.file}:${w.location?.line})`)
+        const patchedErrors = patchedResult.errors.map(e => `${e.text} (${e.location?.file}:${e.location?.line})`)
+
+        console.log(`[Bundler] Re-bundle after auto-patch — js: ${patchedJs.length} chars, loaded: ${patchedLoadedFiles.length} files`)
+
+        // Only use patched result if it's actually better
+        if (patchedJs.length > js.length && patchedErrors.length === 0) {
+          return { js: patchedJs, css: patchedCss, cdnMap, warnings: patchedWarnings, errors: patchedErrors, loadedFiles: patchedLoadedFiles, autoPatched: true }
+        }
+      }
+    }
 
     return { js, css, cdnMap, warnings, errors, loadedFiles }
   } catch (err: any) {
