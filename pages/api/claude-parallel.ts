@@ -409,10 +409,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Get files ready to generate (all deps completed, not already in flight)
     const getReadyFiles = (): PlanFile[] => {
       const ready: PlanFile[] = []
-      for (const [path, file] of pending) {
+      for (const [path, file] of Array.from(pending)) {
         if (inFlight.has(path)) continue
         const fileDeps = deps.get(path) || new Set()
-        const allDepsReady = [...fileDeps].every(d => completed.has(d))
+        const allDepsReady = Array.from(fileDeps).every(d => completed.has(d))
         if (allDepsReady) ready.push(file)
       }
       // Sort by layer for deterministic ordering
@@ -492,10 +492,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Deadlock safety: nothing in flight and nothing ready but still pending
       if (inFlight.size === 0 && batch.length === 0 && pending.size > 0) {
         await log('parallel_deadlock', 'warn', `Dependency deadlock: ${pending.size} files stuck`, userEmail, {
-          stuckFiles: [...pending.keys()],
+          stuckFiles: Array.from(pending.keys()),
         })
         // Break deadlock by launching stuck files ignoring deps
-        const stuck = [...pending.values()].slice(0, MAX_CONCURRENT)
+        const stuck = Array.from(pending.values()).slice(0, MAX_CONCURRENT)
         for (const file of stuck) {
           pending.delete(file.path)
           sendSSE({ type: 'file_start', path: file.path, totalFiles, completedFiles: totalFileSuccesses })
@@ -507,7 +507,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       // Wait for ANY one file to complete, then loop to check for newly ready files
       const raceResult = await Promise.race(
-        [...inFlight.entries()].map(([path, promise]) =>
+        Array.from(inFlight.entries()).map(([path, promise]) =>
           promise.then(result => ({ path, result })).catch(err => ({ path, result: null, error: err }))
         )
       )
