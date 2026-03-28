@@ -96,8 +96,10 @@ function resolveFilePath(importer: string, importPath: string, files: Record<str
     // Alias: @/ → src/
     resolved = 'src/' + importPath.slice(2)
   } else {
-    // Bare module specifier (npm package)
-    return null
+    // Bare specifier — could be an npm package, or a project file without ./
+    // Try prepending src/ (e.g. "components/Foo" → "src/components/Foo")
+    resolved = 'src/' + importPath
+    // Fall through to extension resolution below
   }
 
   // Try exact match first
