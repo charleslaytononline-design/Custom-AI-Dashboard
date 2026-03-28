@@ -324,14 +324,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const streamStart = Date.now()
 
-    // Stream text deltas to the client
+    // Stream text deltas to the client (wrapped in try/catch to prevent unhandled exceptions)
     stream.on('text', (text) => {
-      raw += text
-      if (clientDisconnected) {
-        try { stream.abort() } catch (_) {}
-        return
+      try {
+        raw += text
+        if (clientDisconnected) {
+          try { stream.abort() } catch (_) {}
+          return
+        }
+        sendSSE({ type: 'delta', text })
+      } catch (streamErr) {
+        console.error('[claude.ts] Stream write error:', (streamErr as any)?.message)
+        // Don't re-throw — let the stream complete or timeout naturally
       }
-      sendSSE({ type: 'delta', text })
     })
 
     // Race: stream completion vs safety timeout before Vercel kills the function
@@ -907,94 +912,114 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Clean up heartbeat if it was started
     if (heartbeat) clearInterval(heartbeat)
 
-    // If client disconnected and stream wasn't completed, record as 'stopped' not 'failed'
-    if (clientDisconnected && !streamCompleted) {
-      const estimatedOutputTokens = Math.ceil((raw || '').length / 4)
-      const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
-      try {
-        await supabase.from('transactions').insert({
-          user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
-          type: 'stopped', description: `User stopped ${planOnly ? 'plan' : 'build'}: ${pageName}`,
-        })
-      } catch (_) {}
-      await log('builder_stopped', 'info', `Build stopped by user (outer catch)`, userEmail, { userId, pageName, partialChars: (raw || '').length })
-      try { res.end() } catch (_) {}
-      return
-    }
-
-    const errMsg = err.message || 'Unknown error'
+    const errMsg = err?.message || 'Unknown error'
     let userMessage = errMsg
 
-    // Map technical errors to user-friendly messages
-    if (errMsg.includes('terminated') || errMsg.includes('aborted') || errMsg.includes('ECONNRESET')) {
-      userMessage = 'The build timed out. Try a simpler request or break it into smaller steps.'
-    } else if (errMsg.includes('rate_limit') || errMsg.includes('429')) {
-      userMessage = 'AI rate limit reached. Please wait a moment and try again.'
-    } else if (errMsg.includes('overloaded') || errMsg.includes('529')) {
-      userMessage = 'The AI service is temporarily overloaded. Please try again in a minute.'
-    } else if (errMsg.includes('invalid_api_key') || errMsg.includes('authentication')) {
-      userMessage = 'AI service authentication error. Please contact support.'
+    // Log to Vercel runtime logs immediately (before any async work that might fail)
+    console.error('[claude.ts] INNER CATCH:', errMsg, err?.stack?.slice(0, 500))
+
+    try {
+      // If client disconnected and stream wasn't completed, record as 'stopped' not 'failed'
+      if (clientDisconnected && !streamCompleted) {
+        const estimatedOutputTokens = Math.ceil((raw || '').length / 4)
+        const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
+        try {
+          await supabase.from('transactions').insert({
+            user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
+            type: 'stopped', description: `User stopped ${planOnly ? 'plan' : 'build'}: ${pageName}`,
+          })
+        } catch (_) {}
+        try { await log('builder_stopped', 'info', `Build stopped by user (inner catch)`, userEmail, { userId, pageName, partialChars: (raw || '').length }) } catch (_) {}
+        try { res.end() } catch (_) {}
+        return
+      }
+
+      // Map technical errors to user-friendly messages
+      if (errMsg.includes('terminated') || errMsg.includes('aborted') || errMsg.includes('ECONNRESET')) {
+        userMessage = 'The build timed out. Try a simpler request or break it into smaller steps.'
+      } else if (errMsg.includes('rate_limit') || errMsg.includes('429')) {
+        userMessage = 'AI rate limit reached. Please wait a moment and try again.'
+      } else if (errMsg.includes('overloaded') || errMsg.includes('529')) {
+        userMessage = 'The AI service is temporarily overloaded. Please try again in a minute.'
+      } else if (errMsg.includes('invalid_api_key') || errMsg.includes('authentication')) {
+        userMessage = 'AI service authentication error. Please contact support.'
+      }
+
+      const elapsedSec = ((Date.now() - handlerStart) / 1000).toFixed(1)
+      try {
+        await log('builder_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, userEmail, {
+          sourceFile: 'pages/api/claude.ts',
+          userId,
+          pageName,
+          userPrompt: userPrompt?.slice(0, 500),
+          error: errMsg,
+          elapsedSeconds: elapsedSec,
+          stack: err?.stack?.slice(0, 1000),
+          imagesRequested: imagePrompts?.length || 0,
+          rawChars: (raw || '').length,
+          continuationCount,
+          isAutoFix,
+          retryCount,
+          projectId,
+        })
+      } catch (_) { /* don't let logging failure block error response */ }
+
+      // Record failed API cost in transactions so admin can see the loss
+      try {
+        let failedCost = accumulatedApiCost // at minimum, any prior continuation costs
+        let failedTokens = 0
+        if (finalMessage?.usage) {
+          failedCost += (finalMessage.usage.input_tokens / 1000) * settings.inputCostPer1k
+                      + (finalMessage.usage.output_tokens / 1000) * settings.outputCostPer1k
+          failedTokens = finalMessage.usage.input_tokens + finalMessage.usage.output_tokens
+        }
+        if (failedCost > 0) {
+          await supabase.from('transactions').insert({
+            user_id: userId, amount: 0, api_cost: failedCost, tokens_used: failedTokens,
+            type: 'failed', description: `Build failed: ${pageName} - ${errMsg.slice(0, 80)}`,
+          })
+        }
+      } catch (_) { /* don't let tracking failure block error response */ }
+    } catch (_innerLogErr) {
+      // Logging/tracking itself failed — fall through to guaranteed response below
+      console.error('[claude.ts] Inner catch logging failed:', (_innerLogErr as any)?.message)
     }
 
-    const elapsedSec = ((Date.now() - handlerStart) / 1000).toFixed(1)
-    await log('builder_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, userEmail, {
-      sourceFile: 'pages/api/claude.ts',
-      userId,
-      pageName,
-      userPrompt: userPrompt?.slice(0, 500),
-      error: errMsg,
-      elapsedSeconds: elapsedSec,
-      stack: err.stack?.slice(0, 1000),
-      imagesRequested: imagePrompts?.length || 0,
-      rawChars: (raw || '').length,
-      continuationCount,
-      isAutoFix,
-      retryCount,
-      projectId,
-    })
-
-    // Record failed API cost in transactions so admin can see the loss
+    // GUARANTEED RESPONSE — must always send something back to prevent Next.js 500 HTML
     try {
-      let failedCost = accumulatedApiCost // at minimum, any prior continuation costs
-      let failedTokens = 0
-      if (finalMessage?.usage) {
-        // We have exact token counts from this call
-        failedCost += (finalMessage.usage.input_tokens / 1000) * settings.inputCostPer1k
-                    + (finalMessage.usage.output_tokens / 1000) * settings.outputCostPer1k
-        failedTokens = finalMessage.usage.input_tokens + finalMessage.usage.output_tokens
+      if (res.headersSent) {
+        sendSSE({ type: 'error', error: userMessage })
+        res.end()
+      } else {
+        res.status(500).json({ error: userMessage })
       }
-      if (failedCost > 0) {
-        await supabase.from('transactions').insert({
-          user_id: userId, amount: 0, api_cost: failedCost, tokens_used: failedTokens,
-          type: 'failed', description: `Build failed: ${pageName} - ${errMsg.slice(0, 80)}`,
-        })
-      }
-    } catch (_) { /* don't let tracking failure block error response */ }
-
-    // If headers already sent (streaming started), send error as SSE event
-    if (res.headersSent) {
-      sendSSE({ type: 'error', error: userMessage })
-      res.end()
-    } else {
-      res.status(500).json({ error: userMessage })
+    } catch (_) {
+      try { res.end() } catch (__) {}
     }
   }
 
  } catch (outerErr: any) {
     // Catches unhandled exceptions from pre-try code (auth, profile, credits, plan checks)
     const errMsg = outerErr?.message || 'Unknown handler error'
+    console.error('[claude.ts] OUTER CATCH:', errMsg, outerErr?.stack?.slice(0, 500))
+
+    // Fire-and-forget log — do NOT await (avoids blocking response if logging fails)
+    log('builder_error', 'error', `Unhandled builder exception: ${errMsg}`, null, {
+      sourceFile: 'pages/api/claude.ts',
+      error: errMsg,
+      stack: outerErr?.stack?.slice(0, 1000),
+      elapsedSeconds: ((Date.now() - handlerStart) / 1000).toFixed(1),
+    }).catch(() => {})
+
+    // GUARANTEED RESPONSE
     try {
-      await log('builder_error', 'error', `Unhandled builder exception: ${errMsg}`, null, {
-        sourceFile: 'pages/api/claude.ts',
-        error: errMsg,
-        stack: outerErr?.stack?.slice(0, 1000),
-        elapsedSeconds: ((Date.now() - handlerStart) / 1000).toFixed(1),
-      })
-    } catch (_) { /* logging must not throw */ }
-    if (!res.headersSent) {
-      res.status(500).json({ error: `Build service error: ${errMsg}` })
-    } else {
-      try { res.end() } catch (_) {}
+      if (!res.headersSent) {
+        res.status(500).json({ error: `Build service error: ${errMsg}` })
+      } else {
+        res.end()
+      }
+    } catch (_) {
+      try { res.end() } catch (__) {}
     }
   }
 }

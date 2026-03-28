@@ -542,15 +542,27 @@ export default function ProjectBuilder() {
                   saveFileSnapshots(fileOps.map(op => op.path), buildId)
                 }
 
-                if (planOnly && event.message) {
-                  setPendingPlan(event.message)
-                  // Replace the streaming message with the final plan (server-sanitized)
-                  setMessages(prev => {
-                    const updated = [...prev]
-                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: event.message, isPlan: true }
-                    return updated
-                  })
-                  saveChatMessage('assistant', event.message, true)
+                if (planOnly) {
+                  const planText = (event.message || '').trim()
+                  if (planText) {
+                    setPendingPlan(planText)
+                    // Replace the streaming message with the final plan (server-sanitized)
+                    setMessages(prev => {
+                      const updated = [...prev]
+                      updated[updated.length - 1] = { ...updated[updated.length - 1], content: planText, isPlan: true }
+                      return updated
+                    })
+                    saveChatMessage('assistant', planText, true)
+                  } else {
+                    // Plan was empty — inform user and let them retry
+                    const fallbackMsg = 'The plan could not be generated. Please try rephrasing your request.'
+                    setMessages(prev => {
+                      const updated = [...prev]
+                      updated[updated.length - 1] = { ...updated[updated.length - 1], content: fallbackMsg }
+                      return updated
+                    })
+                    saveChatMessage('assistant', fallbackMsg)
+                  }
                 } else {
                   const assistantMsg = event.message || 'Build complete'
                   setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: assistantMsg, fileOps }])
