@@ -148,9 +148,8 @@ export default memo(function PreviewFrame({
 
       // Log which files were loaded vs skipped for debugging import chain issues
       if (loadedCount < fileCount && loadedCount > 0) {
-        const allFiles = new Set(Object.keys(fileMap))
         const loaded = new Set(result.loadedFiles || [])
-        const skipped = [...allFiles].filter(f => !loaded.has(f))
+        const skipped = Object.keys(fileMap).filter(f => !loaded.has(f))
         if (skipped.length > 0) {
           console.warn(`[PreviewFrame] ${skipped.length} file(s) not reachable from entry point:`, skipped.join(', '))
         }
