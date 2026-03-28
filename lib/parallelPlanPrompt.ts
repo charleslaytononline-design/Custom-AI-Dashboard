@@ -330,8 +330,11 @@ export function buildAppTsxPrompt(options: {
   for (const [path, content] of Object.entries(allGeneratedFiles)) {
     if (path === 'src/App.tsx') continue
     const defaultMatch = content.match(/export\s+default\s+(?:function|class|const)\s+(\w+)/)
-    const namedMatches = [...content.matchAll(/export\s+(?:function|const|class|interface|type)\s+(\w+)/g)]
-    const exports = namedMatches.map(m => m[1]).join(', ')
+    const namedExports: string[] = []
+    const namedRegex = /export\s+(?:function|const|class|interface|type)\s+(\w+)/g
+    let nm: RegExpExecArray | null
+    while ((nm = namedRegex.exec(content)) !== null) namedExports.push(nm[1])
+    const exports = namedExports.join(', ')
     if (defaultMatch || exports) {
       fileExports += `  ${path}: ${defaultMatch ? `default ${defaultMatch[1]}` : ''}${defaultMatch && exports ? ', ' : ''}${exports}\n`
     }
