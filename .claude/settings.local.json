@@ -76,7 +76,9 @@
       "Bash(ls \"/c/Users/charl/AppData/Local/fnm/\"*/node.exe)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" \"./node_modules/typescript/bin/tsc\" --noEmit)",
       "Bash(node -e \"console.log\\(process.env.PATH\\)\")",
-      "Bash(where npx:*)"
+      "Bash(where npx:*)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/.bin/tsc --noEmit --pretty)",
+      "Bash(\"/c/Program Files/nodejs/node.exe\" \"./node_modules/typescript/bin/tsc\" --noEmit --pretty)"
     ]
   }
 }

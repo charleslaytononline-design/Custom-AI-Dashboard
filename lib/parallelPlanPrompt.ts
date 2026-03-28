@@ -165,6 +165,7 @@ export function buildSingleFilePrompt(options: {
   fileDescription: string
   fileExports: string[]
   props?: string
+  fileImports?: string[]
   contracts: Record<string, string>
   existingFiles: ProjectFile[]
   projectName: string
@@ -173,101 +174,86 @@ export function buildSingleFilePrompt(options: {
   planManifest?: PlanManifest
 }): string {
   const {
-    filePath, fileDescription, fileExports, props,
+    filePath, fileDescription, fileExports, props, fileImports,
     contracts, existingFiles, projectName, projectId, hasClientsDb,
     planManifest,
   } = options
 
-  const designSystem = getDesignSystemPrompt()
-
-  // Show existing file tree for context
+  // Compact file tree — just paths, no content
   const fileTree = existingFiles.map(f => `  ${f.path}`).join('\n')
 
-  // Show contracts from previously generated files
+  // Only include contracts from files this file directly imports (not ALL generated files)
+  const importSet = new Set(fileImports || [])
   let contractsSection = ''
-  const contractEntries = Object.entries(contracts)
-  if (contractEntries.length > 0) {
-    contractsSection = `\nALREADY GENERATED FILES (you can import from these):\n`
-    for (const [path, content] of contractEntries) {
+  const relevantContracts = Object.entries(contracts).filter(([path]) =>
+    importSet.has(path) || path === 'src/types/index.ts' // always include shared types
+  )
+  if (relevantContracts.length > 0) {
+    contractsSection = `\nFILES YOU IMPORT FROM:\n`
+    for (const [path, content] of relevantContracts) {
       contractsSection += `\n--- ${path} ---\n${content}\n`
     }
   }
+  // Show remaining generated files as one-line summaries (so AI knows they exist)
+  const otherContracts = Object.entries(contracts).filter(([path]) => !importSet.has(path) && path !== 'src/types/index.ts')
+  if (otherContracts.length > 0) {
+    contractsSection += `\nOther generated files (available to import): ${otherContracts.map(([p]) => p).join(', ')}\n`
+  }
 
-  // Show relevant existing files (supabase client, utils)
+  // Only show supabase.ts content if this file likely uses database
+  const fileUsesDb = fileDescription.toLowerCase().match(/database|supabase|fetch|crud|table|data|api|query|realtime/)
+    || importSet.has('src/lib/supabase.ts')
   let existingContext = ''
-  const supabaseFile = existingFiles.find(f => f.path === 'src/lib/supabase.ts')
-  if (supabaseFile?.content) {
-    existingContext += `\n--- src/lib/supabase.ts (existing) ---\n${supabaseFile.content}\n`
+  if (fileUsesDb) {
+    const supabaseFile = existingFiles.find(f => f.path === 'src/lib/supabase.ts')
+    if (supabaseFile?.content) {
+      existingContext += `\n--- src/lib/supabase.ts ---\n${supabaseFile.content}\n`
+    }
   }
-  const utilsFile = existingFiles.find(f => f.path === 'src/lib/utils.ts')
-  if (utilsFile?.content) {
-    existingContext += `\n--- src/lib/utils.ts (existing) ---\n${utilsFile.content}\n`
-  }
-
-  // Show summaries of all other existing files so the AI knows what's available to import
-  const contractPaths = new Set(Object.keys(contracts))
-  const summaries = generateFileSummaries(existingFiles, contractPaths)
-  if (summaries.length > 0) {
-    existingContext += `\nOTHER EXISTING FILES (can import from these):\n`
-    for (const s of summaries) {
-      existingContext += `  ${s.path} — ${s.summary}\n`
+  // Only show utils if this file imports it
+  if (importSet.has('src/lib/utils.ts')) {
+    const utilsFile = existingFiles.find(f => f.path === 'src/lib/utils.ts')
+    if (utilsFile?.content) {
+      existingContext += `\n--- src/lib/utils.ts ---\n${utilsFile.content}\n`
     }
   }
 
-  // Detect if this is an auth-related file (Bug 5)
+  // Detect if this is an auth-related file
   const isAuthFile = /AuthContext|ProtectedRoute|Login|Signup|useAuth/i.test(filePath)
   const planHasAuth = planManifest?.files?.some(f =>
     /AuthContext|ProtectedRoute|Login|Signup/i.test(f.path)
   ) ?? false
 
-  // Build auth scaffolding section for auth-related files
   let authSection = ''
   if (isAuthFile && planHasAuth) {
     authSection = `
 AUTH SCAFFOLDING:
-- AuthContext.tsx: Create React context with AuthProvider and useAuth hook.
-  - Use supabase.auth.getSession() on mount to check existing session
-  - Listen to supabase.auth.onAuthStateChange() for auth state updates
-  - Expose: { user, session, loading, signIn(email, password), signUp(email, password, name?), signOut() }
-  - signUp must insert a profile row after successful signup:
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (data.user && !error) {
-      await supabase.from('profiles').insert({ id: data.user.id, email, full_name: name || '', role: 'viewer' })
-    }
-- ProtectedRoute.tsx: Uses useAuth() to check session, shows loading spinner while checking, redirects to /login if no session, renders <Outlet /> if authenticated.
-- Login.tsx: Email + password inputs, "Sign In" button calling useAuth().signIn(), link to /signup, error display, redirect to / on success.
-- Signup.tsx: Email + password + confirm password, "Create Account" calling useAuth().signUp(), link to /login.
-- Always import { supabase } from '../lib/supabase' for auth operations.
+- AuthContext.tsx: React context with AuthProvider + useAuth hook. Use supabase.auth.getSession() on mount, onAuthStateChange() for updates. Expose: { user, session, loading, signIn, signUp, signOut }. signUp inserts profile row.
+- ProtectedRoute.tsx: useAuth() check → loading spinner → redirect /login → <Outlet />
+- Login.tsx: email+password, signIn(), link to /signup, error display, redirect on success
+- Signup.tsx: email+password+confirm, signUp(), link to /login
+- Always import { supabase } from '../lib/supabase'
 `
   }
 
-  // Build database section (Bug 6)
+  // Only include DB section for files that actually use the database
   let dbSection = ''
-  if (hasClientsDb) {
+  if (hasClientsDb && fileUsesDb) {
     dbSection = `
-DATABASE OPERATIONS (import { supabase } from '../lib/supabase'):
-  // Select rows
-  const { data, error } = await supabase.from('table_name').select('*').order('created_at', { ascending: false })
-  // Insert a row
-  const { error } = await supabase.from('table_name').insert({ field: 'value' })
-  // Update a row
-  const { error } = await supabase.from('table_name').update({ field: 'new_value' }).eq('id', rowId)
-  // Delete a row
-  const { error } = await supabase.from('table_name').delete().eq('id', rowId)
-  // Realtime subscription
-  useEffect(() => {
-    const channel = supabase.channel('realtime-table')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'table_name' }, (payload) => {
-        if (payload.eventType === 'INSERT') setItems(prev => [payload.new, ...prev])
-        if (payload.eventType === 'UPDATE') setItems(prev => prev.map(i => i.id === payload.new.id ? payload.new : i))
-        if (payload.eventType === 'DELETE') setItems(prev => prev.filter(i => i.id !== payload.old.id))
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [])
-Always handle { data, error } return values. Show loading states during fetches. Show user-friendly error messages.
+DB OPS (import { supabase } from '../lib/supabase'):
+  select: supabase.from('table').select('*').order('created_at', { ascending: false })
+  insert: supabase.from('table').insert({ field: 'value' })
+  update: supabase.from('table').update({ field: 'new' }).eq('id', id)
+  delete: supabase.from('table').delete().eq('id', id)
+  realtime: supabase.channel('ch').on('postgres_changes', { event: '*', schema: 'public', table: 'name' }, handler).subscribe()
+Always handle { data, error }. Show loading states. Show error messages.
 `
   }
+
+  // Compact design system — stripped of security rules (already in plan prompt)
+  const compactDesign = `TECH STACK: React 18 + TypeScript, React Router v6, Tailwind CSS, Lucide React icons, Supabase JS client
+DESIGN: bg-gray-950 page | bg-gray-900 border-white/5 rounded-xl cards | bg-brand hover:bg-brand/80 buttons | text-white primary, text-white/70 secondary
+CONVENTIONS: Functional components + hooks, default exports for pages, named exports for shared components, TypeScript interfaces for all props`
 
   return `You are an expert React developer generating a single file for project "${projectName}".
 
@@ -278,26 +264,18 @@ ${props ? `COMPONENT PROPS: ${props}` : ''}
 
 PROJECT FILES:
 ${fileTree}
+${contractsSection}${existingContext}
 
-${contractsSection}
-${existingContext}
+${compactDesign}
+${authSection}${dbSection}
 
-${designSystem}
-${authSection}
-${dbSection}
-
-INSTRUCTIONS:
-- Output ONLY the raw TypeScript/TSX file content — no markdown code fences, no FILE_OP tags, no explanation
-- Import from other files using relative paths (e.g., import { Task } from '../types')
-- Use '@/' alias for src/ imports (e.g., import { supabase } from '@/lib/supabase')
-- Export exactly what is listed in EXPECTED EXPORTS
-- Follow the design system exactly
-- Write complete, functional code — no TODOs or placeholders
-- Write concise TypeScript — no comments, no lorem ipsum
-- Handle loading and error states for async operations
-- Use proper TypeScript types — avoid 'any'
-- ALL files MUST be under src/ — files outside src/ will NOT be bundled
-- Every component you create must be importable from the path listed in FILE TO GENERATE`
+OUTPUT RULES:
+- Output ONLY raw TypeScript/TSX — no markdown fences, no FILE_OP tags, no explanation
+- Use relative imports or '@/' alias for src/ paths
+- Export exactly: ${fileExports.join(', ')}
+- Write complete, functional code — no TODOs, no placeholders, no comments
+- Handle loading/error states for async ops. Use proper TS types — avoid 'any'
+- ALL files under src/. Follow the design system.`
 }
 
 /* ── App.tsx generation prompt (final step) ─────────────────────── */

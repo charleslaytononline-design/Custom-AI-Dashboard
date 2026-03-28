@@ -44,6 +44,19 @@ export const config = {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+/** Robust JSON extraction — handles markdown fences, commentary, etc. */
+function extractJSON(text: string): PlanManifest | null {
+  // Try direct parse
+  try { return JSON.parse(text) } catch {}
+  // Try stripping markdown fences
+  const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
+  try { return JSON.parse(cleaned) } catch {}
+  // Try finding a JSON object in the text (handles commentary before/after)
+  const match = text.match(/\{[\s\S]*\}/)
+  if (match) try { return JSON.parse(match[0]) } catch {}
+  return null
+}
+
 async function log(
   event_type: string, severity: 'info' | 'warn' | 'error',
   message: string, email?: string | null, metadata?: Record<string, unknown>,
@@ -200,6 +213,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // ── STEP 1: Plan call ──────────────────────────────────────
+    const planStart = Date.now()
     sendSSE({ type: 'status', text: 'Planning build...' })
 
     const planPrompt = buildParallelPlanPrompt({
@@ -208,7 +222,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       hasClientsDb: !!clientsDb,
     })
 
-    // Compact conversation history for context (Bug 8)
+    // Compact conversation history for context
     const rawHistory = (messages || []).slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
     const { summary, recentMessages } = compactReactHistory(rawHistory, 4)
     const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
@@ -233,16 +247,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     totalOutputTokens += planResponse.usage.output_tokens
 
     const planText = planResponse.content[0]?.type === 'text' ? planResponse.content[0].text : ''
+    const planDuration = ((Date.now() - planStart) / 1000).toFixed(1)
 
-    // Parse plan JSON — strip markdown fences if present
-    let plan: PlanManifest
-    try {
-      const cleaned = planText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
-      plan = JSON.parse(cleaned)
-    } catch (parseErr) {
-      // Haiku failed to produce valid JSON — retry once with the full model
+    // Parse plan JSON using robust extraction (handles markdown fences, commentary, etc.)
+    let plan: PlanManifest | null = extractJSON(planText)
+
+    if (!plan) {
+      // Robust parser failed — retry once with the full model as last resort
       if (settings.planModel !== settings.chatModel) {
-        await log('parallel_plan_retry', 'warn', 'Plan JSON parse failed with fast model, retrying with full model', userEmail)
+        await log('parallel_plan_retry', 'warn', `Plan JSON parse failed with fast model after ${planDuration}s, retrying with full model`, userEmail)
         sendSSE({ type: 'status', text: 'Refining plan...' })
         try {
           const retryResponse = await client.messages.create({
@@ -254,20 +267,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           totalInputTokens += retryResponse.usage.input_tokens
           totalOutputTokens += retryResponse.usage.output_tokens
           const retryText = retryResponse.content[0]?.type === 'text' ? retryResponse.content[0].text : ''
-          const retryCleaned = retryText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
-          plan = JSON.parse(retryCleaned)
-        } catch (retryErr) {
-          await log('parallel_plan_error', 'warn', 'Plan JSON parse failed on retry, redirecting to single mode', userEmail, {
-            planText: planText.slice(0, 500), error: (retryErr as Error).message,
-          })
-          sendSSE({ type: 'redirect', target: 'single' })
-          clearInterval(heartbeat)
-          res.end()
-          return
-        }
-      } else {
-        await log('parallel_plan_error', 'warn', 'Plan JSON parse failed, redirecting to single mode', userEmail, {
-          planText: planText.slice(0, 500), error: (parseErr as Error).message,
+          plan = extractJSON(retryText)
+        } catch {}
+      }
+
+      if (!plan) {
+        await log('parallel_plan_error', 'warn', 'Plan JSON parse failed completely, redirecting to single mode', userEmail, {
+          planText: planText.slice(0, 500),
         })
         sendSSE({ type: 'redirect', target: 'single' })
         clearInterval(heartbeat)
@@ -293,9 +299,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return
     }
 
-    // Send plan to frontend
+    // Send plan to frontend with timing
     sendSSE({ type: 'plan', plan })
-    sendSSE({ type: 'status', text: `Plan ready: ${plan.files.length} files across ${Math.max(...plan.files.map(f => f.layer)) + 1} layers` })
+    const layers = Math.max(...plan.files.map(f => f.layer ?? 0)) + 1
+    sendSSE({ type: 'status', text: `Plan ready in ${planDuration}s — ${plan.files.length} files, ${layers} layers` })
 
     // ── STEP 2: Create database tables (if any) ────────────────
     // If tables are needed but user hasn't chosen a database provider yet, ask them
@@ -365,6 +372,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const generatedFiles: Record<string, string> = {} // path → content
     const contracts: Record<string, string> = {} // path → exported interfaces/types
     const fileOpsApplied: Array<{ action: string; path: string }> = []
+    const fileStartTimes = new Map<string, number>() // path → start timestamp
+    const buildStart = Date.now()
 
     // If plan includes shared types, generate them first
     if (plan.sharedTypes) {
@@ -429,6 +438,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           fileDescription: file.description,
           fileExports: file.exports,
           props: file.props,
+          fileImports: file.imports,
           contracts,
           existingFiles: reactFiles,
           projectName,
@@ -485,6 +495,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       for (const file of batch) {
         pending.delete(file.path)
+        fileStartTimes.set(file.path, Date.now())
         sendSSE({ type: 'file_start', path: file.path, totalFiles, completedFiles: totalFileSuccesses })
         inFlight.set(file.path, generateFile(file))
       }
@@ -498,6 +509,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const stuck = Array.from(pending.values()).slice(0, MAX_CONCURRENT)
         for (const file of stuck) {
           pending.delete(file.path)
+          fileStartTimes.set(file.path, Date.now())
           sendSSE({ type: 'file_start', path: file.path, totalFiles, completedFiles: totalFileSuccesses })
           inFlight.set(file.path, generateFile(file))
         }
@@ -526,6 +538,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sendSSE({ type: 'file_op', action: 'create', path, content })
         fileOpsApplied.push({ action: 'create', path })
         totalFileSuccesses++
+
+        // Timing telemetry
+        const fileStart = fileStartTimes.get(path)
+        const fileDuration = fileStart ? ((Date.now() - fileStart) / 1000).toFixed(1) : '?'
+        const shortPath = path.replace(/^src\//, '')
+        sendSSE({ type: 'status', text: `${shortPath} done in ${fileDuration}s (${totalFileSuccesses}/${totalFiles})` })
       } else {
         // File failed — mark as completed to unblock dependents, log error
         completed.add(raceResult.path)
@@ -612,9 +630,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: updatedProfile } = await supabase
       .from('profiles').select('credit_balance, gift_balance').eq('id', userId).single()
 
+    const totalBuildDuration = ((Date.now() - buildStart) / 1000).toFixed(1)
     sendSSE({
       type: 'done',
-      message: plan.message || `Built ${fileOpsApplied.length} files in parallel`,
+      message: plan.message || `Built ${fileOpsApplied.length} files in ${totalBuildDuration}s`,
       imagePrompts: [],
       tokensUsed: totalTokens,
       apiCost,

@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
-import { parsePatchBlocks, applyPatches } from '../../lib/patchApplicator'
+import { parsePatchBlocks, applyPatches, computeMinimalDiff } from '../../lib/patchApplicator'
 import { getAuthUser } from '../../lib/apiAuth'
 import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule, isSafeDefaultValue } from '../../lib/validation'
 import { checkRateLimit } from '../../lib/rateLimit'
@@ -234,7 +234,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const userMsg = messages[messages.length - 1]?.content || ''
   const trainingRules = await getTrainingRules(typeof userMsg === 'string' ? userMsg : '')
   const autoFixAddendum = isAutoFix
-    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors. Fix ONLY the bug — do not redesign, restructure, or add new features. You MUST use <FILE_OP action="patch"> with <<<< SEARCH / ==== REPLACE / >>>> blocks to make targeted changes. NEVER use action="create" to rewrite entire files — only patch the specific lines that are broken. Keep changes minimal — change as few lines as possible.`
+    ? `\n\nERROR FIX MODE — STRICT RULES:
+1. Fix ONLY the runtime error shown below — do NOT redesign, restructure, or add new features.
+2. You MUST use <FILE_OP action="patch"> with <<<< SEARCH / ==== REPLACE / >>>> blocks to make targeted changes.
+3. NEVER use action="create" or action="edit" for existing files — these will be REJECTED by the server and the fix will fail.
+4. Change the MINIMUM number of lines needed to fix the error — typically 1-10 lines.
+5. Only touch files directly related to the error — do NOT modify unrelated files.
+6. Do NOT add features, refactor, "improve", or restructure anything.
+7. If the error is in file X, only patch file X. Do not touch other files unless they directly cause the error.`
     : ''
   const systemWithTraining = system + trainingRules + autoFixAddendum
 
@@ -294,10 +301,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Send immediate status to prevent early idle timeout
     sendSSE({ type: 'status', text: isContinuation ? `Continuing build (part ${continuationCount + 1})...` : 'Starting build...' })
 
-    // Use streaming API
+    // Use streaming API — auto-fix gets capped at 4K tokens to prevent full rewrites
     const stream = client.messages.stream({
       model: settings.chatModel,
-      max_tokens: 16000,
+      max_tokens: isAutoFix ? 4000 : 16000,
       system: contextualSystem,
       messages: apiMessages,
     })
@@ -734,6 +741,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       const fileResults = await Promise.allSettled(parsedOps.map(async (op) => {
         if (op.action === 'create' || op.action === 'edit') {
+          // AUTO-FIX ENFORCEMENT: Block full rewrites of existing files during auto-fix.
+          // If the AI ignored the patch instruction, try to extract a minimal diff.
+          if (isAutoFix) {
+            const existingFile = reactFiles.find((f: any) => f.path === op.path)
+            if (existingFile?.content) {
+              const diff = computeMinimalDiff(existingFile.content, op.content)
+              if (diff && diff.changeRatio < 0.3 && diff.blocks.length > 0) {
+                // Small change — apply as a targeted patch instead of full rewrite
+                const patchResult = applyPatches(existingFile.content, diff.blocks)
+                if (patchResult.appliedCount > 0) {
+                  const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
+                  const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+                  await saveFile(projectId, userId, op.path, patchResult.content, fileType, supabase)
+                  await log('autofix_diff_applied', 'info', `Auto-fix: extracted ${diff.blocks.length} patch blocks from ${op.action} on ${op.path} (${Math.round(diff.changeRatio * 100)}% changed)`, userEmail, {
+                    sourceFile: 'pages/api/claude.ts', userId, projectId, path: op.path, changeRatio: diff.changeRatio, blocksApplied: patchResult.appliedCount,
+                  })
+                  return { action: 'edit', path: op.path, content: patchResult.content }
+                }
+              }
+              // Large rewrite or diff failed — block it entirely
+              await log('autofix_rewrite_blocked', 'warn', `Auto-fix tried to rewrite ${op.path} with action="${op.action}" (${diff ? Math.round(diff.changeRatio * 100) : '??'}% changed), blocked`, userEmail, {
+                sourceFile: 'pages/api/claude.ts', userId, projectId, path: op.path, changeRatio: diff?.changeRatio,
+              })
+              return null
+            }
+            // File doesn't exist yet — allow create for new files even during auto-fix
+          }
+
           const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
           const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
           await saveFile(projectId, userId, op.path, op.content, fileType, supabase)
