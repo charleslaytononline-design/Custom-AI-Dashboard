@@ -76,6 +76,7 @@ export default function ProjectBuilder() {
   const autoFixInProgressRef = useRef(false)
   const autoFixFailedRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   const isInitialLoadRef = useRef(true)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -109,9 +110,16 @@ export default function ProjectBuilder() {
 
   useEffect(() => {
     if (messages.length === 0) return
-    const behavior = isInitialLoadRef.current ? 'instant' : 'smooth'
-    messagesEndRef.current?.scrollIntoView({ behavior: behavior as ScrollBehavior })
-    if (isInitialLoadRef.current) isInitialLoadRef.current = false
+    if (isInitialLoadRef.current) {
+      // Initial load: force-scroll container to bottom after DOM paints
+      isInitialLoadRef.current = false
+      requestAnimationFrame(() => {
+        const el = chatContainerRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages])
 
   // Update file tree when files change
@@ -1086,7 +1094,7 @@ export default function ProjectBuilder() {
 
           {sidebarTab === 'chat' && (
             <>
-              <div className={`flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 ${isMobile ? 'pb-[60px]' : ''}`}>
+              <div ref={chatContainerRef} className={`flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 ${isMobile ? 'pb-[60px]' : ''}`}>
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-2 py-8 flex-1">
                     <div className="text-[28px] mb-3 text-brand/60">✦</div>
