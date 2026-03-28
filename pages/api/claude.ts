@@ -204,11 +204,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let raw = ''
   let imagePrompts: string[] = []
   let settings: { markupMultiplier: number; inputCostPer1k: number; outputCostPer1k: number; chatModel: string; imageCostPerGen: number; maxImagesPerBuild: number } = { markupMultiplier: 3.0, inputCostPer1k: 0.003, outputCostPer1k: 0.015, chatModel: 'claude-sonnet-4-5', imageCostPerGen: 0.05, maxImagesPerBuild: 5 }
+  let userPrompt = ''
 
   try {
   settings = await getSettings()
   const lastUserMsg = messages[messages.length - 1]?.content || ''
-  const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
+  userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
 
   // NOTE: Only React projects are supported. HTML builder was removed.
   const projectType = 'react'
