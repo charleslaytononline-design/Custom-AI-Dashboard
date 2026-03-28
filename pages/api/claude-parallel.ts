@@ -63,6 +63,7 @@ async function getSettings() {
     inputCostPer1k: parseFloat(map['input_cost_per_1k']) || 0.003,
     outputCostPer1k: parseFloat(map['output_cost_per_1k']) || 0.015,
     chatModel: map['ai_chat_model'] || 'claude-sonnet-4-5',
+    planModel: map['ai_plan_model'] || 'claude-haiku-4-5-20251001',
   }
 }
 
@@ -222,7 +223,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ]
 
     const planResponse = await client.messages.create({
-      model: settings.chatModel,
+      model: settings.planModel,
       max_tokens: 4000,
       system: contextualPlanPrompt,
       messages: planMessages,
@@ -239,13 +240,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const cleaned = planText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
       plan = JSON.parse(cleaned)
     } catch (parseErr) {
-      await log('parallel_plan_error', 'warn', 'Plan JSON parse failed, redirecting to single mode', userEmail, {
-        planText: planText.slice(0, 500), error: (parseErr as Error).message,
-      })
-      sendSSE({ type: 'redirect', target: 'single' })
-      clearInterval(heartbeat)
-      res.end()
-      return
+      // Haiku failed to produce valid JSON — retry once with the full model
+      if (settings.planModel !== settings.chatModel) {
+        await log('parallel_plan_retry', 'warn', 'Plan JSON parse failed with fast model, retrying with full model', userEmail)
+        sendSSE({ type: 'status', text: 'Refining plan...' })
+        try {
+          const retryResponse = await client.messages.create({
+            model: settings.chatModel,
+            max_tokens: 4000,
+            system: contextualPlanPrompt,
+            messages: planMessages,
+          })
+          totalInputTokens += retryResponse.usage.input_tokens
+          totalOutputTokens += retryResponse.usage.output_tokens
+          const retryText = retryResponse.content[0]?.type === 'text' ? retryResponse.content[0].text : ''
+          const retryCleaned = retryText.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
+          plan = JSON.parse(retryCleaned)
+        } catch (retryErr) {
+          await log('parallel_plan_error', 'warn', 'Plan JSON parse failed on retry, redirecting to single mode', userEmail, {
+            planText: planText.slice(0, 500), error: (retryErr as Error).message,
+          })
+          sendSSE({ type: 'redirect', target: 'single' })
+          clearInterval(heartbeat)
+          res.end()
+          return
+        }
+      } else {
+        await log('parallel_plan_error', 'warn', 'Plan JSON parse failed, redirecting to single mode', userEmail, {
+          planText: planText.slice(0, 500), error: (parseErr as Error).message,
+        })
+        sendSSE({ type: 'redirect', target: 'single' })
+        clearInterval(heartbeat)
+        res.end()
+        return
+      }
     }
 
     // Validate all file paths in plan before processing
@@ -332,17 +360,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // ── STEP 3: Generate files layer by layer ──────────────────
-    const layers = new Map<number, PlanFile[]>()
-    for (const file of plan.files) {
-      const layer = file.layer ?? 0
-      if (!layers.has(layer)) layers.set(layer, [])
-      layers.get(layer)!.push(file)
-    }
-
-    const sortedLayers: Array<[number, PlanFile[]]> = []
-    layers.forEach((files, layer) => sortedLayers.push([layer, files]))
-    sortedLayers.sort((a, b) => a[0] - b[0])
+    // ── STEP 3: Dependency-graph parallel file generation ───────
+    const MAX_CONCURRENT = 6
     const generatedFiles: Record<string, string> = {} // path → content
     const contracts: Record<string, string> = {} // path → exported interfaces/types
     const fileOpsApplied: Array<{ action: string; path: string }> = []
@@ -358,29 +377,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       fileOpsApplied.push({ action: 'create', path: typesPath })
     }
 
-    for (const [layerNum, layerFiles] of sortedLayers) {
-      if (clientDisconnected) break
+    // Build dependency graph — all files except App.tsx (generated last)
+    const allPlanFiles = plan.files.filter(f => f.path !== 'src/App.tsx')
+    const pending = new Map<string, PlanFile>() // path → file
+    const deps = new Map<string, Set<string>>() // path → set of dependency paths
+    const completed = new Set<string>() // paths already generated or existing
+    const inFlight = new Map<string, Promise<{ path: string; content: string } | null>>()
+    let totalFileSuccesses = 0
 
-      // Check time remaining
-      const elapsed = Date.now() - handlerStart
-      if (elapsed > SAFE_DURATION_MS) {
-        sendSSE({ type: 'status', text: 'Time limit approaching, saving progress...' })
-        break
+    // Pre-populate completed with existing files + shared types
+    for (const f of reactFiles) completed.add(f.path)
+    if (plan.sharedTypes) completed.add('src/types/index.ts')
+
+    // Initialize pending & deps
+    for (const file of allPlanFiles) {
+      if (!isValidFilePath(file.path)) {
+        await log('parallel_security', 'warn', `Invalid path: ${file.path}`, userEmail)
+        continue
       }
-
-      // Skip App.tsx in layers — it's generated last separately
-      const filesToGenerate = layerFiles.filter(f => f.path !== 'src/App.tsx')
-      if (filesToGenerate.length === 0) continue
-
-      sendSSE({ type: 'status', text: `Generating layer ${layerNum} (${filesToGenerate.length} file${filesToGenerate.length > 1 ? 's' : ''})...` })
-
-      // Generate all files in this layer in parallel
-      const results = await Promise.allSettled(filesToGenerate.map(async (file) => {
-        if (clientDisconnected) throw new Error('Client disconnected')
-        if (!isValidFilePath(file.path)) {
-          await log('parallel_security', 'warn', `Invalid path: ${file.path}`, userEmail)
-          return null
+      pending.set(file.path, file)
+      const fileDeps = new Set<string>()
+      for (const imp of (file.imports || [])) {
+        // Only track deps on OTHER files in this plan (not existing files)
+        if (allPlanFiles.some(f => f.path === imp) && imp !== file.path) {
+          fileDeps.add(imp)
         }
+      }
+      deps.set(file.path, fileDeps)
+    }
+
+    // Get files ready to generate (all deps completed, not already in flight)
+    function getReadyFiles(): PlanFile[] {
+      const ready: PlanFile[] = []
+      for (const [path, file] of pending) {
+        if (inFlight.has(path)) continue
+        const fileDeps = deps.get(path) || new Set()
+        const allDepsReady = [...fileDeps].every(d => completed.has(d))
+        if (allDepsReady) ready.push(file)
+      }
+      // Sort by layer for deterministic ordering
+      return ready.sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0))
+    }
+
+    // Generate a single file (with streaming for progress)
+    function generateFile(file: PlanFile): Promise<{ path: string; content: string } | null> {
+      return (async () => {
+        if (clientDisconnected) return null
 
         const prompt = buildSingleFilePrompt({
           filePath: file.path,
@@ -395,53 +437,109 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           planManifest: plan,
         })
 
-        const fileResponse = await client.messages.create({
+        // Use streaming for real-time progress feedback
+        const stream = client.messages.stream({
           model: settings.chatModel,
           max_tokens: 8000,
           system: prompt + trainingRules,
           messages: [{ role: 'user', content: `Generate the file ${file.path}: ${file.description}` }],
         })
 
-        totalInputTokens += fileResponse.usage.input_tokens
-        totalOutputTokens += fileResponse.usage.output_tokens
+        let charCount = 0
+        let lastProgressAt = 0
+        stream.on('text', (text) => {
+          charCount += text.length
+          // Send progress every ~500 chars to avoid SSE flooding
+          if (charCount - lastProgressAt >= 500) {
+            lastProgressAt = charCount
+            sendSSE({ type: 'file_progress', path: file.path, chars: charCount })
+          }
+        })
 
-        let content = fileResponse.content[0]?.type === 'text' ? fileResponse.content[0].text : ''
-        // Strip markdown code fences if the model wraps the output
+        const finalMessage = await stream.finalMessage()
+        totalInputTokens += finalMessage.usage.input_tokens
+        totalOutputTokens += finalMessage.usage.output_tokens
+
+        let content = finalMessage.content[0]?.type === 'text' ? finalMessage.content[0].text : ''
         content = content.replace(/^```(?:tsx?|jsx?|typescript|javascript)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
 
         return { path: file.path, content }
-      }))
+      })()
+    }
 
-      // Process results
-      let layerSuccesses = 0
-      for (const result of results) {
-        if (result.status === 'fulfilled' && result.value) {
-          const { path, content } = result.value
-          generatedFiles[path] = content
-          // Small files (types, hooks, utils): pass full content as contract for maximum accuracy
-          // Large files: extract just export signatures to avoid prompt bloat
-          contracts[path] = content.length > 3000 ? extractContracts(content) : content
+    // Main execution loop — launch files as soon as their dependencies are ready
+    const totalFiles = pending.size
+    sendSSE({ type: 'status', text: `Generating ${totalFiles} files...` })
 
-          const ext = path.split('.').pop()?.toLowerCase() || 'text'
-          const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
-          await saveFile(projectId, userId, path, content, fileType, supabase)
-          sendSSE({ type: 'file_op', action: 'create', path, content })
-          fileOpsApplied.push({ action: 'create', path })
-          layerSuccesses++
-        } else if (result.status === 'rejected') {
-          await log('parallel_file_error', 'warn', `File generation failed: ${result.reason?.message}`, userEmail)
+    while (pending.size > 0 && !clientDisconnected) {
+      // Check time remaining
+      if (Date.now() - handlerStart > SAFE_DURATION_MS) {
+        sendSSE({ type: 'status', text: 'Time limit approaching, saving progress...' })
+        break
+      }
+
+      // Launch ready files up to concurrency limit
+      const ready = getReadyFiles()
+      const slots = MAX_CONCURRENT - inFlight.size
+      const batch = ready.slice(0, Math.max(0, slots))
+
+      for (const file of batch) {
+        pending.delete(file.path)
+        sendSSE({ type: 'file_start', path: file.path, totalFiles, completedFiles: totalFileSuccesses })
+        inFlight.set(file.path, generateFile(file))
+      }
+
+      // Deadlock safety: nothing in flight and nothing ready but still pending
+      if (inFlight.size === 0 && batch.length === 0 && pending.size > 0) {
+        await log('parallel_deadlock', 'warn', `Dependency deadlock: ${pending.size} files stuck`, userEmail, {
+          stuckFiles: [...pending.keys()],
+        })
+        // Break deadlock by launching stuck files ignoring deps
+        const stuck = [...pending.values()].slice(0, MAX_CONCURRENT)
+        for (const file of stuck) {
+          pending.delete(file.path)
+          sendSSE({ type: 'file_start', path: file.path, totalFiles, completedFiles: totalFileSuccesses })
+          inFlight.set(file.path, generateFile(file))
         }
       }
 
-      // If most files in a layer failed, abort
-      if (layerSuccesses === 0 && filesToGenerate.length > 0) {
-        await log('parallel_layer_failed', 'error', `Layer ${layerNum} completely failed`, userEmail)
-        sendSSE({ type: 'status', text: `Layer ${layerNum} failed — falling back to single mode` })
-        sendSSE({ type: 'redirect', target: 'single' })
-        clearInterval(heartbeat)
-        res.end()
-        return
+      if (inFlight.size === 0) break
+
+      // Wait for ANY one file to complete, then loop to check for newly ready files
+      const raceResult = await Promise.race(
+        [...inFlight.entries()].map(([path, promise]) =>
+          promise.then(result => ({ path, result })).catch(err => ({ path, result: null, error: err }))
+        )
+      )
+
+      inFlight.delete(raceResult.path)
+
+      if (raceResult.result) {
+        const { path, content } = raceResult.result
+        generatedFiles[path] = content
+        contracts[path] = content.length > 3000 ? extractContracts(content) : content
+        completed.add(path)
+
+        const ext = path.split('.').pop()?.toLowerCase() || 'text'
+        const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+        await saveFile(projectId, userId, path, content, fileType, supabase)
+        sendSSE({ type: 'file_op', action: 'create', path, content })
+        fileOpsApplied.push({ action: 'create', path })
+        totalFileSuccesses++
+      } else {
+        // File failed — mark as completed to unblock dependents, log error
+        completed.add(raceResult.path)
+        await log('parallel_file_error', 'warn', `File generation failed: ${raceResult.path}: ${(raceResult as any).error?.message}`, userEmail)
       }
+    }
+
+    // If no files succeeded at all, fall back to single mode
+    if (totalFileSuccesses === 0 && allPlanFiles.length > 0) {
+      await log('parallel_all_failed', 'error', 'All parallel files failed', userEmail)
+      sendSSE({ type: 'redirect', target: 'single' })
+      clearInterval(heartbeat)
+      res.end()
+      return
     }
 
     // ── STEP 4: Generate App.tsx last ──────────────────────────
@@ -525,11 +623,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       fileOps: fileOpsApplied,
       projectType: 'react',
       parallelMode: true,
-      layers: sortedLayers.length,
+      layers: Math.max(...plan.files.map(f => f.layer ?? 0)) + 1,
     })
 
-    await log('parallel_build_complete', 'info', `Parallel build: ${fileOpsApplied.length} files, ${sortedLayers.length} layers, ${totalTokens} tokens`, userEmail, {
-      userId, projectId, files: fileOpsApplied.length, layers: sortedLayers.length, tokens: totalTokens, cost: apiCost,
+    await log('parallel_build_complete', 'info', `Parallel build: ${fileOpsApplied.length} files, ${totalTokens} tokens`, userEmail, {
+      userId, projectId, files: fileOpsApplied.length, tokens: totalTokens, cost: apiCost,
     })
 
     clearInterval(heartbeat)

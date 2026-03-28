@@ -684,6 +684,14 @@ export default function ProjectBuilder() {
                     } else if (event.type === 'plan') {
                       const fileCount = event.plan?.files?.length || 0
                       setBuildStatus(`Parallel build: ${fileCount} files planned`)
+                    } else if (event.type === 'file_start') {
+                      const shortPath = event.path?.replace(/^src\//, '') || ''
+                      const progress = event.totalFiles ? ` (${event.completedFiles || 0}/${event.totalFiles})` : ''
+                      setBuildStatus(`Generating ${shortPath}...${progress}`)
+                    } else if (event.type === 'file_progress') {
+                      const shortPath = event.path?.replace(/^src\//, '') || ''
+                      const kb = event.chars > 1000 ? `${(event.chars / 1000).toFixed(1)}K` : `${event.chars}`
+                      setBuildStatus(`Generating ${shortPath}... ${kb} chars`)
                     } else if (event.type === 'file_op') {
                       fileOps.push({ action: event.action, path: event.path })
                       fileContentUpdates.push({ action: event.action, path: event.path, content: event.content ?? null })
@@ -945,6 +953,7 @@ export default function ProjectBuilder() {
       buildTrigger={buildTrigger}
       isNewProject={isNewProject}
       loading={loading}
+      dbChoicePending={showDbChoice}
       envVars={previewEnvVars}
       extraPackages={extraPackages}
     />

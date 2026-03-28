@@ -234,7 +234,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const userMsg = messages[messages.length - 1]?.content || ''
   const trainingRules = await getTrainingRules(typeof userMsg === 'string' ? userMsg : '')
   const autoFixAddendum = isAutoFix
-    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors. Fix ONLY the bug — do not redesign, restructure, or add new features. Use FILE_OP tags to edit the affected file(s). Keep changes minimal — change as few lines as possible.`
+    ? `\n\nERROR FIX MODE: The user is reporting runtime JavaScript errors. Fix ONLY the bug — do not redesign, restructure, or add new features. You MUST use <FILE_OP action="patch"> with <<<< SEARCH / ==== REPLACE / >>>> blocks to make targeted changes. NEVER use action="create" to rewrite entire files — only patch the specific lines that are broken. Keep changes minimal — change as few lines as possible.`
     : ''
   const systemWithTraining = system + trainingRules + autoFixAddendum
 

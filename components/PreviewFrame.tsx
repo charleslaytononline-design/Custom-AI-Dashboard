@@ -61,6 +61,8 @@ interface PreviewFrameProps {
   isNewProject?: boolean
   /** When true, the AI is still actively building (streaming files) */
   loading?: boolean
+  /** When true, suppress empty-render checks and auto-fix (DB choice modal is showing) */
+  dbChoicePending?: boolean
 }
 
 export default memo(function PreviewFrame({
@@ -79,6 +81,7 @@ export default memo(function PreviewFrame({
   buildTrigger = 0,
   isNewProject = false,
   loading = false,
+  dbChoicePending = false,
 }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
@@ -224,15 +227,17 @@ export default memo(function PreviewFrame({
     }
 
     // Subsequent file changes: debounce to avoid excessive re-bundles
+    // Use shorter debounce during active AI builds for faster preview updates
+    const debounceMs = loading ? 300 : 600
     if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     bundleTimerRef.current = setTimeout(() => {
       bundleAndRender()
-    }, 600) // 600ms debounce
+    }, debounceMs)
 
     return () => {
       if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     }
-  }, [fileMap, buildTrigger, bundleAndRender, isNewProject, isReactProject])
+  }, [fileMap, buildTrigger, bundleAndRender, isNewProject, isReactProject, loading])
 
   // When AI build finishes (loading goes false), check if the preview rendered anything
   const prevLoadingRef = useRef(loading)
@@ -241,7 +246,8 @@ export default memo(function PreviewFrame({
     prevLoadingRef.current = loading
 
     // Only trigger when loading transitions from true → false
-    if (wasLoading && !loading && iframeRef.current?.contentWindow) {
+    // Skip if DB choice modal is pending — the app can't render without a database yet
+    if (wasLoading && !loading && !dbChoicePending && iframeRef.current?.contentWindow) {
       const timer = setTimeout(() => {
         try {
           iframeRef.current?.contentWindow?.postMessage({ type: 'check-render' }, '*')
@@ -249,7 +255,7 @@ export default memo(function PreviewFrame({
       }, 3000) // Wait 3s after build completes for React to finish rendering
       return () => clearTimeout(timer)
     }
-  }, [loading])
+  }, [loading, dbChoicePending])
 
   // Listen for messages from the preview iframe
   useEffect(() => {
@@ -282,7 +288,7 @@ export default memo(function PreviewFrame({
   const lastAutoFixTriggerRef = useRef(0)
   useEffect(() => {
     // Only run when not loading, auto-fix callback exists, and we haven't exceeded attempts
-    if (loading || !onAutoFix || autoFixAttempt >= maxAutoFix) return
+    if (loading || !onAutoFix || autoFixAttempt >= maxAutoFix || dbChoicePending) return
     // Don't re-trigger for the same build
     if (lastAutoFixTriggerRef.current === buildTrigger) return
     // Wait for bundling to finish
@@ -309,7 +315,7 @@ export default memo(function PreviewFrame({
       }, 3000)
       return () => clearTimeout(timer)
     }
-  }, [loading, bundling, bundleErrors, previewErrors, blobUrl, buildTrigger, onAutoFix, autoFixAttempt, maxAutoFix])
+  }, [loading, bundling, bundleErrors, previewErrors, blobUrl, buildTrigger, onAutoFix, autoFixAttempt, maxAutoFix, dbChoicePending])
 
   // Determine what to show
   const showDeployedPreview = previewSource === 'deployed' && deployUrl
