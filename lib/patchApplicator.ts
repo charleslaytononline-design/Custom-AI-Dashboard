@@ -73,27 +73,25 @@ export function applyPatches(originalContent: string, blocks: PatchBlock[]): Pat
       continue
     }
 
-    // Fallback: whitespace-normalized match
+    // Fallback: whitespace-normalized match (line-based approach)
+    // normalizeForMatch preserves line count (only trims trailing whitespace + tabs→spaces)
+    // so we can safely map normalized line positions back to original lines
     const normalizedContent = normalizeForMatch(content)
     const normalizedSearch = normalizeForMatch(block.search)
     const normalizedIdx = normalizedContent.indexOf(normalizedSearch)
 
     if (normalizedIdx !== -1) {
-      // Find the corresponding position in the original content
-      // Map normalized position back to original by counting characters line-by-line
-      const normalizedBefore = normalizedContent.slice(0, normalizedIdx)
-      const normalizedMatch = normalizedContent.slice(normalizedIdx, normalizedIdx + normalizedSearch.length)
+      // Count newlines before the match to find the starting line
+      const beforeMatch = normalizedContent.slice(0, normalizedIdx)
+      const startLine = beforeMatch.split('\n').length - 1
+      const searchLineCount = normalizedSearch.split('\n').length
 
-      // Count newlines to find the line range
-      const startLine = normalizedBefore.split('\n').length - 1
-      const matchLines = normalizedMatch.split('\n').length
-
-      // Reconstruct the original text range using line positions
+      // Replace the matching lines in the original content
       const originalLines = content.split('\n')
-      const beforeLines = originalLines.slice(0, startLine).join('\n')
-      const afterLines = originalLines.slice(startLine + matchLines).join('\n')
+      const before = originalLines.slice(0, startLine)
+      const after = originalLines.slice(startLine + searchLineCount)
 
-      content = beforeLines + (startLine > 0 ? '\n' : '') + block.replace + (afterLines ? '\n' + afterLines : '')
+      content = [...before, block.replace, ...after].join('\n')
       appliedCount++
       continue
     }

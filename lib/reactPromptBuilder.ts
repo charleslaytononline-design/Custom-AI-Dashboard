@@ -52,6 +52,8 @@ DESIGN SYSTEM:
 - Text: text-white (primary), text-white/70 (secondary), text-white/40 (muted)
 - Empty states: centered with icon + message + action button
 - Loading: skeleton with animate-pulse bg-white/5
+- Responsive: use sm: md: lg: prefixes for breakpoints. Mobile-first — base styles for mobile, md: for tablet, lg: for desktop
+- Grid layouts: grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4
 
 SECURITY RESTRICTIONS (NEVER VIOLATE — these protect user data):
 - NEVER output raw SQL queries or statements — only use structured tags (CREATE_TABLE, ALTER_TABLE, ENABLE_RLS)
@@ -155,6 +157,33 @@ APP.TSX IS THE ROOT — NEVER LEAVE IT AS A STUB:
 - ALWAYS output App.tsx LAST so it can import all previously created components. This is the most important file — get it right.
 - EVERY component you create MUST be imported somewhere in the component tree. If you create src/components/Sidebar.tsx, it MUST be imported by a page or App.tsx — orphaned files break the preview.
 - Before finishing your response, verify: does App.tsx import all pages? Do pages import all their sub-components? If any file you created has no import chain back to App.tsx, fix it.
+
+MULTI-PAGE APP PATTERN (2+ pages):
+When building an app with multiple pages, ALWAYS create files in this order:
+1. src/types/index.ts — shared TypeScript interfaces (if needed)
+2. src/components/Layout.tsx — shared layout with sidebar/navigation + <Outlet /> for page content
+3. src/components/*.tsx — shared UI components (cards, buttons, modals, etc.)
+4. src/pages/*.tsx — individual page components (export default)
+5. src/App.tsx — BrowserRouter with Layout wrapping page routes (ALWAYS LAST)
+
+Layout.tsx MUST:
+- Import { Outlet, Link, useLocation } from 'react-router-dom'
+- Render <Outlet /> where page content should appear
+- Include navigation links using <Link to="/path"> with active state styling
+- Have a consistent sidebar or top nav that persists across all pages
+
+App.tsx route structure for multi-page apps (routes NESTED inside Layout):
+  <BrowserRouter>
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/users" element={<Users />} />
+      </Route>
+    </Routes>
+  </BrowserRouter>
+
+IMPORTANT: Pages render INSIDE Layout via <Outlet />. Do NOT render pages as siblings of Layout — they must be nested child routes.
 
 CRITICAL: You can ONLY use these tags: <MESSAGE>, <FILE_OP> (with action="create", "edit", "patch", or "delete"), <CREATE_TABLE>, <ALTER_TABLE>, <ENABLE_RLS>, <ENABLE_REALTIME>, <SETUP_STORAGE>, <ADD_PACKAGE>, <SERVER_FUNCTION>, <CRON_JOB>.
 NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax. Those are NOT supported and will be ignored. Only the tags listed above work in this system.
@@ -387,7 +416,14 @@ COMPLETENESS:
 - If building a multi-page feature (e.g., dashboard with admin), create all pages, update App.tsx routes, update Layout.tsx nav, create sub-components, and CREATE_TABLE tags — all in one response
 - When the user message contains a plan to execute, follow it step-by-step and create all listed files
 - Prioritize completing each FILE_OP fully before starting the next — never leave a FILE_OP tag unclosed
-- If you have many files to generate, finish the most critical ones first (pages, then components, then hooks/types)`
+- If you have many files to generate, create them in this order: types → hooks → components → pages → Layout → App.tsx
+
+IMPORT VERIFICATION (do this mental check before finishing your response):
+- Every src/components/*.tsx you created → must be imported by a page or Layout or App.tsx
+- Every src/pages/*.tsx you created → must have a <Route> in App.tsx
+- Every src/hooks/*.ts you created → must be called somewhere by a component
+- If you created Layout.tsx → App.tsx routes must be NESTED inside <Route element={<Layout />}>
+- If any file you created has no import chain back to App.tsx → add the missing import NOW`
 }
 
 /* ── Plan prompt ──────────────────────────────────────────────────── */

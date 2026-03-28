@@ -86,35 +86,51 @@ async function getTrainingRules(userMessage: string) {
 function extractContracts(code: string): string {
   const lines = code.split('\n')
   const exports: string[] = []
-  for (const line of lines) {
-    const trimmed = line.trim()
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+
+    // Capture full interface/type blocks (multi-line)
     if (trimmed.startsWith('export interface ') || trimmed.startsWith('export type ')) {
-      // Capture full interface/type block
-      const blockStart = code.indexOf(line)
       let braceCount = 0
       let inBlock = false
-      let blockEnd = blockStart
-      for (let i = blockStart; i < code.length; i++) {
-        if (code[i] === '{') { braceCount++; inBlock = true }
-        if (code[i] === '}') braceCount--
-        if (inBlock && braceCount === 0) { blockEnd = i + 1; break }
-        if (!inBlock && code[i] === '\n' && !code.slice(blockStart, i).includes('{')) {
-          // Single-line type alias
-          blockEnd = i
-          break
+      let block = ''
+      for (let j = i; j < lines.length; j++) {
+        block += (j > i ? '\n' : '') + lines[j]
+        for (const ch of lines[j]) {
+          if (ch === '{') { braceCount++; inBlock = true }
+          if (ch === '}') braceCount--
         }
+        if (inBlock && braceCount === 0) break
+        // Single-line type alias (no braces, e.g. `export type X = string`)
+        if (!inBlock && j > i) break
       }
-      exports.push(code.slice(blockStart, blockEnd).trim())
-    } else if (
+      exports.push(block.trim())
+    }
+    // Capture function/const export signatures — handle multi-line parameter lists
+    else if (
       trimmed.startsWith('export function ') ||
       trimmed.startsWith('export const ') ||
       trimmed.startsWith('export default function ') ||
       trimmed.startsWith('export default class ')
     ) {
-      // Just capture the signature line
-      exports.push(trimmed.replace(/\{[\s\S]*$/, '{ ... }'))
+      let sig = ''
+      for (let j = i; j < lines.length && j < i + 10; j++) {
+        sig += (j > i ? '\n' : '') + lines[j]
+        // Stop at the function body opening brace or arrow
+        if (/(?:=>|^\s*\{|>\s*\{|\)\s*\{|\):\s*\w.*\{)/.test(lines[j]) && j > i) {
+          sig = sig.replace(/\s*(?:=>|{)\s*(?:[\s\S]*)$/, '')
+          break
+        }
+        if (j === i && /\{[\s\S]*$/.test(lines[j])) {
+          sig = sig.replace(/\s*\{[\s\S]*$/, '')
+          break
+        }
+      }
+      exports.push(sig.trim())
     }
   }
+
   return exports.join('\n\n')
 }
 
@@ -214,6 +230,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.end()
       return
     }
+
+    // Validate all file paths in plan before processing
+    plan.files = plan.files.filter(f => {
+      if (!isValidFilePath(f.path)) {
+        log('parallel_plan_warn', 'warn', `Plan contained invalid path: ${f.path}`, userEmail)
+        return false
+      }
+      return true
+    })
 
     // Redirect to single mode if plan says so
     if (plan.mode === 'single' || !plan.files || plan.files.length <= 2) {
@@ -335,7 +360,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (result.status === 'fulfilled' && result.value) {
           const { path, content } = result.value
           generatedFiles[path] = content
-          contracts[path] = extractContracts(content)
+          // Small files (types, hooks, utils): pass full content as contract for maximum accuracy
+          // Large files: extract just export signatures to avoid prompt bloat
+          contracts[path] = content.length > 3000 ? extractContracts(content) : content
 
           const ext = path.split('.').pop()?.toLowerCase() || 'text'
           const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext

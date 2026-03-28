@@ -173,6 +173,16 @@ export function buildSingleFilePrompt(options: {
     existingContext += `\n--- src/lib/utils.ts (existing) ---\n${utilsFile.content}\n`
   }
 
+  // Show summaries of all other existing files so the AI knows what's available to import
+  const contractPaths = new Set(Object.keys(contracts))
+  const summaries = generateFileSummaries(existingFiles, contractPaths)
+  if (summaries.length > 0) {
+    existingContext += `\nOTHER EXISTING FILES (can import from these):\n`
+    for (const s of summaries) {
+      existingContext += `  ${s.path} — ${s.summary}\n`
+    }
+  }
+
   return `You are an expert React developer generating a single file for project "${projectName}".
 
 FILE TO GENERATE: ${filePath}
