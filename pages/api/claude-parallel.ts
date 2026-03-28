@@ -217,7 +217,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       : planPrompt + trainingRules
 
     const planMessages = [
-      ...safeHistory,
+      ...safeHistory.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content as string })),
       { role: 'user' as const, content: typeof userMessage === 'string' ? userMessage : 'Build this project' },
     ]
 
