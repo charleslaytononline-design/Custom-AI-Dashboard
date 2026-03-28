@@ -234,7 +234,8 @@ function findRootComponent(
 
 /**
  * Generate a patched App.tsx that imports and renders components with error boundary.
- * Renders the root component first, then all other orphan components.
+ * For multi-page apps: generates routed structure with MemoryRouter.
+ * For single-page apps: renders the root component directly.
  */
 function generatePatchedAppTsx(
   rootFile: string,
@@ -251,32 +252,23 @@ function generatePatchedAppTsx(
   const toComponentName = (filePath: string) =>
     filePath.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || 'Comp'
 
-  // Build component imports — root first, then all others
+  // Separate page components from regular components
+  const pageFiles = allComponentFiles.filter(f => f.startsWith('src/pages/'))
+  const nonPageFiles = allComponentFiles.filter(f => !f.startsWith('src/pages/'))
+  const layoutFile = allComponentFiles.find(f => f.includes('Layout'))
+
   const imports: string[] = []
-  const elements: string[] = []
   const usedNames = new Set<string>()
 
-  const addComponent = (file: string) => {
+  const addImport = (file: string): string => {
     let name = toComponentName(file)
     if (usedNames.has(name)) name = name + usedNames.size
     usedNames.add(name)
     imports.push(`import ${name} from '${toRelative(file)}'`)
-    elements.push(`<${name} />`)
+    return name
   }
 
-  if (rootFile) {
-    addComponent(rootFile)
-    // Add other components not imported by the root
-    for (const file of allComponentFiles) {
-      if (file !== rootFile) addComponent(file)
-    }
-  } else {
-    for (const file of allComponentFiles) {
-      addComponent(file)
-    }
-  }
-
-  // Detect hooks that return state (e.g., usePlayerData)
+  // Detect hooks that return state
   const hookCalls: string[] = []
   for (const hookFile of unreachableHooks) {
     const content = files[hookFile]
@@ -292,8 +284,93 @@ function generatePatchedAppTsx(
   // Error boundary to catch render crashes
   const errorBoundary = `class EB extends Component<{children:any},{error:string|null}>{state={error:null as string|null};static getDerivedStateFromError(e:any){return{error:e?.message||String(e)}};render(){if(this.state.error)return <div style={{padding:24,color:'#ff6b6b',background:'#1a1a2e',fontFamily:'monospace',minHeight:'100vh'}}><h2 style={{margin:'0 0 12px'}}>Render Error</h2><pre style={{whiteSpace:'pre-wrap',opacity:0.8}}>{this.state.error}</pre><p style={{color:'#888',marginTop:16}}>The AI may not have properly connected all components. Try asking it to fix App.tsx.</p></div>;return this.props.children}}`
 
+  // Multi-page routing mode: generate routes for page components
+  if (pageFiles.length > 0) {
+    imports.push(`import { Component } from 'react'`)
+    imports.push(`import { MemoryRouter, Routes, Route } from 'react-router-dom'`)
+
+    // Import Layout if it exists
+    let layoutName: string | null = null
+    if (layoutFile) {
+      layoutName = addImport(layoutFile)
+      // Also need Outlet for Layout
+      imports[imports.length - 2] = `import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom'`
+    }
+
+    // Import all pages
+    const pageRoutes: Array<{ name: string; path: string }> = []
+    for (const file of pageFiles) {
+      const name = addImport(file)
+      const fileName = file.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || ''
+      // Dashboard or Home or Index → "/", others → "/lowercase-name"
+      const isMain = /^(dashboard|home|index|main)$/i.test(fileName)
+      const routePath = isMain ? '/' : `/${fileName.toLowerCase()}`
+      pageRoutes.push({ name, path: routePath })
+    }
+
+    // Ensure at least one route maps to "/"
+    if (!pageRoutes.some(r => r.path === '/') && pageRoutes.length > 0) {
+      pageRoutes[0].path = '/'
+    }
+
+    // Import non-page, non-layout components (they may be needed by pages)
+    for (const file of nonPageFiles) {
+      if (file === layoutFile) continue
+      addImport(file)
+    }
+
+    // Also import and render root component if it's not a page or layout
+    if (rootFile && !pageFiles.includes(rootFile) && rootFile !== layoutFile) {
+      if (!usedNames.has(toComponentName(rootFile))) {
+        addImport(rootFile)
+      }
+    }
+
+    const routeElements = pageRoutes.map(r => `          <Route path="${r.path}" element={<${r.name} />} />`).join('\n')
+
+    const routeBlock = layoutName
+      ? `        <Route element={<${layoutName} />}>\n${routeElements}\n        </Route>`
+      : routeElements
+
+    const lines = [
+      ...imports,
+      '',
+      errorBoundary,
+      '',
+      `export default function App() {`,
+      ...hookCalls,
+      `  return (`,
+      `    <EB>`,
+      `      <MemoryRouter future={{v7_startTransition:true,v7_relativeSplatPath:true}}>`,
+      `        <Routes>`,
+      routeBlock,
+      `        </Routes>`,
+      `      </MemoryRouter>`,
+      `    </EB>`,
+      `  )`,
+      `}`,
+      '',
+    ]
+
+    return lines.join('\n')
+  }
+
+  // Single-page mode: render root component directly (original behavior)
+  imports.push(`import { Component } from 'react'`)
+  const elements: string[] = []
+
+  if (rootFile) {
+    elements.push(`<${addImport(rootFile)} />`)
+    for (const file of allComponentFiles) {
+      if (file !== rootFile) elements.push(`<${addImport(file)} />`)
+    }
+  } else {
+    for (const file of allComponentFiles) {
+      elements.push(`<${addImport(file)} />`)
+    }
+  }
+
   const lines = [
-    `import { Component } from 'react'`,
     ...imports,
     '',
     errorBoundary,

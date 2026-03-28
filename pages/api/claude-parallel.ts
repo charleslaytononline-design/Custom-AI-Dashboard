@@ -14,8 +14,9 @@ import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { getAuthUser } from '../../lib/apiAuth'
 import { loadProjectFiles, saveFile } from '../../lib/virtualFS'
+import { compactReactHistory } from '../../lib/reactContextManager'
 import { checkRateLimit } from '../../lib/rateLimit'
-import { isValidUUID, isValidFilePath, isValidTableName, validateTableDef, sanitizeTrainingRule } from '../../lib/validation'
+import { isValidUUID, isValidFilePath, isValidTableName, validateTableDef, sanitizeTrainingRule, isSafeDefaultValue } from '../../lib/validation'
 import {
   buildParallelPlanPrompt,
   buildSingleFilePrompt,
@@ -162,9 +163,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Load project
   let projectName = ''
+  let dbProvider: string | null = null
   if (projectId) {
-    const { data: proj } = await supabase.from('projects').select('name').eq('id', projectId).eq('user_id', userId).single()
+    const { data: proj } = await supabase.from('projects').select('name, db_provider').eq('id', projectId).eq('user_id', userId).single()
     projectName = proj?.name || ''
+    dbProvider = proj?.db_provider || null
   }
 
   const reactFiles = projectId ? await loadProjectFiles(projectId, supabase) : []
@@ -204,11 +207,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       hasClientsDb: !!clientsDb,
     })
 
+    // Compact conversation history for context (Bug 8)
+    const rawHistory = (messages || []).slice(0, -1).map((m: any) => ({ role: m.role, content: m.content }))
+    const { summary, recentMessages } = compactReactHistory(rawHistory, 4)
+    const firstUserIdx = recentMessages.findIndex((m: any) => m.role === 'user')
+    const safeHistory = firstUserIdx > 0 ? recentMessages.slice(firstUserIdx) : recentMessages
+    const contextualPlanPrompt = summary
+      ? planPrompt + trainingRules + `\n\nCONVERSATION CONTEXT:\n${summary}`
+      : planPrompt + trainingRules
+
+    const planMessages = [
+      ...safeHistory,
+      { role: 'user' as const, content: typeof userMessage === 'string' ? userMessage : 'Build this project' },
+    ]
+
     const planResponse = await client.messages.create({
       model: settings.chatModel,
       max_tokens: 4000,
-      system: planPrompt + trainingRules,
-      messages: [{ role: 'user', content: typeof userMessage === 'string' ? userMessage : 'Build this project' }],
+      system: contextualPlanPrompt,
+      messages: planMessages,
     })
 
     totalInputTokens += planResponse.usage.input_tokens
@@ -253,10 +270,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     sendSSE({ type: 'status', text: `Plan ready: ${plan.files.length} files across ${Math.max(...plan.files.map(f => f.layer)) + 1} layers` })
 
     // ── STEP 2: Create database tables (if any) ────────────────
-    if (plan.tables && plan.tables.length > 0 && clientsDb) {
+    // If tables are needed but user hasn't chosen a database provider yet, ask them
+    if (plan.tables && plan.tables.length > 0 && projectId && !dbProvider) {
+      const pendingTables = plan.tables.map(t => t.name)
+      sendSSE({ type: 'db_choice_required', pendingTables })
+      sendSSE({ type: 'done', message: 'Please choose where to store your data, then I\'ll create the tables.' })
+      clearInterval(heartbeat)
+      res.end()
+      return
+    }
+
+    if (plan.tables && plan.tables.length > 0 && clientsDb && projectId) {
       sendSSE({ type: 'status', text: `Creating ${plan.tables.length} database table(s)...` })
+      const schemaName = `proj_${projectId}`
+      let tablesCreated = 0
+
       for (const table of plan.tables) {
         if (!isValidTableName(table.name)) continue
+        // Auto-fix defaults the AI may generate as wrong types (match claude.ts behavior)
+        for (const col of table.columns || []) {
+          if (col.default === undefined || col.default === null) continue
+          if (typeof col.default === 'boolean') col.default = String(col.default)
+          if (typeof col.default === 'number' && Number.isFinite(col.default)) col.default = String(col.default)
+          if (typeof col.default === 'string' &&
+              !isSafeDefaultValue(col.default) &&
+              /^[a-zA-Z][a-zA-Z0-9_ ]{0,98}$/.test(col.default)) {
+            col.default = `'${col.default}'`
+          }
+        }
         const validationResult = validateTableDef(table)
         if (!validationResult.valid) {
           await log('parallel_table_error', 'warn', `Invalid table def: ${(validationResult as any).error || 'unknown'}`, userEmail)
@@ -264,14 +305,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         try {
           await clientsDb.rpc('create_project_table', {
-            p_schema: `proj_${projectId}`,
-            p_table: table.name,
-            p_columns: JSON.stringify(table.columns),
+            schema_name: schemaName,
+            table_def: { name: table.name, columns: table.columns },
           })
+          tablesCreated++
           sendSSE({ type: 'status', text: `Created table: ${table.name}` })
         } catch (err: any) {
           await log('parallel_table_error', 'warn', `Table creation failed: ${table.name}: ${err.message}`, userEmail)
         }
+      }
+
+      // Track schema usage (same as claude.ts)
+      if (tablesCreated > 0) {
+        try {
+          await Promise.all([
+            clientsDb.from('schema_registry').upsert(
+              { project_id: projectId, user_id: userId, schema_name: schemaName, last_accessed_at: new Date().toISOString() },
+              { onConflict: 'project_id' }
+            ),
+            clientsDb.from('schema_usage').upsert(
+              { project_id: projectId, user_id: userId, schema_name: schemaName, table_count: tablesCreated, sampled_at: new Date().toISOString() },
+              { onConflict: 'project_id' }
+            ),
+          ])
+        } catch {}
       }
     }
 
@@ -335,6 +392,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           projectName,
           projectId: projectId || '',
           hasClientsDb: !!clientsDb,
+          planManifest: plan,
         })
 
         const fileResponse = await client.messages.create({
@@ -396,6 +454,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         existingFiles: reactFiles,
         projectName,
         hasRouter: hasPages,
+        planManifest: plan,
       })
 
       const appResponse = await client.messages.create({

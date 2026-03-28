@@ -34,6 +34,8 @@ export function generateReactTemplate(options: {
         dependencies: {
           react: '^18.3.1',
           'react-dom': '^18.3.1',
+          'react-router-dom': '^6.28.0',
+          'lucide-react': '^0.460.0',
           '@supabase/supabase-js': '^2.47.0',
         },
         devDependencies: {
