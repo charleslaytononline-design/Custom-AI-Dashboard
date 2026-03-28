@@ -140,6 +140,14 @@ export default memo(function PreviewFrame({
 
       console.log(`[PreviewFrame] Bundle result — js: ${result.js.length} chars, css: ${result.css.length} chars, errors: ${result.errors.length}, cdnMap keys: ${Object.keys(result.cdnMap).length}`)
 
+      // Warn if bundle output is suspiciously small relative to number of files
+      const fileCount = Object.keys(fileMap).length
+      if (result.errors.length === 0 && result.js.length < 1000 && fileCount > 3) {
+        const warnMsg = `Bundle output is only ${result.js.length} chars for ${fileCount} files — most file content may not be included. Check that src/App.tsx imports all components.`
+        console.warn(`[PreviewFrame] ${warnMsg}`)
+        setConsoleEntries(prev => [...prev, { level: 'warn' as const, message: warnMsg, timestamp: Date.now() }])
+      }
+
       if (result.errors.length > 0) {
         setBundleErrors(result.errors)
         updateBlobUrl(generateErrorHtml(result.errors))

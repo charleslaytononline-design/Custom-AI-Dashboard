@@ -60,10 +60,12 @@ full replacement content for the entire file
 FILE_OP RULES:
 - action must be "create", "edit", or "delete"
 - path is relative to project root (e.g., "src/pages/Dashboard.tsx")
+- ALL files MUST be under src/ (e.g., src/GameWorld.tsx, NOT GameWorld.tsx). Files outside src/ will NOT be bundled.
 - For "create" and "edit": include the COMPLETE file content (not diffs/patches)
 - For "edit": always output the ENTIRE file with your changes applied
 - For "delete": self-closing tag, no content needed
 - You may output multiple FILE_OP tags in a single response
+- CRITICAL ENTRY POINT: src/main.tsx is the bundler entry point — it MUST exist and MUST call ReactDOM.createRoot(document.getElementById('root')!).render(). src/App.tsx MUST import and render ALL your components. Never create component files without importing them from App.tsx (directly or through child components). If a file is not imported from App.tsx's component tree, it will NOT appear in the preview.
 - Always update src/App.tsx routes when creating new pages
 - Always update src/components/Layout.tsx navigation when adding pages
 

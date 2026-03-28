@@ -18,6 +18,19 @@ const CDN_PACKAGES: Record<string, string> = {
   'react-router-dom': 'https://esm.sh/react-router-dom@6.28.0?external=react,react-dom',
   '@supabase/supabase-js': 'https://esm.sh/@supabase/supabase-js@2.47.0',
   'lucide-react': 'https://esm.sh/lucide-react@0.460.0?external=react',
+  // Three.js ecosystem
+  'three': 'https://esm.sh/three@0.170.0',
+  'three/addons': 'https://esm.sh/three@0.170.0/addons',
+  'three/examples/jsm/controls/OrbitControls': 'https://esm.sh/three@0.170.0/examples/jsm/controls/OrbitControls',
+  'three/examples/jsm/loaders/GLTFLoader': 'https://esm.sh/three@0.170.0/examples/jsm/loaders/GLTFLoader',
+  '@react-three/fiber': 'https://esm.sh/@react-three/fiber@8.17.10?external=react,react-dom,three',
+  '@react-three/drei': 'https://esm.sh/@react-three/drei@9.117.3?external=react,react-dom,three,@react-three/fiber',
+  // Animation libraries
+  'framer-motion': 'https://esm.sh/framer-motion@11.15.0?external=react,react-dom',
+  // Chart libraries
+  'recharts': 'https://esm.sh/recharts@2.15.0?external=react,react-dom',
+  // Date utilities
+  'date-fns': 'https://esm.sh/date-fns@4.1.0',
 }
 
 export interface BundleInput {
