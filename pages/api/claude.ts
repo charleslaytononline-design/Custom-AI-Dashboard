@@ -192,6 +192,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
+  // Helper to send an SSE event
+  function sendSSE(data: object) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`)
+  }
+
+  let heartbeat: ReturnType<typeof setInterval> | null = null
+  let finalMessage: any = null // declared outside try so catch can access for failed cost tracking
+  let clientDisconnected = false
+  let streamCompleted = false
+  let raw = ''
+  let imagePrompts: string[] = []
+
+  try {
   const settings = await getSettings()
   const lastUserMsg = messages[messages.length - 1]?.content || ''
   const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
@@ -244,20 +257,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 7. If the error is in file X, only patch file X. Do not touch other files unless they directly cause the error.`
     : ''
   const systemWithTraining = system + trainingRules + autoFixAddendum
-
-  // Helper to send an SSE event
-  function sendSSE(data: object) {
-    res.write(`data: ${JSON.stringify(data)}\n\n`)
-  }
-
-  let heartbeat: ReturnType<typeof setInterval> | null = null
-  let finalMessage: any = null // declared outside try so catch can access for failed cost tracking
-  let clientDisconnected = false
-  let streamCompleted = false
-  let raw = ''
-  let imagePrompts: string[] = []
-
-  try {
     const lastMessage = messages[messages.length - 1]
 
     let lastContent: any = lastMessage?.content || ''
@@ -897,7 +896,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // If client disconnected and stream wasn't completed, record as 'stopped' not 'failed'
     if (clientDisconnected && !streamCompleted) {
       const estimatedOutputTokens = Math.ceil((raw || '').length / 4)
-      const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
+      const fallbackOutputCost = 0.015
+      const partialCost = (estimatedOutputTokens / 1000) * (typeof settings !== 'undefined' ? settings.outputCostPer1k : fallbackOutputCost)
       try {
         await supabase.from('transactions').insert({
           user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
@@ -944,7 +944,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       let failedCost = accumulatedApiCost // at minimum, any prior continuation costs
       let failedTokens = 0
-      if (finalMessage?.usage) {
+      if (finalMessage?.usage && typeof settings !== 'undefined') {
         // We have exact token counts from this call
         failedCost += (finalMessage.usage.input_tokens / 1000) * settings.inputCostPer1k
                     + (finalMessage.usage.output_tokens / 1000) * settings.outputCostPer1k

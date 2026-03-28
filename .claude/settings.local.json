@@ -78,7 +78,8 @@
       "Bash(node -e \"console.log\\(process.env.PATH\\)\")",
       "Bash(where npx:*)",
       "Bash(\"/c/Program Files/nodejs/node.exe\" node_modules/.bin/tsc --noEmit --pretty)",
-      "Bash(\"/c/Program Files/nodejs/node.exe\" \"./node_modules/typescript/bin/tsc\" --noEmit --pretty)"
+      "Bash(\"/c/Program Files/nodejs/node.exe\" \"./node_modules/typescript/bin/tsc\" --noEmit --pretty)",
+      "mcp__ca587db0-5671-4533-a3ab-efbd6a75f2c4__get_runtime_logs"
     ]
   }
 }
