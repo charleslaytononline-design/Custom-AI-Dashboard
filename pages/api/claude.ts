@@ -203,9 +203,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let streamCompleted = false
   let raw = ''
   let imagePrompts: string[] = []
+  let settings: { markupMultiplier: number; inputCostPer1k: number; outputCostPer1k: number; chatModel: string; imageCostPerGen: number; maxImagesPerBuild: number } = { markupMultiplier: 3.0, inputCostPer1k: 0.003, outputCostPer1k: 0.015, chatModel: 'claude-sonnet-4-5', imageCostPerGen: 0.05, maxImagesPerBuild: 5 }
 
   try {
-  const settings = await getSettings()
+  settings = await getSettings()
   const lastUserMsg = messages[messages.length - 1]?.content || ''
   const userPrompt = typeof lastUserMsg === 'string' ? lastUserMsg : ''
 
@@ -896,8 +897,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // If client disconnected and stream wasn't completed, record as 'stopped' not 'failed'
     if (clientDisconnected && !streamCompleted) {
       const estimatedOutputTokens = Math.ceil((raw || '').length / 4)
-      const fallbackOutputCost = 0.015
-      const partialCost = (estimatedOutputTokens / 1000) * (typeof settings !== 'undefined' ? settings.outputCostPer1k : fallbackOutputCost)
+      const partialCost = (estimatedOutputTokens / 1000) * settings.outputCostPer1k
       try {
         await supabase.from('transactions').insert({
           user_id: userId, amount: 0, api_cost: partialCost, tokens_used: estimatedOutputTokens,
@@ -944,7 +944,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       let failedCost = accumulatedApiCost // at minimum, any prior continuation costs
       let failedTokens = 0
-      if (finalMessage?.usage && typeof settings !== 'undefined') {
+      if (finalMessage?.usage) {
         // We have exact token counts from this call
         failedCost += (finalMessage.usage.input_tokens / 1000) * settings.inputCostPer1k
                     + (finalMessage.usage.output_tokens / 1000) * settings.outputCostPer1k
