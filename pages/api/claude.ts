@@ -119,6 +119,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const SAFE_DURATION_MS = 270_000 // 270s safety cutoff, leaving 30s buffer before Vercel's 300s kill
   const handlerStart = Date.now()
 
+ try { // outer try/catch — ensures ALL unhandled exceptions are logged and return JSON
+
   // Verify server-side session
   const sessionUserId = await getAuthUser(req, res)
   if (!sessionUserId) return res.status(401).json({ error: 'Not authenticated' })
@@ -925,7 +927,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const elapsedSec = ((Date.now() - handlerStart) / 1000).toFixed(1)
-    await log('api_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, null, {
+    await log('builder_error', 'error', `Builder API exception after ${elapsedSec}s: ${errMsg}`, userEmail, {
       sourceFile: 'pages/api/claude.ts',
       userId,
       pageName,
@@ -965,6 +967,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.end()
     } else {
       res.status(500).json({ error: userMessage })
+    }
+  }
+
+ } catch (outerErr: any) {
+    // Catches unhandled exceptions from pre-try code (auth, profile, credits, plan checks)
+    const errMsg = outerErr?.message || 'Unknown handler error'
+    try {
+      await log('builder_error', 'error', `Unhandled builder exception: ${errMsg}`, null, {
+        sourceFile: 'pages/api/claude.ts',
+        error: errMsg,
+        stack: outerErr?.stack?.slice(0, 1000),
+        elapsedSeconds: ((Date.now() - handlerStart) / 1000).toFixed(1),
+      })
+    } catch (_) { /* logging must not throw */ }
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Build service error: ${errMsg}` })
+    } else {
+      try { res.end() } catch (_) {}
     }
   }
 }

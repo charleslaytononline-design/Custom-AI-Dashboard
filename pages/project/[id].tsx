@@ -406,7 +406,11 @@ export default function ProjectBuilder() {
               const err = JSON.parse(text)
               errorMessage = err.error || err.message || errorMessage
             } else if (res.status >= 500) {
-              errorMessage = 'Server error — the build service is temporarily unavailable. Please try again.'
+              // Try to extract useful info from non-JSON response (e.g. plain text error)
+              const snippet = text.replace(/<[^>]*>/g, '').trim().slice(0, 200)
+              errorMessage = snippet
+                ? `Server error: ${snippet}`
+                : 'Server error — the build service is temporarily unavailable. Please try again.'
             }
           } catch {}
           throw new Error(errorMessage)
