@@ -68,7 +68,9 @@
       "Bash(\"/c/Program Files/nodejs/node.exe\" ./node_modules/typescript/bin/tsc --noEmit)",
       "Bash(node ./node_modules/.bin/next build)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(where.exe npm:*)"
+      "Bash(where.exe npm:*)",
+      "Bash(PATH=\"/c/Program Files/nodejs:$PATH\" node node_modules/.bin/tsc --noEmit)",
+      "Bash(PATH=\"/c/Program Files/nodejs:$PATH\" node node_modules/typescript/bin/tsc --noEmit)"
     ]
   }
 }
