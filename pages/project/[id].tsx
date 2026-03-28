@@ -87,6 +87,8 @@ export default function ProjectBuilder() {
     supabase.auth.getUser().then(({ data }) => {
       if (!data.user) { router.push('/'); return }
       setUser(data.user)
+    }).catch(() => {
+      router.push('/')
     })
     return () => authListener.subscription.unsubscribe()
   }, [])
@@ -730,6 +732,12 @@ export default function ProjectBuilder() {
                       setMessages(prev => [...prev, assistantMsg])
                       saveChatMessage('assistant', assistantMsg.content)
                       usedParallel = true
+                    } else if (event.type === 'db_choice_required') {
+                      setPendingDbTables(JSON.stringify(event.pendingTables || []))
+                      setShowDbChoice(true)
+                      setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: 'Your app needs a database. Choose where to store your data:', isDbChoice: true }])
+                      setBuildStatus(null)
+                      setLoading(false)
                     } else if (event.type === 'error') {
                       setLastError(event.error || event.message)
                     }
@@ -785,7 +793,7 @@ export default function ProjectBuilder() {
 
   // Handle automatic error fixing after build (no user interaction needed)
   async function handleAutoFix(errorText: string) {
-    if (autoFixInProgressRef.current || autoFixAttempt >= 2 || loading) return
+    if (autoFixInProgressRef.current || autoFixAttempt >= 2 || loading || showDbChoice) return
     autoFixInProgressRef.current = true
     const attempt = autoFixAttempt + 1
     setAutoFixAttempt(attempt)

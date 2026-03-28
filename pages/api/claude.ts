@@ -458,19 +458,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const postTasks: Promise<void>[] = []
 
     // Task: Create database tables (parallel within this task too)
-    // If tables are needed but user hasn't chosen a database provider yet, ask them
-    if (tableDefsFound.length > 0 && projectId && !planOnly && !dbProvider) {
-      const pendingTables = tableDefsFound.map(m => {
-        try { return JSON.parse(m[1].trim()).name } catch { return 'unknown' }
-      })
-      sendSSE({ type: 'db_choice_required', pendingTables })
-      // Stop processing — the frontend will show the choice modal and retry
-      sendSSE({ type: 'done', message: 'Please choose where to store your data, then I\'ll create the tables.' })
-      res.end()
-      return
-    }
-
-    if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly) {
+    // NOTE: db_choice_required check moved to AFTER file saving (see below)
+    // so generated code is preserved even when user hasn't chosen a DB yet.
+    if (tableDefsFound.length > 0 && clientsDb && projectId && !planOnly && dbProvider) {
       postTasks.push((async () => {
         const schemaName = `proj_${projectId}`
         const planId = profile.plan_id || null
@@ -797,6 +787,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       } else if (fileOpsApplied.length > 0) {
         message = message || `Updated ${fileOpsApplied.length} file(s)`
       }
+    }
+
+    // If tables are needed but user hasn't chosen a database provider, save the files
+    // (already done above) but stop before credit deduction — ask user to pick a DB.
+    if (tableDefsFound.length > 0 && projectId && !planOnly && !dbProvider) {
+      const pendingTables = tableDefsFound.map(m => {
+        try { return JSON.parse(m[1].trim()).name } catch { return 'unknown' }
+      })
+      sendSSE({ type: 'db_choice_required', pendingTables })
+      sendSSE({
+        type: 'done',
+        message: fileOpsApplied.length > 0
+          ? `Built ${fileOpsApplied.length} file(s). Choose where to store your data to create the database tables.`
+          : 'Please choose where to store your data, then I\'ll create the tables.',
+        imagePrompts: [],
+        tokensUsed: totalTokens,
+        apiCost,
+        userCharge,
+        newBalance: (profile.credit_balance || 0) + (profile.gift_balance || 0),
+        fileOps: fileOpsApplied,
+        projectType,
+      })
+      // Still deduct credits for the code generation work done
+      try {
+        await supabase.rpc('deduct_credits', {
+          p_user_id: userId, p_amount: userCharge,
+          p_description: `AI build (pending DB choice): ${pageName}`,
+          p_tokens_used: totalTokens, p_api_cost: totalApiCost,
+        })
+      } catch {}
+      clearInterval(heartbeat)
+      res.end()
+      return
     }
 
     const { data: updatedProfile } = await supabase
