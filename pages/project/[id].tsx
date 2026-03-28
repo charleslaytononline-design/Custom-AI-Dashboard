@@ -59,6 +59,7 @@ export default function ProjectBuilder() {
   const [planModalContent, setPlanModalContent] = useState('')
   const [welcomeHtml, setWelcomeHtml] = useState<string | null>(null)
   const [buildTrigger, setBuildTrigger] = useState(0)
+  const [isNewProject, setIsNewProject] = useState(true)
   const [showSupabaseConnect, setShowSupabaseConnect] = useState(false)
   const [projectSupabaseUrl, setProjectSupabaseUrl] = useState<string | null>(null)
   const [projectSupabaseAnonKey, setProjectSupabaseAnonKey] = useState<string | null>(null)
@@ -173,6 +174,7 @@ export default function ProjectBuilder() {
       .order('created_at', { ascending: true })
     if (data && data.length > 0) {
       setMessages(data.map((m: any) => ({ id: m.id, role: m.role, content: m.content, isPlan: m.is_plan })))
+      setIsNewProject(false)
     }
   }
 
@@ -474,6 +476,7 @@ export default function ProjectBuilder() {
                 // Also fetch from DB to ensure consistency (non-blocking)
                 loadFiles()
                 // Defer build trigger to ensure files state has propagated
+                setIsNewProject(false)
                 setTimeout(() => setBuildTrigger(prev => prev + 1), 50)
 
                 // Compute diffs for changed files
@@ -788,6 +791,7 @@ export default function ProjectBuilder() {
       welcomeHtml={welcomeHtml}
       onFixError={handleFixError}
       buildTrigger={buildTrigger}
+      isNewProject={isNewProject}
       envVars={previewEnvVars}
       extraPackages={extraPackages}
     />

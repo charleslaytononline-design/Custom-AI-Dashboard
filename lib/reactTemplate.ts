@@ -34,9 +34,7 @@ export function generateReactTemplate(options: {
         dependencies: {
           react: '^18.3.1',
           'react-dom': '^18.3.1',
-          'react-router-dom': '^6.28.0',
           '@supabase/supabase-js': '^2.47.0',
-          'lucide-react': '^0.460.0',
         },
         devDependencies: {
           '@types/react': '^18.3.12',
@@ -144,15 +142,12 @@ export default {
       path: 'src/main.tsx',
       content: `import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <App />
   </React.StrictMode>
 )
 `,
@@ -160,18 +155,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     },
     {
       path: 'src/App.tsx',
-      content: `import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
-import Home from './pages/Home'
-
-export default function App() {
-  return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Home />} />
-      </Route>
-    </Routes>
-  )
+      content: `export default function App() {
+  return <div id="app" />
 }
 `,
       file_type: 'ts',
@@ -208,72 +193,6 @@ export const supabase = createClient(
       content: `/** Merge Tailwind classes conditionally */
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ')
-}
-`,
-      file_type: 'ts',
-    },
-    {
-      path: 'src/components/Layout.tsx',
-      content: `import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Home } from 'lucide-react'
-
-const navItems = [
-  { path: '/', label: 'Home', icon: Home },
-]
-
-export default function Layout() {
-  const location = useLocation()
-
-  return (
-    <div className="flex min-h-screen bg-gray-950">
-      {/* Sidebar */}
-      <aside className="w-56 border-r border-white/5 bg-gray-950 flex flex-col">
-        <div className="p-4 border-b border-white/5">
-          <h1 className="text-sm font-semibold text-white/90 truncate">${projectName}</h1>
-        </div>
-        <nav className="flex-1 p-2 space-y-0.5">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const active = location.pathname === item.path
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={\`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors \${
-                  active
-                    ? 'bg-brand/10 text-brand'
-                    : 'text-white/50 hover:text-white/80 hover:bg-white/5'
-                }\`}
-              >
-                <Icon size={16} />
-                {item.label}
-              </Link>
-            )
-          })}
-        </nav>
-      </aside>
-
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
-    </div>
-  )
-}
-`,
-      file_type: 'ts',
-    },
-    {
-      path: 'src/pages/Home.tsx',
-      content: `export default function Home() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-semibold text-white mb-2">${projectName}</h1>
-      <p className="text-white/50 text-sm">
-        Welcome to your new app. Start building by describing what you want in the chat.
-      </p>
-    </div>
-  )
 }
 `,
       file_type: 'ts',

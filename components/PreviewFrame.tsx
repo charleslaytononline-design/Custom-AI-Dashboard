@@ -51,6 +51,8 @@ interface PreviewFrameProps {
   onFixError?: (errorText: string) => void
   /** Key that changes to force a rebuild (e.g. increment after AI build completes) */
   buildTrigger?: number
+  /** When true, show welcome screen instead of bundling the blank template */
+  isNewProject?: boolean
 }
 
 export default memo(function PreviewFrame({
@@ -64,6 +66,7 @@ export default memo(function PreviewFrame({
   extraPackages,
   onFixError,
   buildTrigger = 0,
+  isNewProject = false,
 }: PreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
@@ -165,8 +168,9 @@ export default memo(function PreviewFrame({
   // Rebundle when files change (debounced) or buildTrigger changes
   // Auto-bundles on page load if project has files — existing projects render immediately
   // Forces an immediate (non-debounced) bundle on first mount to fix stale previews on re-navigation
+  // Skips bundling for new projects (shows welcome screen instead)
   useEffect(() => {
-    if (!isReactProject) return
+    if (!isReactProject || isNewProject) return
 
     // First mount: bundle immediately without debounce so preview renders on page load
     if (!hasMountBundledRef.current) {
@@ -184,7 +188,7 @@ export default memo(function PreviewFrame({
     return () => {
       if (bundleTimerRef.current) clearTimeout(bundleTimerRef.current)
     }
-  }, [fileMap, buildTrigger, bundleAndRender])
+  }, [fileMap, buildTrigger, bundleAndRender, isNewProject, isReactProject])
 
   // Listen for messages from the preview iframe
   useEffect(() => {
@@ -325,6 +329,13 @@ export default memo(function PreviewFrame({
                 sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
                 className="w-full h-full border-none"
                 title="deployed preview"
+              />
+            ) : isNewProject && welcomeHtml ? (
+              <iframe
+                srcDoc={welcomeHtml}
+                sandbox="allow-scripts"
+                className="w-full h-full border-none"
+                title="welcome"
               />
             ) : hasLivePreview ? (
               <iframe
