@@ -195,7 +195,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Helper to send an SSE event
-  function sendSSE(data: object) {
+  const sendSSE = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`)
   }
 
