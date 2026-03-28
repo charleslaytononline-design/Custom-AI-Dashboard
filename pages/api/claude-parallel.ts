@@ -25,7 +25,17 @@ import {
   type PlanFile,
 } from '../../lib/parallelPlanPrompt'
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Lazy-init: defer construction so a missing key doesn't crash the module at load time
+let client: Anthropic | null = null
+const getAnthropicClient = (): Anthropic => {
+  if (!client) {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set — check Vercel project settings')
+    }
+    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  }
+  return client
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -236,7 +246,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       { role: 'user' as const, content: typeof userMessage === 'string' ? userMessage : 'Build this project' },
     ]
 
-    const planResponse = await client.messages.create({
+    const planResponse = await getAnthropicClient().messages.create({
       model: settings.planModel,
       max_tokens: 4000,
       system: contextualPlanPrompt,
@@ -258,7 +268,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         await log('parallel_plan_retry', 'warn', `Plan JSON parse failed with fast model after ${planDuration}s, retrying with full model`, userEmail)
         sendSSE({ type: 'status', text: 'Refining plan...' })
         try {
-          const retryResponse = await client.messages.create({
+          const retryResponse = await getAnthropicClient().messages.create({
             model: settings.chatModel,
             max_tokens: 4000,
             system: contextualPlanPrompt,
@@ -448,7 +458,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         })
 
         // Use streaming for real-time progress feedback
-        const stream = client.messages.stream({
+        const stream = getAnthropicClient().messages.stream({
           model: settings.chatModel,
           max_tokens: 8000,
           system: prompt + trainingRules,
@@ -573,7 +583,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         planManifest: plan,
       })
 
-      const appResponse = await client.messages.create({
+      const appResponse = await getAnthropicClient().messages.create({
         model: settings.chatModel,
         max_tokens: 8000,
         system: appPrompt + trainingRules,

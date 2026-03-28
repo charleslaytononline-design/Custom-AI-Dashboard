@@ -11,7 +11,17 @@ import { getAuthUser } from '../../lib/apiAuth'
 import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule, isSafeDefaultValue } from '../../lib/validation'
 import { checkRateLimit } from '../../lib/rateLimit'
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Lazy-init: defer construction so a missing key doesn't crash the module at load time
+let client: Anthropic | null = null
+const getAnthropicClient = (): Anthropic => {
+  if (!client) {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set — check Vercel project settings')
+    }
+    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  }
+  return client
+}
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -305,7 +315,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     sendSSE({ type: 'status', text: isContinuation ? `Continuing build (part ${continuationCount + 1})...` : 'Starting build...' })
 
     // Use streaming API — auto-fix gets capped at 4K tokens to prevent full rewrites
-    const stream = client.messages.stream({
+    const stream = getAnthropicClient().messages.stream({
       model: settings.chatModel,
       max_tokens: isAutoFix ? 4000 : 16000,
       system: contextualSystem,
