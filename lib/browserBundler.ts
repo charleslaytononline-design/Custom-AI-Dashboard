@@ -233,33 +233,83 @@ function findRootComponent(
 }
 
 /**
- * Generate a patched App.tsx that imports and renders a root component.
+ * Generate a patched App.tsx that imports and renders components with error boundary.
+ * Renders the root component first, then all other orphan components.
  */
-function generatePatchedAppTsx(rootFile: string, allComponentFiles: string[]): string {
-  // Convert file path to relative import from src/App.tsx
+function generatePatchedAppTsx(
+  rootFile: string,
+  allComponentFiles: string[],
+  unreachableHooks: string[],
+  files: Record<string, string>
+): string {
   const toRelative = (filePath: string) => {
-    // Remove src/ prefix and extension
     const withoutSrc = filePath.replace(/^src\//, '')
     const withoutExt = withoutSrc.replace(/\.(tsx|ts|jsx|js)$/, '')
     return './' + withoutExt
   }
 
-  if (rootFile) {
-    const name = rootFile.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || 'Root'
-    const importPath = toRelative(rootFile)
-    return `import ${name} from '${importPath}'\n\nexport default function App() {\n  return <${name} />\n}\n`
-  }
+  const toComponentName = (filePath: string) =>
+    filePath.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || 'Comp'
 
-  // Fallback: import and render all component files
+  // Build component imports — root first, then all others
   const imports: string[] = []
   const elements: string[] = []
-  for (let i = 0; i < allComponentFiles.length; i++) {
-    const file = allComponentFiles[i]
-    const name = 'Comp' + i
+  const usedNames = new Set<string>()
+
+  const addComponent = (file: string) => {
+    let name = toComponentName(file)
+    if (usedNames.has(name)) name = name + usedNames.size
+    usedNames.add(name)
     imports.push(`import ${name} from '${toRelative(file)}'`)
     elements.push(`<${name} />`)
   }
-  return `${imports.join('\n')}\n\nexport default function App() {\n  return <>${elements.join('')}</>\n}\n`
+
+  if (rootFile) {
+    addComponent(rootFile)
+    // Add other components not imported by the root
+    for (const file of allComponentFiles) {
+      if (file !== rootFile) addComponent(file)
+    }
+  } else {
+    for (const file of allComponentFiles) {
+      addComponent(file)
+    }
+  }
+
+  // Detect hooks that return state (e.g., usePlayerData)
+  const hookCalls: string[] = []
+  for (const hookFile of unreachableHooks) {
+    const content = files[hookFile]
+    if (!content) continue
+    const hookMatch = content.match(/export\s+(?:function|const)\s+(use\w+)/)
+    if (hookMatch) {
+      const hookName = hookMatch[1]
+      imports.push(`import { ${hookName} } from '${toRelative(hookFile)}'`)
+      hookCalls.push(`  const _${hookName} = ${hookName}()`)
+    }
+  }
+
+  // Error boundary to catch render crashes
+  const errorBoundary = `class EB extends Component<{children:any},{error:string|null}>{state={error:null as string|null};static getDerivedStateFromError(e:any){return{error:e?.message||String(e)}};render(){if(this.state.error)return <div style={{padding:24,color:'#ff6b6b',background:'#1a1a2e',fontFamily:'monospace',minHeight:'100vh'}}><h2 style={{margin:'0 0 12px'}}>Render Error</h2><pre style={{whiteSpace:'pre-wrap',opacity:0.8}}>{this.state.error}</pre><p style={{color:'#888',marginTop:16}}>The AI may not have properly connected all components. Try asking it to fix App.tsx.</p></div>;return this.props.children}}`
+
+  const lines = [
+    `import { Component } from 'react'`,
+    ...imports,
+    '',
+    errorBoundary,
+    '',
+    `export default function App() {`,
+    ...hookCalls,
+    `  return (`,
+    `    <EB>`,
+    `      ${elements.join('\n      ')}`,
+    `    </EB>`,
+    `  )`,
+    `}`,
+    '',
+  ]
+
+  return lines.join('\n')
 }
 
 /**
@@ -426,11 +476,14 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
 
       const rootComponent = findRootComponent(unreachableSource, files)
       const componentFiles = unreachableSource.filter(f =>
-        f.match(/\.(tsx|jsx)$/) && files[f] && /export\s+default\b/.test(files[f])
+        f.match(/\.(tsx|jsx)$/) && files[f] && hasDefaultExport(files[f])
+      )
+      const unreachableHooks = unreachableSource.filter(f =>
+        f.match(/^src\/hooks\/.*\.(ts|tsx)$/) && files[f]
       )
 
       if (rootComponent || componentFiles.length > 0) {
-        const patchedApp = generatePatchedAppTsx(rootComponent || '', componentFiles)
+        const patchedApp = generatePatchedAppTsx(rootComponent || '', componentFiles, unreachableHooks, files)
         console.log(`[Bundler] Auto-patched App.tsx — root: ${rootComponent || 'all components'}\n${patchedApp}`)
 
         // Re-bundle with patched App.tsx
