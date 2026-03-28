@@ -19,6 +19,7 @@ const PackageManager = dynamic(() => import('../../components/PackageManager'))
 const EnvVarManager = dynamic(() => import('../../components/EnvVarManager'))
 const SchemaViewer = dynamic(() => import('../../components/SchemaViewer'))
 const DatabaseChoiceModal = dynamic(() => import('../../components/DatabaseChoiceModal'))
+const ProjectVersionHistory = dynamic(() => import('../../components/ProjectVersionHistory'))
 
 const CodeEditor = dynamic(() => import('../../components/CodeEditor'), { ssr: false })
 
@@ -73,7 +74,10 @@ export default function ProjectBuilder() {
   const [pendingDbTables, setPendingDbTables] = useState<string | null>(null)
   const [autoFixAttempt, setAutoFixAttempt] = useState(0)
   const autoFixInProgressRef = useRef(false)
+  const autoFixFailedRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const isInitialLoadRef = useRef(true)
+  const [showVersionHistory, setShowVersionHistory] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const streamingTextRef = useRef('')
@@ -103,7 +107,12 @@ export default function ProjectBuilder() {
     }
   }, [projectId, user])
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  useEffect(() => {
+    if (messages.length === 0) return
+    const behavior = isInitialLoadRef.current ? 'instant' : 'smooth'
+    messagesEndRef.current?.scrollIntoView({ behavior: behavior as ScrollBehavior })
+    if (isInitialLoadRef.current) isInitialLoadRef.current = false
+  }, [messages])
 
   // Update file tree when files change
   useEffect(() => { setFileTree(buildFileTree(files)) }, [files])
@@ -312,6 +321,7 @@ export default function ProjectBuilder() {
     // Reset auto-fix counter on new user-initiated messages
     if (!options?.isAutoFix) {
       setAutoFixAttempt(0)
+      autoFixFailedRef.current = false
     }
 
     let imageUrl: string | undefined
@@ -381,8 +391,17 @@ export default function ProjectBuilder() {
         })
 
         if (!res.ok) {
-          const err = await res.json()
-          throw new Error(err.error || err.message || 'Build failed')
+          let errorMessage = `Build failed (HTTP ${res.status})`
+          try {
+            const text = await res.text()
+            if (text.startsWith('{') || text.startsWith('[')) {
+              const err = JSON.parse(text)
+              errorMessage = err.error || err.message || errorMessage
+            } else if (res.status >= 500) {
+              errorMessage = 'Server error — the build service is temporarily unavailable. Please try again.'
+            }
+          } catch {}
+          throw new Error(errorMessage)
         }
 
         const reader = res.body?.getReader()
@@ -801,7 +820,7 @@ export default function ProjectBuilder() {
 
   // Handle automatic error fixing after build (no user interaction needed)
   async function handleAutoFix(errorText: string) {
-    if (autoFixInProgressRef.current || autoFixAttempt >= 2 || loading || showDbChoice) return
+    if (autoFixInProgressRef.current || autoFixAttempt >= 2 || loading || showDbChoice || autoFixFailedRef.current) return
     autoFixInProgressRef.current = true
     const attempt = autoFixAttempt + 1
     setAutoFixAttempt(attempt)
@@ -813,6 +832,8 @@ export default function ProjectBuilder() {
     }])
     try {
       await sendMessage(errorText, `Auto-fix attempt ${attempt}/2`, { isAutoFix: true })
+    } catch {
+      autoFixFailedRef.current = true
     } finally {
       autoFixInProgressRef.current = false
     }
@@ -1035,6 +1056,13 @@ export default function ProjectBuilder() {
               title="View database schema"
             >
               🗄
+            </button>
+            <button
+              onClick={() => setShowVersionHistory(true)}
+              className="px-2 py-1 rounded-md text-[11px] cursor-pointer border bg-transparent border-white/[0.08] text-[var(--text-3)] hover:text-[var(--text-2)]"
+              title="Version history"
+            >
+              🕐
             </button>
             <GitHubConnect projectId={projectId as string} userId={user.id} projectName={project.name} />
             <DeployButton projectId={projectId as string} userId={user.id} />
@@ -1454,6 +1482,20 @@ export default function ProjectBuilder() {
       )}
 
       {/* Supabase Connect Modal */}
+      {showVersionHistory && (
+        <ProjectVersionHistory
+          projectId={projectId as string}
+          userId={user.id}
+          onRestore={async () => {
+            await loadFiles()
+            setBuildTrigger(prev => prev + 1)
+            setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: 'Restored to previous version.' }])
+            setShowVersionHistory(false)
+          }}
+          onClose={() => setShowVersionHistory(false)}
+        />
+      )}
+
       {showSupabaseConnect && (
         <SupabaseConnect
           projectId={projectId as string}
