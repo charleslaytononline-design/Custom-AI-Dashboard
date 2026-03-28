@@ -71,6 +71,8 @@ export default function ProjectBuilder() {
   const [showSchemaViewer, setShowSchemaViewer] = useState(false)
   const [showDbChoice, setShowDbChoice] = useState(false)
   const [pendingDbTables, setPendingDbTables] = useState<string | null>(null)
+  const [autoFixAttempt, setAutoFixAttempt] = useState(0)
+  const autoFixInProgressRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -300,10 +302,15 @@ export default function ProjectBuilder() {
 
 
   // Send message
-  async function sendMessage(overrideInput?: string, displayText?: string) {
+  async function sendMessage(overrideInput?: string, displayText?: string, options?: { isAutoFix?: boolean }) {
     const messageText = overrideInput || input.trim()
     if ((!messageText && !pendingImage) || loading || !user) return
     if (creditBalance <= 0) { setShowBuyCredits(true); return }
+
+    // Reset auto-fix counter on new user-initiated messages
+    if (!options?.isAutoFix) {
+      setAutoFixAttempt(0)
+    }
 
     let imageUrl: string | undefined
     if (pendingImage) {
@@ -634,12 +641,126 @@ export default function ProjectBuilder() {
         return {}
       }
 
-      // Run build with automatic continuation
-      let result = await streamBuild()
-      while (result.continuation) {
-        const { partialRaw, continuationCount, accumulatedApiCost } = result.continuation
-        setBuildStatus(`Continuing build (part ${continuationCount + 1})...`)
-        result = await streamBuild({ isContinuation: true, partialRaw, continuationCount, accumulatedApiCost })
+      // Try parallel build for non-autofix, non-plan builds
+      const useParallel = !planOnly && !options?.isAutoFix && mode === 'build'
+      let usedParallel = false
+
+      if (useParallel) {
+        try {
+          const parallelRes = await fetch('/api/claude-parallel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ messages: chatMessages, userId: user.id, projectId, activeFilePath: activeTab }),
+          })
+
+          if (parallelRes.ok) {
+            const parallelReader = parallelRes.body?.getReader()
+            if (parallelReader) {
+              const parallelDecoder = new TextDecoder()
+              let parallelBuffer = ''
+              let redirected = false
+
+              while (true) {
+                const { done, value } = await parallelReader.read()
+                if (done) break
+                parallelBuffer += parallelDecoder.decode(value, { stream: true })
+                const lines = parallelBuffer.split('\n')
+                parallelBuffer = lines.pop() || ''
+
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue
+                  try {
+                    const event = JSON.parse(line.slice(6))
+
+                    if (event.type === 'redirect') {
+                      // Plan says task is small — fall through to single-call mode
+                      redirected = true
+                      break
+                    } else if (event.type === 'status') {
+                      setBuildStatus(event.text)
+                    } else if (event.type === 'plan') {
+                      const fileCount = event.plan?.files?.length || 0
+                      setBuildStatus(`Parallel build: ${fileCount} files planned`)
+                    } else if (event.type === 'file_op') {
+                      fileOps.push({ action: event.action, path: event.path })
+                      fileContentUpdates.push({ action: event.action, path: event.path, content: event.content ?? null })
+                      setBuildStatus(`${event.action === 'create' ? 'Created' : 'Updated'} ${event.path}`)
+                      setRecentlyChanged(prev => { const arr = Array.from(prev); arr.push(event.path); return new Set(arr) })
+                      setTimeout(() => {
+                        setRecentlyChanged(prev => { const next = new Set(prev); next.delete(event.path); return next })
+                      }, 3000)
+                    } else if (event.type === 'done') {
+                      if (fileContentUpdates.length > 0) {
+                        setFiles(prev => {
+                          let updated = [...prev]
+                          for (const op of fileContentUpdates) {
+                            if (op.action === 'delete') {
+                              updated = updated.filter(f => f.path !== op.path)
+                            } else if (op.action === 'create' || op.action === 'edit') {
+                              const existing = updated.findIndex(f => f.path === op.path)
+                              const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
+                              const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+                              const fileEntry = {
+                                id: existing >= 0 ? updated[existing].id : `local_${Date.now()}_${op.path}`,
+                                project_id: projectId as string,
+                                user_id: user.id,
+                                path: op.path,
+                                content: op.content || '',
+                                file_type: fileType,
+                                created_at: new Date().toISOString(),
+                                updated_at: new Date().toISOString(),
+                              }
+                              if (existing >= 0) updated[existing] = fileEntry
+                              else updated.push(fileEntry)
+                            }
+                          }
+                          return updated
+                        })
+                        setBuildTrigger(prev => prev + 1)
+                        setIsNewProject(false)
+                      }
+
+                      setCreditBalance(event.newBalance ?? creditBalance)
+                      const assistantMsg: Message = {
+                        id: nextMsgId(), role: 'assistant',
+                        content: event.message || `Built ${fileOps.length} files in parallel`,
+                        fileOps: fileOps.length > 0 ? fileOps : undefined,
+                      }
+                      setMessages(prev => [...prev, assistantMsg])
+                      saveChatMessage('assistant', assistantMsg.content)
+                      usedParallel = true
+                    } else if (event.type === 'error') {
+                      setLastError(event.error || event.message)
+                    }
+                  } catch {}
+                }
+                if (redirected) break
+              }
+
+              if (!redirected && usedParallel) {
+                // Parallel build completed successfully — skip single-call mode
+              } else if (redirected) {
+                // Fall through to single-call mode below
+                usedParallel = false
+              }
+            }
+          }
+        } catch (parallelErr: any) {
+          if (parallelErr.name === 'AbortError') throw parallelErr
+          // Parallel failed — fall through to single-call mode
+          console.warn('[ProjectBuilder] Parallel build failed, falling back to single mode:', parallelErr.message)
+        }
+      }
+
+      // Single-call mode (original flow) — used for small builds, auto-fix, plan mode, or parallel fallback
+      if (!usedParallel) {
+        let result = await streamBuild(options?.isAutoFix ? { isAutoFix: true } : {})
+        while (result.continuation) {
+          const { partialRaw, continuationCount, accumulatedApiCost } = result.continuation
+          setBuildStatus(`Continuing build (part ${continuationCount + 1})...`)
+          result = await streamBuild({ isContinuation: true, partialRaw, continuationCount, accumulatedApiCost })
+        }
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
@@ -654,12 +775,31 @@ export default function ProjectBuilder() {
     }
   }
 
-  // Handle "Fix this" from preview error console
+  // Handle "Fix this" from preview error console (manual)
   function handleFixError(errorText: string) {
     setInput(errorText)
     setMode('build')
     if (isMobile) setMobilePanel('chat')
     setSidebarTab('chat')
+  }
+
+  // Handle automatic error fixing after build (no user interaction needed)
+  async function handleAutoFix(errorText: string) {
+    if (autoFixInProgressRef.current || autoFixAttempt >= 2 || loading) return
+    autoFixInProgressRef.current = true
+    const attempt = autoFixAttempt + 1
+    setAutoFixAttempt(attempt)
+    setBuildStatus(`Auto-fixing errors (attempt ${attempt}/2)...`)
+    setMessages(prev => [...prev, {
+      id: nextMsgId(),
+      role: 'assistant',
+      content: `Auto-fixing errors (attempt ${attempt}/2)...`,
+    }])
+    try {
+      await sendMessage(errorText, `Auto-fix attempt ${attempt}/2`, { isAutoFix: true })
+    } finally {
+      autoFixInProgressRef.current = false
+    }
   }
 
   // Save file snapshots to DB for undo capability
@@ -791,6 +931,9 @@ export default function ProjectBuilder() {
       deployUrl={deployUrl}
       welcomeHtml={welcomeHtml}
       onFixError={handleFixError}
+      onAutoFix={handleAutoFix}
+      autoFixAttempt={autoFixAttempt}
+      maxAutoFix={2}
       buildTrigger={buildTrigger}
       isNewProject={isNewProject}
       loading={loading}

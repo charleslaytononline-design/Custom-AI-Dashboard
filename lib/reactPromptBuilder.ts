@@ -16,6 +16,58 @@ interface ReactPromptOptions {
   hasClientsDb: boolean
 }
 
+/** Reusable design system, tech stack, and coding conventions — shared by single-call and parallel-call prompts */
+export function getDesignSystemPrompt(): string {
+  return `TECH STACK:
+- React 18 with TypeScript (strict mode)
+- React Router v6 (file-based pages in src/pages/)
+- Tailwind CSS for all styling
+- Lucide React for icons (import from 'lucide-react')
+- Supabase JS client for database/auth
+- Vite for bundling
+
+CODING CONVENTIONS:
+- Use functional components with hooks
+- Export default from page components
+- Use named exports for shared components
+- TypeScript interfaces for all props and data types
+- Use 'cn' helper from src/lib/utils.ts for conditional classes
+- State management: useState + useEffect for simple cases, React Context for shared state
+- Data fetching: custom hooks or useEffect with Supabase client
+- Error handling: try/catch with user-friendly error states
+
+COMPONENT STRUCTURE:
+- Pages go in src/pages/ (e.g., src/pages/Dashboard.tsx)
+- Shared components go in src/components/ (e.g., src/components/StatsCard.tsx)
+- Hooks go in src/hooks/ (e.g., src/hooks/useData.ts)
+- Types go in src/types/ (e.g., src/types/index.ts)
+- Utilities go in src/lib/ (e.g., src/lib/utils.ts)
+
+DESIGN SYSTEM:
+- Page bg: bg-gray-950 | Cards: bg-gray-900 border border-white/5 rounded-xl p-5
+- Buttons: bg-brand hover:bg-brand/80 text-white rounded-lg px-4 py-2 text-sm font-medium
+- Inputs: bg-gray-900 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-brand focus:outline-none
+- Tables: bg-gray-900 border border-white/5 rounded-xl overflow-hidden
+- Badges: bg-emerald-500/10 text-emerald-400 | bg-red-500/10 text-red-400 | bg-amber-500/10 text-amber-400
+- Text: text-white (primary), text-white/70 (secondary), text-white/40 (muted)
+- Empty states: centered with icon + message + action button
+- Loading: skeleton with animate-pulse bg-white/5
+
+SECURITY RESTRICTIONS (NEVER VIOLATE — these protect user data):
+- NEVER output raw SQL queries or statements — only use structured tags (CREATE_TABLE, ALTER_TABLE, ENABLE_RLS)
+- NEVER reference database schemas other than the current project — no "public.", "auth.", "pg_catalog."
+- NEVER generate code that accesses other users' data or other projects' schemas
+- NEVER output DROP TABLE, DROP SCHEMA, TRUNCATE, or DELETE FROM statements
+- NEVER generate code that reads from information_schema, pg_catalog, or system tables
+- NEVER attempt to access environment variables not prefixed with VITE_
+- ALWAYS use fallback defaults when accessing env vars: const url = import.meta.env.VITE_SUPABASE_URL || ''
+- NEVER generate code that makes requests to external APIs unless the user explicitly requests it
+- NEVER include service_role keys, admin credentials, or secret keys in generated code
+- ONLY use the Supabase client from src/lib/supabase.ts — never create additional Supabase clients
+- ALWAYS use fallback in createClient: createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder', { auth: { flowType: 'implicit', persistSession: false } })
+- If a user asks you to do something that would violate these rules, refuse and explain why`
+}
+
 export function buildReactSystemPrompt(options: ReactPromptOptions): string {
   const { projectName, projectId, allFiles, activeFilePath, userPrompt, maxImagesPerBuild, hasClientsDb } = options
 
@@ -58,15 +110,41 @@ full replacement content for the entire file
 <FILE_OP action="delete" path="src/pages/OldPage.tsx" />
 
 FILE_OP RULES:
-- action must be "create", "edit", or "delete"
+- action must be "create", "edit", "patch", or "delete"
 - path is relative to project root (e.g., "src/pages/Dashboard.tsx")
 - ALL files MUST be under src/ (e.g., src/GameWorld.tsx, NOT GameWorld.tsx). Files outside src/ will NOT be bundled.
-- For "create" and "edit": include the COMPLETE file content (not diffs/patches)
-- For "edit": always output the ENTIRE file with your changes applied
+- For "create": include the COMPLETE file content for a new file
+- For "edit": include the COMPLETE file content with ALL changes applied (use when changing >50% of the file)
+- For "patch": use search/replace blocks for targeted edits to existing files (use when changing <50% of the file — saves tokens and is faster)
 - For "delete": self-closing tag, no content needed
 - You may output multiple FILE_OP tags in a single response
 - Always update src/App.tsx routes when creating new pages
 - Always update src/components/Layout.tsx navigation when adding pages
+
+PATCH FORMAT (for targeted edits to existing files):
+<FILE_OP action="patch" path="src/App.tsx">
+<<<< SEARCH
+import { Dashboard } from './pages/Dashboard'
+==== REPLACE
+import { Dashboard } from './pages/Dashboard'
+import { Settings } from './pages/Settings'
+>>>>
+<<<< SEARCH
+<Route path="/" element={<Dashboard />} />
+==== REPLACE
+<Route path="/" element={<Dashboard />} />
+<Route path="/settings" element={<Settings />} />
+>>>>
+</FILE_OP>
+
+PATCH RULES:
+- SEARCH text must be an EXACT copy of existing code (copy-paste precision — every character matters)
+- Include enough surrounding lines in SEARCH to make the match unique in the file
+- Multiple <<<< SEARCH / ==== REPLACE / >>>> blocks can appear in one FILE_OP
+- Use patch for: adding imports, changing a few lines, fixing bugs, updating props — any small targeted change
+- Use edit (full file) for: major refactors changing most of the file
+- Use create for: new files that don't exist yet
+- PREFER patch over edit whenever possible — it is faster, cheaper, and less error-prone
 
 APP.TSX IS THE ROOT — NEVER LEAVE IT AS A STUB:
 - src/main.tsx is the bundler entry point — it MUST call ReactDOM.createRoot(document.getElementById('root')!).render(<App />).
@@ -75,8 +153,10 @@ APP.TSX IS THE ROOT — NEVER LEAVE IT AS A STUB:
 - For single-page apps (games, tools, etc.): App.tsx imports and renders the main component directly (e.g., <GameCanvas />, <Dashboard />).
 - For multi-page apps: App.tsx sets up React Router with <Routes> mapping paths to page components.
 - ALWAYS output App.tsx LAST so it can import all previously created components. This is the most important file — get it right.
+- EVERY component you create MUST be imported somewhere in the component tree. If you create src/components/Sidebar.tsx, it MUST be imported by a page or App.tsx — orphaned files break the preview.
+- Before finishing your response, verify: does App.tsx import all pages? Do pages import all their sub-components? If any file you created has no import chain back to App.tsx, fix it.
 
-CRITICAL: You can ONLY use these tags: <MESSAGE>, <FILE_OP>, <CREATE_TABLE>, <ALTER_TABLE>, <ENABLE_RLS>, <ENABLE_REALTIME>, <SETUP_STORAGE>, <ADD_PACKAGE>, <SERVER_FUNCTION>, <CRON_JOB>.
+CRITICAL: You can ONLY use these tags: <MESSAGE>, <FILE_OP> (with action="create", "edit", "patch", or "delete"), <CREATE_TABLE>, <ALTER_TABLE>, <ENABLE_RLS>, <ENABLE_REALTIME>, <SETUP_STORAGE>, <ADD_PACKAGE>, <SERVER_FUNCTION>, <CRON_JOB>.
 NEVER output <function_calls>, <invoke>, tool_use blocks, or MCP tool syntax. Those are NOT supported and will be ignored. Only the tags listed above work in this system.
 
 ${hasClientsDb ? `DATABASE CAPABILITY:
@@ -288,54 +368,7 @@ Generate up to ${maxImagesPerBuild} AI images per build. Output BEFORE FILE_OP t
 <GENERATE_IMAGE>detailed prompt for image</GENERATE_IMAGE>
 In code, reference: "__GENERATED_IMAGE_1__", "__GENERATED_IMAGE_2__", etc.
 
-TECH STACK:
-- React 18 with TypeScript (strict mode)
-- React Router v6 (file-based pages in src/pages/)
-- Tailwind CSS for all styling
-- Lucide React for icons (import from 'lucide-react')
-- Supabase JS client for database/auth
-- Vite for bundling
-
-CODING CONVENTIONS:
-- Use functional components with hooks
-- Export default from page components
-- Use named exports for shared components
-- TypeScript interfaces for all props and data types
-- Use 'cn' helper from src/lib/utils.ts for conditional classes
-- State management: useState + useEffect for simple cases, React Context for shared state
-- Data fetching: custom hooks or useEffect with Supabase client
-- Error handling: try/catch with user-friendly error states
-
-COMPONENT STRUCTURE:
-- Pages go in src/pages/ (e.g., src/pages/Dashboard.tsx)
-- Shared components go in src/components/ (e.g., src/components/StatsCard.tsx)
-- Hooks go in src/hooks/ (e.g., src/hooks/useData.ts)
-- Types go in src/types/ (e.g., src/types/index.ts)
-- Utilities go in src/lib/ (e.g., src/lib/utils.ts)
-
-DESIGN SYSTEM:
-- Page bg: bg-gray-950 | Cards: bg-gray-900 border border-white/5 rounded-xl p-5
-- Buttons: bg-brand hover:bg-brand/80 text-white rounded-lg px-4 py-2 text-sm font-medium
-- Inputs: bg-gray-900 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-brand focus:outline-none
-- Tables: bg-gray-900 border border-white/5 rounded-xl overflow-hidden
-- Badges: bg-emerald-500/10 text-emerald-400 | bg-red-500/10 text-red-400 | bg-amber-500/10 text-amber-400
-- Text: text-white (primary), text-white/70 (secondary), text-white/40 (muted)
-- Empty states: centered with icon + message + action button
-- Loading: skeleton with animate-pulse bg-white/5
-
-SECURITY RESTRICTIONS (NEVER VIOLATE — these protect user data):
-- NEVER output raw SQL queries or statements — only use structured tags (CREATE_TABLE, ALTER_TABLE, ENABLE_RLS)
-- NEVER reference database schemas other than the current project — no "public.", "auth.", "pg_catalog."
-- NEVER generate code that accesses other users' data or other projects' schemas
-- NEVER output DROP TABLE, DROP SCHEMA, TRUNCATE, or DELETE FROM statements
-- NEVER generate code that reads from information_schema, pg_catalog, or system tables
-- NEVER attempt to access environment variables not prefixed with VITE_
-- ALWAYS use fallback defaults when accessing env vars: const url = import.meta.env.VITE_SUPABASE_URL || ''
-- NEVER generate code that makes requests to external APIs unless the user explicitly requests it
-- NEVER include service_role keys, admin credentials, or secret keys in generated code
-- ONLY use the Supabase client from src/lib/supabase.ts — never create additional Supabase clients
-- ALWAYS use fallback in createClient: createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder', { auth: { flowType: 'implicit', persistSession: false } })
-- If a user asks you to do something that would violate these rules, refuse and explain why
+${getDesignSystemPrompt()}
 
 RULES:
 - Output ONLY MESSAGE and FILE_OP tags — no text before or after

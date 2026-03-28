@@ -469,10 +469,10 @@ export async function bundleProject(input: BundleInput): Promise<BundleResult> {
     if (
       result.errors.length === 0 &&
       files['src/App.tsx'] &&
-      isStubAppTsx(appContent) &&
-      unreachableSource.length > sourceFiles.length * 0.4
+      unreachableSource.length > 0 &&
+      (isStubAppTsx(appContent) || unreachableSource.length > sourceFiles.length * 0.2)
     ) {
-      console.log(`[Bundler] Detected stub App.tsx with ${unreachableSource.length}/${sourceFiles.length} source files unreachable — auto-patching...`)
+      console.log(`[Bundler] ${unreachableSource.length}/${sourceFiles.length} source files unreachable (App.tsx stub: ${isStubAppTsx(appContent)}) — auto-patching...`)
 
       const rootComponent = findRootComponent(unreachableSource, files)
       const componentFiles = unreachableSource.filter(f =>

@@ -44,6 +44,9 @@ function sendLog(event_type: string, severity: string, message: string, metadata
 // Known bot/noise patterns to ignore in warning logs (Vercel screenshot bot)
 const IGNORED_WARN_PATTERNS = [
   'autoconsent already initialized',
+  '@supabase/gotrue-js',
+  'Lock "lock:sb-',
+  'navigator.locks.request',
 ]
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -108,16 +111,19 @@ export default function App({ Component, pageProps }: AppProps) {
       let msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
       const callerStack = new Error().stack?.split('\n').slice(2, 8).join('\n')
 
-      // Enrich useless empty error messages
+      // Enrich useless empty error messages — downgrade to warn since they provide no actionable info
+      let severity: 'error' | 'warn' = 'error'
       if (msg === '{}' || msg === '' || msg === 'undefined') {
         msg = `Empty error object logged at ${window.location.pathname} | stack: ${callerStack?.split('\n')[0] || 'unknown'}`
+        severity = 'warn'
       } else if (msg === '{"cancelled":true}') {
         msg = `Operation cancelled at ${window.location.pathname}`
+        severity = 'warn'
       }
 
       const key = `cerr:${msg.slice(0, 120)}`
       if (dedupe(key)) {
-        sendLog('console_error', 'error', msg.slice(0, 1000), {
+        sendLog('console_error', severity, msg.slice(0, 1000), {
           ...getPageContext(),
           callerStack,
         })

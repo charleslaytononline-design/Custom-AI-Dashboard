@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 import { buildReactSystemPrompt, buildReactPlanPrompt } from '../../lib/reactPromptBuilder'
 import { compactReactHistory } from '../../lib/reactContextManager'
 import { loadProjectFiles, saveFile, deleteFile } from '../../lib/virtualFS'
+import { parsePatchBlocks, applyPatches } from '../../lib/patchApplicator'
 import { getAuthUser } from '../../lib/apiAuth'
 import { isValidUUID, isValidFilePath, isValidTableName, isValidColumnName, validateTableDef, validateAlterOps, sanitizeError, sanitizeTrainingRule, isSafeDefaultValue } from '../../lib/validation'
 import { checkRateLimit } from '../../lib/rateLimit'
@@ -746,10 +747,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
           const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
           await saveFile(projectId, userId, op.path, op.content, fileType, supabase)
-          return { action: op.action, path: op.path }
+          return { action: op.action, path: op.path, content: op.content }
+        } else if (op.action === 'patch') {
+          // Diff-based edit: apply search/replace blocks to existing file
+          const currentFile = reactFiles.find((f: any) => f.path === op.path)
+          if (!currentFile?.content) {
+            await log('builder_warn', 'warn', `Patch target not found: ${op.path}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, path: op.path })
+            return null
+          }
+          const blocks = parsePatchBlocks(op.content)
+          if (blocks.length === 0) {
+            await log('builder_warn', 'warn', `No valid patch blocks found for ${op.path}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, path: op.path })
+            return null
+          }
+          const result = applyPatches(currentFile.content, blocks)
+          if (result.failedCount > 0) {
+            await log('builder_warn', 'warn', `Patch partial failure on ${op.path}: ${result.failedCount}/${blocks.length} blocks failed`, userEmail, {
+              sourceFile: 'pages/api/claude.ts', userId, projectId, path: op.path, failures: result.failures,
+            })
+          }
+          if (result.appliedCount > 0) {
+            const ext = op.path.split('.').pop()?.toLowerCase() || 'text'
+            const fileType = ['tsx', 'ts'].includes(ext) ? 'ts' : ['jsx', 'js'].includes(ext) ? 'js' : ext
+            await saveFile(projectId, userId, op.path, result.content, fileType, supabase)
+            return { action: 'edit', path: op.path, content: result.content }
+          }
+          return null
         } else if (op.action === 'delete') {
           await deleteFile(projectId, op.path, supabase)
-          return { action: 'delete', path: op.path }
+          return { action: 'delete', path: op.path, content: null }
         }
         return null
       }))
@@ -758,8 +784,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const result = fileResults[i]
         if (result.status === 'fulfilled' && result.value) {
           fileOpsApplied.push(result.value)
-          const op = parsedOps[i]
-          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: op.content ?? null })
+          // Use result.content (which has patched content for patches) instead of raw op.content
+          sendSSE({ type: 'file_op', action: result.value.action, path: result.value.path, content: result.value.content ?? null })
         } else if (result.status === 'rejected') {
           const op = parsedOps[i]
           await log('builder_error', 'warn', `FILE_OP ${op.action} failed for ${op.path}: ${result.reason?.message}`, userEmail, { sourceFile: 'pages/api/claude.ts', userId, projectId, filePath: op.path, stack: result.reason?.stack?.slice(0, 500) })

@@ -49,6 +49,12 @@ interface PreviewFrameProps {
   extraPackages?: Record<string, string>
   /** Callback when user clicks "Fix this" on an error */
   onFixError?: (errorText: string) => void
+  /** Callback for automatic error fixing (triggered without user interaction) */
+  onAutoFix?: (errorText: string) => void
+  /** Current auto-fix attempt count (managed by parent) */
+  autoFixAttempt?: number
+  /** Maximum auto-fix attempts before falling back to manual fix */
+  maxAutoFix?: number
   /** Key that changes to force a rebuild (e.g. increment after AI build completes) */
   buildTrigger?: number
   /** When true, show welcome screen instead of bundling the blank template */
@@ -67,6 +73,9 @@ export default memo(function PreviewFrame({
   envVars = {},
   extraPackages,
   onFixError,
+  onAutoFix,
+  autoFixAttempt = 0,
+  maxAutoFix = 2,
   buildTrigger = 0,
   isNewProject = false,
   loading = false,
@@ -146,12 +155,16 @@ export default memo(function PreviewFrame({
       const loadedCount = result.loadedFiles?.length || 0
       console.log(`[PreviewFrame] Bundle result — js: ${result.js.length} chars, css: ${result.css.length} chars, errors: ${result.errors.length}, cdnMap keys: ${Object.keys(result.cdnMap).length}, loaded: ${loadedCount}/${fileCount} files`)
 
-      // Log which files were loaded vs skipped for debugging import chain issues
-      if (loadedCount < fileCount && loadedCount > 0) {
+      // Log which source files were loaded vs skipped for debugging import chain issues
+      // Only warn about actual source files (.tsx/.ts/.jsx/.js), not config/data files
+      // Suppress entirely if auto-patcher already fixed the issue
+      if (loadedCount < fileCount && loadedCount > 0 && !result.autoPatched) {
         const loaded = new Set(result.loadedFiles || [])
-        const skipped = Object.keys(fileMap).filter(f => !loaded.has(f))
+        const skipped = Object.keys(fileMap)
+          .filter(f => !loaded.has(f))
+          .filter(f => /\.(tsx?|jsx?|js)$/.test(f)) // only source files, not .json/.css/.env etc.
         if (skipped.length > 0) {
-          console.warn(`[PreviewFrame] ${skipped.length} file(s) not reachable from entry point:`, skipped.join(', '))
+          console.log(`[PreviewFrame] ${skipped.length} source file(s) not reachable from entry point:`, skipped.join(', '))
         }
       }
 
@@ -264,6 +277,39 @@ export default memo(function PreviewFrame({
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [])
+
+  // Auto-validation: detect errors after build and trigger auto-fix
+  const lastAutoFixTriggerRef = useRef(0)
+  useEffect(() => {
+    // Only run when not loading, auto-fix callback exists, and we haven't exceeded attempts
+    if (loading || !onAutoFix || autoFixAttempt >= maxAutoFix) return
+    // Don't re-trigger for the same build
+    if (lastAutoFixTriggerRef.current === buildTrigger) return
+    // Wait for bundling to finish
+    if (bundling) return
+
+    // Bundle errors: fix immediately
+    if (bundleErrors.length > 0) {
+      lastAutoFixTriggerRef.current = buildTrigger
+      const errorText = `Fix these build errors:\n${bundleErrors.slice(0, 5).join('\n')}`
+      onAutoFix(errorText)
+      return
+    }
+
+    // Runtime errors: wait 3s after successful bundle to collect errors
+    if (blobUrl) {
+      const timer = setTimeout(() => {
+        if (lastAutoFixTriggerRef.current === buildTrigger) return
+        if (previewErrors.length > 0) {
+          lastAutoFixTriggerRef.current = buildTrigger
+          const errors = previewErrors.slice(0, 5)
+          const errorText = `Fix these runtime errors:\n${errors.map(e => e.message + (e.stack ? '\n' + e.stack.split('\n').slice(0, 3).join('\n') : '')).join('\n\n')}`
+          onAutoFix(errorText)
+        }
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [loading, bundling, bundleErrors, previewErrors, blobUrl, buildTrigger, onAutoFix, autoFixAttempt, maxAutoFix])
 
   // Determine what to show
   const showDeployedPreview = previewSource === 'deployed' && deployUrl
